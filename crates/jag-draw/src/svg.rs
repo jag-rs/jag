@@ -18,102 +18,12 @@ static SYSTEM_FONTDB: std::sync::LazyLock<Arc<usvg::fontdb::Database>> =
         Arc::new(db)
     });
 
-/// Return embedded bytes for built-in SVG icons that ship with the
-/// Jag workspace (toolbar, sidebar, dock, chat, etc.).
+/// Return embedded bytes for built-in SVG icons.
 ///
-/// This allows the core chrome icons to render even when the `images/`
-/// directory is not present next to the binary (for example, when the
-/// Jag browser is launched from another project like WAID).
-fn builtin_svg_bytes(path: &Path) -> Option<&'static [u8]> {
-    let name = path.file_name()?.to_str()?;
-    match name {
-        "arrow-left.svg" => Some(include_bytes!("../../../images/arrow-left.svg")),
-        "arrow-right.svg" => Some(include_bytes!("../../../images/arrow-right.svg")),
-        "bookmark.svg" => Some(include_bytes!("../../../images/bookmark.svg")),
-        "calendar.svg" => Some(include_bytes!("../../../images/calendar.svg")),
-        "check.svg" => Some(include_bytes!("../../../images/check.svg")),
-        "check_white.svg" => Some(include_bytes!("../../../images/check_white.svg")),
-        "chevron-down.svg" => Some(include_bytes!("../../../images/chevron-down.svg")),
-        "chevron-left.svg" => Some(include_bytes!("../../../images/chevron-left.svg")),
-        "chevron-right.svg" => Some(include_bytes!("../../../images/chevron-right.svg")),
-        "chevron-up.svg" => Some(include_bytes!("../../../images/chevron-up.svg")),
-        "circle-x.svg" => Some(include_bytes!("../../../images/circle-x.svg")),
-        "clock.svg" => Some(include_bytes!("../../../images/clock.svg")),
-        "file.svg" => Some(include_bytes!("../../../images/file.svg")),
-        "home.svg" => Some(include_bytes!("../../../images/home.svg")),
-        "image.svg" => Some(include_bytes!("../../../images/image.svg")),
-        "inspection-panel.svg" => Some(include_bytes!("../../../images/inspection-panel.svg")),
-        "landscape.svg" => Some(include_bytes!("../../../images/landscape.svg")),
-        "layout-grid.svg" => Some(include_bytes!("../../../images/layout-grid.svg")),
-        "loader.svg" => Some(include_bytes!("../../../images/loader.svg")),
-        "message-circle-more.svg" => {
-            Some(include_bytes!("../../../images/message-circle-more.svg"))
-        }
-        "message-circle.svg" => Some(include_bytes!("../../../images/message-circle.svg")),
-        "panel-left-white.svg" => Some(include_bytes!("../../../images/panel-left-white.svg")),
-        "panel-left.svg" => Some(include_bytes!("../../../images/panel-left.svg")),
-        "pause-white.svg" => Some(include_bytes!("../../../images/pause-white.svg")),
-        "pause.svg" => Some(include_bytes!("../../../images/pause.svg")),
-        "play-white.svg" => Some(include_bytes!("../../../images/play-white.svg")),
-        "play.svg" => Some(include_bytes!("../../../images/play.svg")),
-        "plus.svg" => Some(include_bytes!("../../../images/plus.svg")),
-        "refresh.svg" => Some(include_bytes!("../../../images/refresh.svg")),
-        "search.svg" => Some(include_bytes!("../../../images/search.svg")),
-        "send.svg" => Some(include_bytes!("../../../images/send.svg")),
-        "settings.svg" => Some(include_bytes!("../../../images/settings.svg")),
-        "share.svg" => Some(include_bytes!("../../../images/share.svg")),
-        "square-mouse-pointer.svg" => {
-            Some(include_bytes!("../../../images/square-mouse-pointer.svg"))
-        }
-        "square-terminal.svg" => Some(include_bytes!("../../../images/square-terminal.svg")),
-        "square-white.svg" => Some(include_bytes!("../../../images/square-white.svg")),
-        "square.svg" => Some(include_bytes!("../../../images/square.svg")),
-        "tabs.svg" => Some(include_bytes!("../../../images/tabs.svg")),
-        "upload.svg" => Some(include_bytes!("../../../images/upload.svg")),
-        "view.svg" => Some(include_bytes!("../../../images/view.svg")),
-        "volume-x-white.svg" => Some(include_bytes!("../../../images/volume-x-white.svg")),
-        "volume-x.svg" => Some(include_bytes!("../../../images/volume-x.svg")),
-        "weather-animated-icons.svg" => {
-            Some(include_bytes!("../../../images/weather-animated-icons.svg"))
-        }
-        "x.svg" => Some(include_bytes!("../../../images/x.svg")),
-        "folder-open.svg" => Some(include_bytes!("../../../images/folder-open.svg")),
-        "new-file.svg" => Some(include_bytes!("../../../images/new-file.svg")),
-        "new-folder.svg" => Some(include_bytes!("../../../images/new-folder.svg")),
-        // Programming language / file-type icons (devicon.dev)
-        "file-generic.svg" => Some(include_bytes!("../../../images/lang/file-generic.svg")),
-        "bash.svg" => Some(include_bytes!("../../../images/lang/bash.svg")),
-        "c.svg" => Some(include_bytes!("../../../images/lang/c.svg")),
-        "cplusplus.svg" => Some(include_bytes!("../../../images/lang/cplusplus.svg")),
-        "csharp.svg" => Some(include_bytes!("../../../images/lang/csharp.svg")),
-        "css.svg" => Some(include_bytes!("../../../images/lang/css.svg")),
-        "docker.svg" => Some(include_bytes!("../../../images/lang/docker.svg")),
-        "elixir.svg" => Some(include_bytes!("../../../images/lang/elixir.svg")),
-        "git.svg" => Some(include_bytes!("../../../images/lang/git.svg")),
-        "go.svg" => Some(include_bytes!("../../../images/lang/go.svg")),
-        "haskell.svg" => Some(include_bytes!("../../../images/lang/haskell.svg")),
-        "html.svg" => Some(include_bytes!("../../../images/lang/html.svg")),
-        "java.svg" => Some(include_bytes!("../../../images/lang/java.svg")),
-        "javascript.svg" => Some(include_bytes!("../../../images/lang/javascript.svg")),
-        "json.svg" => Some(include_bytes!("../../../images/lang/json.svg")),
-        "kotlin.svg" => Some(include_bytes!("../../../images/lang/kotlin.svg")),
-        "lock.svg" => Some(include_bytes!("../../../images/lang/lock.svg")),
-        "lua.svg" => Some(include_bytes!("../../../images/lang/lua.svg")),
-        "markdown.svg" => Some(include_bytes!("../../../images/lang/markdown.svg")),
-        "php.svg" => Some(include_bytes!("../../../images/lang/php.svg")),
-        "python.svg" => Some(include_bytes!("../../../images/lang/python.svg")),
-        "r.svg" => Some(include_bytes!("../../../images/lang/r.svg")),
-        "react.svg" => Some(include_bytes!("../../../images/lang/react.svg")),
-        "ruby.svg" => Some(include_bytes!("../../../images/lang/ruby.svg")),
-        "rust.svg" => Some(include_bytes!("../../../images/lang/rust.svg")),
-        "scala.svg" => Some(include_bytes!("../../../images/lang/scala.svg")),
-        "swift.svg" => Some(include_bytes!("../../../images/lang/swift.svg")),
-        "toml.svg" => Some(include_bytes!("../../../images/lang/toml.svg")),
-        "typescript.svg" => Some(include_bytes!("../../../images/lang/typescript.svg")),
-        "yaml.svg" => Some(include_bytes!("../../../images/lang/yaml.svg")),
-        "zig.svg" => Some(include_bytes!("../../../images/lang/zig.svg")),
-        _ => None,
-    }
+/// Applications can bundle their own icons; this hook is reserved for
+/// future built-in icon support.
+fn builtin_svg_bytes(_path: &Path) -> Option<&'static [u8]> {
+    None
 }
 
 /// Optional style overrides for SVG rendering
