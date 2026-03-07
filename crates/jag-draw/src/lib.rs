@@ -158,6 +158,9 @@ pub use pipeline::*;
 pub use scene::*;
 pub use svg::*;
 pub use text::*;
+
+/// Backward-compat alias for code that still references the old name.
+pub type DetirTextProvider = JagTextProvider;
 pub use text_layout::*;
 pub use upload::*;
 

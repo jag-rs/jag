@@ -13,6 +13,9 @@ mod surface;
 pub use canvas::{Canvas, ImageFitMode, RawImageDraw, ScrimDraw};
 pub use surface::{CachedFrameData, JagSurface, get_last_raw_image_rect};
 
+/// Backward-compat alias for code that still references the old name.
+pub type DetirSurface = JagSurface;
+
 /// Resolve an asset path by checking multiple locations:
 /// 1. Absolute path (as-is)
 /// 2. `JAG_ASSETS_ROOT` override (if set) – supports a single
