@@ -6,6 +6,7 @@ members = [
     "crates/jag-shaders",
     "crates/jag-text",
     "crates/jag-surface",
+    "examples/demo",
 ]
 resolver = "2"
 
@@ -32,3 +33,5 @@ harfrust = "0.3.2"
 arboard = "3.4"
 pdf-writer = "0.14.0"
 taffy = "0.5"
+winit = "0.30"
+pollster = "0.3"
