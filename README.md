@@ -4,6 +4,8 @@ GPU-accelerated 2D rendering and UI toolkit for Rust.
 
 Build interactive UIs with composable elements, GPU-powered rendering via wgpu, and automatic flex/grid layout via Taffy.
 
+![Jag Demo](images/jag_demo.png)
+
 ## Crates
 
 | Crate | Description |
