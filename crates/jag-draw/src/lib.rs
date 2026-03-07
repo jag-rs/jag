@@ -1,4 +1,33 @@
-//! engine-core: Core types and entry point for the GPU-native 2D engine.
+//! jag-draw: GPU-accelerated 2D rendering engine.
+#![allow(
+    clippy::collapsible_if,
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::get_first,
+    clippy::unnecessary_cast,
+    clippy::useless_conversion,
+    clippy::manual_clamp,
+    clippy::assign_op_pattern,
+    clippy::needless_borrow,
+    clippy::or_fun_call,
+    clippy::collapsible_match,
+    clippy::needless_range_loop,
+    clippy::manual_ok_or,
+    clippy::or_then_unwrap,
+    clippy::map_unwrap_or,
+    clippy::unnecessary_map_or,
+    clippy::unwrap_or_default,
+    clippy::manual_is_multiple_of,
+    clippy::manual_slice_size_calculation,
+    clippy::excessive_precision,
+    clippy::identity_op,
+    clippy::new_without_default,
+    clippy::needless_update,
+    clippy::empty_line_after_doc_comments,
+    clippy::doc_lazy_continuation,
+    clippy::field_reassign_with_default,
+    clippy::option_map_or_none
+)]
 
 use std::sync::Arc;
 

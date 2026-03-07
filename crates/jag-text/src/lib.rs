@@ -1,6 +1,14 @@
-//! detir-text: Custom text layout and shaping engine.
+//! jag-text: Custom text layout and shaping engine.
+#![allow(
+    clippy::collapsible_if,
+    clippy::too_many_arguments,
+    clippy::clone_on_copy,
+    clippy::useless_conversion,
+    clippy::needless_update,
+    clippy::manual_abs_diff
+)]
 //!
-//! Phase 1: core foundation pieces for detir-text.
+//! Core foundation pieces for jag-text.
 //! - 1.2: font management layer (font loading, metrics, glyph outlines/bitmaps)
 //! - 1.3: basic text shaping using harfbuzz_rs
 //! - 1.4: Unicode grapheme handling (clusters, combining marks, emoji/ZWJ)

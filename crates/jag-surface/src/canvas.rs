@@ -571,7 +571,7 @@ impl Canvas {
             // Rasterize at *physical* pixel size so glyph bitmaps map 1:1 to the
             // backbuffer. We still keep layout in logical pixels and convert
             // offsets back into logical units below.
-            // Carry font weight through so providers (e.g., DetirTextProvider) can approximate
+            // Carry font weight through so providers (e.g., JagTextProvider) can approximate
             // bold/semibold rendering when available.
             let run = TextRun {
                 text,

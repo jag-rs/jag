@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Return embedded bytes for built-in raster images that ship with the
-/// Detir binary. Currently unused for application assets; all images are
+/// Jag binary. Currently unused for application assets; all images are
 /// loaded from the filesystem.
 fn builtin_image_bytes(_path: &Path) -> Option<&'static [u8]> {
     None

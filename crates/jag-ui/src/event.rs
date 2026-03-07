@@ -1,7 +1,6 @@
 //! Standalone event types and the `EventHandler` trait.
 //!
-//! These types are self-contained — they do **not** depend on `detir-platform`
-//! or any other external crate.
+//! These types are self-contained — no external platform dependencies.
 
 /// Mouse button identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

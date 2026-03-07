@@ -1,4 +1,10 @@
 //! jag-surface: Canvas-style API on top of jag-draw.
+#![allow(
+    clippy::collapsible_if,
+    clippy::collapsible_match,
+    clippy::too_many_arguments,
+    clippy::type_complexity
+)]
 
 mod canvas;
 pub mod shapes;

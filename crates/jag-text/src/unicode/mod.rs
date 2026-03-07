@@ -1,4 +1,4 @@
-//! Unicode utilities for detir-text.
+//! Unicode utilities for jag-text.
 //!
 //! Phase 1.4 focuses on grapheme cluster segmentation and
 //! cursor-safe navigation over extended grapheme clusters

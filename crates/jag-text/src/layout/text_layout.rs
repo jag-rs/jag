@@ -151,7 +151,7 @@ impl TextLayout {
     /// Convenience: layout text using a default system font.
     ///
     /// This uses `fontdb` to pick a reasonable sans-serif font from the host
-    /// system (same heuristic as `engine-core::DetirTextProvider::from_system_fonts`)
+    /// system (same heuristic as `JagTextProvider::from_system_fonts`)
     /// so callers don't need to manage a `FontFace` directly.
     pub fn with_system_font(
         text: impl Into<String>,

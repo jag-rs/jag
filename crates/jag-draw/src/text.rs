@@ -1,6 +1,6 @@
-//! Text rendering providers for detir-draw.
+//! Text rendering providers for jag-draw.
 //!
-//! The primary provider is [`DetirTextProvider`] which uses:
+//! The primary provider is [`JagTextProvider`] which uses:
 //! - `harfrust` for text shaping (HarfBuzz implementation)
 //! - `swash` for glyph rasterization
 //! - `fontdb` for font discovery and fallback
@@ -14,10 +14,10 @@
 //! # Example
 //! ```no_run
 //! use jag_draw::{
-//!     DetirTextProvider, SubpixelOrientation, TextRun, ColorLinPremul, TextProvider, FontStyle,
+//!     JagTextProvider, SubpixelOrientation, TextRun, ColorLinPremul, TextProvider, FontStyle,
 //! };
 //!
-//! let provider = DetirTextProvider::from_system_fonts(SubpixelOrientation::RGB)
+//! let provider = JagTextProvider::from_system_fonts(SubpixelOrientation::RGB)
 //!     .expect("Failed to load fonts");
 //!
 //! let run = TextRun {
@@ -143,7 +143,7 @@ impl GlyphBatch {
 
 /// Simple global cache for glyph runs keyed by (text, size, weight, style,
 /// family, provider pointer). Used by direct text rendering paths (e.g.,
-/// detir-surface Canvas) to avoid re-shaping and re-rasterizing identical
+/// jag-surface Canvas) to avoid re-shaping and re-rasterizing identical
 /// text on every frame.
 #[derive(Hash, Eq, PartialEq, Clone, Debug)]
 struct GlyphRunKey {
@@ -577,7 +577,7 @@ pub fn rasterize_run_cached(
 
 /// LEGACY: Simple fontdue-based provider.
 ///
-/// **NOT RECOMMENDED**: Use [`DetirTextProvider`] (harfrust + swash) instead.
+/// **NOT RECOMMENDED**: Use [`JagTextProvider`] (harfrust + swash) instead.
 /// This provider is kept for compatibility and testing purposes only.
 ///
 /// Limitations:
@@ -656,7 +656,7 @@ impl TextProvider for SimpleFontdueProvider {
 
 /// LEGACY: Grayscale fontdue provider.
 ///
-/// **NOT RECOMMENDED**: Use [`DetirTextProvider`] (harfrust + swash) instead.
+/// **NOT RECOMMENDED**: Use [`JagTextProvider`] (harfrust + swash) instead.
 /// This provider is kept for compatibility and testing purposes only.
 ///
 /// Replicates grayscale coverage to RGB channels equally (no subpixel rendering).
@@ -805,7 +805,7 @@ struct CachedFontSet {
 }
 
 // ---------------------------------------------------------------------------
-// DetirTextProvider
+// JagTextProvider
 // ---------------------------------------------------------------------------
 
 /// Text provider backed by jag-text (HarfBuzz) for shaping and swash for rasterization.
@@ -818,7 +818,7 @@ struct CachedFontSet {
 /// `family` string (e.g. `"Georgia, 'Times New Roman', serif"`), the provider
 /// parses the stack and resolves candidates against the system font database,
 /// caching loaded fonts for subsequent requests.
-pub struct DetirTextProvider {
+pub struct JagTextProvider {
     /// Primary (regular) text font.
     font: jag_text::FontFace,
     /// Optional bold/semibold face for heavier weights.
@@ -839,7 +839,7 @@ pub struct DetirTextProvider {
     font_cache: std::sync::Mutex<std::collections::HashMap<String, CachedFontSet>>,
 }
 
-impl DetirTextProvider {
+impl JagTextProvider {
     pub fn from_bytes(bytes: &[u8], orientation: SubpixelOrientation) -> anyhow::Result<Self> {
         let font = jag_text::FontFace::from_vec(bytes.to_vec(), 0)?;
         Ok(Self {
@@ -1178,7 +1178,7 @@ impl DetirTextProvider {
         let regular_face = db.face(regular_id)?;
         let regular = Self::load_face_from_db(regular_face)?;
 
-        if std::env::var("DETIR_TEXT_DEBUG_FAMILY").is_ok() {
+        if std::env::var("JAG_TEXT_DEBUG_FAMILY").is_ok() {
             let resolved = regular_face
                 .families
                 .first()
@@ -1344,7 +1344,7 @@ impl DetirTextProvider {
         requested_weight: u16,
         italic: bool,
     ) -> Option<jag_text::FontFace> {
-        if std::env::var("DETIR_TEXT_DEBUG_FAMILY").is_ok() {
+        if std::env::var("JAG_TEXT_DEBUG_FAMILY").is_ok() {
             eprintln!(
                 "[TEXT] pick_variant weight={} italic={} upright={} italic_faces={}",
                 requested_weight,
@@ -1402,7 +1402,7 @@ impl DetirTextProvider {
     }
 }
 
-impl TextProvider for DetirTextProvider {
+impl TextProvider for JagTextProvider {
     fn rasterize_run(&self, run: &crate::scene::TextRun) -> Vec<RasterizedGlyph> {
         use jag_text::shaping::TextShaper;
         use swash::FontRef;
@@ -1584,7 +1584,7 @@ impl TextProvider for DetirTextProvider {
         // Shape with HarfBuzz — returns the same advances used by rasterize_run,
         // so measurement and rendering always agree.
         let shaped = TextShaper::shape_ltr(&run.text, 0..run.text.len(), &face, 0, size);
-        if std::env::var("DETIR_TEXT_DEBUG_FAMILY").is_ok()
+        if std::env::var("JAG_TEXT_DEBUG_FAMILY").is_ok()
             && (run.text.contains("Z-Ordering")
                 || run.text.contains("Hit Testing")
                 || run.text.contains("Depth Buffer")
@@ -1608,8 +1608,8 @@ impl TextProvider for DetirTextProvider {
         weight: u16,
         style: crate::scene::FontStyle,
     ) -> anyhow::Result<bool> {
-        // Delegate to the concrete DetirTextProvider implementation.
-        DetirTextProvider::register_web_font(self, family, data, weight, style)
+        // Delegate to the concrete JagTextProvider implementation.
+        JagTextProvider::register_web_font(self, family, data, weight, style)
     }
 }
 
@@ -1624,7 +1624,7 @@ mod cosmic_provider {
 
     /// Legacy cosmic-text provider for compatibility.
     ///
-    /// **NOT RECOMMENDED**: Use [`DetirTextProvider`] (harfrust + swash) instead.
+    /// **NOT RECOMMENDED**: Use [`JagTextProvider`] (harfrust + swash) instead.
     /// Only kept for testing/comparison purposes.
     ///
     /// A text provider backed by cosmic-text for shaping and swash for rasterization.
@@ -2068,24 +2068,23 @@ mod tests {
 
     #[test]
     fn cache_key_case_insensitive() {
-        let k1 = DetirTextProvider::cache_key_for(&FontFamilyCandidate::Name("Georgia".into()));
-        let k2 = DetirTextProvider::cache_key_for(&FontFamilyCandidate::Name("georgia".into()));
+        let k1 = JagTextProvider::cache_key_for(&FontFamilyCandidate::Name("Georgia".into()));
+        let k2 = JagTextProvider::cache_key_for(&FontFamilyCandidate::Name("georgia".into()));
         assert_eq!(k1, k2);
     }
 
     #[test]
     fn cache_key_generic_distinct() {
         let serif =
-            DetirTextProvider::cache_key_for(&FontFamilyCandidate::Generic(GenericFamily::Serif));
-        let sans = DetirTextProvider::cache_key_for(&FontFamilyCandidate::Generic(
-            GenericFamily::SansSerif,
-        ));
+            JagTextProvider::cache_key_for(&FontFamilyCandidate::Generic(GenericFamily::Serif));
+        let sans =
+            JagTextProvider::cache_key_for(&FontFamilyCandidate::Generic(GenericFamily::SansSerif));
         assert_ne!(serif, sans);
     }
 
     #[test]
     fn register_web_font_invalid_data_fails() {
-        let provider = DetirTextProvider::from_system_fonts(SubpixelOrientation::RGB);
+        let provider = JagTextProvider::from_system_fonts(SubpixelOrientation::RGB);
         if provider.is_err() {
             // Skip on systems without fonts (CI containers)
             return;

@@ -19,11 +19,11 @@ static SYSTEM_FONTDB: std::sync::LazyLock<Arc<usvg::fontdb::Database>> =
     });
 
 /// Return embedded bytes for built-in SVG icons that ship with the
-/// Detir workspace (toolbar, sidebar, dock, chat, etc.).
+/// Jag workspace (toolbar, sidebar, dock, chat, etc.).
 ///
 /// This allows the core chrome icons to render even when the `images/`
 /// directory is not present next to the binary (for example, when the
-/// Detir browser is launched from another project like WAID).
+/// Jag browser is launched from another project like WAID).
 fn builtin_svg_bytes(path: &Path) -> Option<&'static [u8]> {
     let name = path.file_name()?.to_str()?;
     match name {

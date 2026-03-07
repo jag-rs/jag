@@ -764,7 +764,7 @@ impl JagSurface {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("detir-surface-encoder"),
+                label: Some("jag-surface-encoder"),
             });
 
         // Clear color or transparent
@@ -1210,7 +1210,7 @@ impl JagSurface {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("detir-surface-cached-encoder"),
+                label: Some("jag-surface-cached-encoder"),
             });
 
         self.pass

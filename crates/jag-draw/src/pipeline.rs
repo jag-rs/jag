@@ -1769,9 +1769,9 @@ impl ImageRenderer {
         });
 
         // Optional debug/escape hatch: allow disabling depth testing for images.
-        // When DETIR_IMAGE_NO_DEPTH=1, raster images (including WebView textures)
+        // When JAG_IMAGE_NO_DEPTH=1, raster images (including WebView textures)
         // are rendered without depth testing so they always blend on top.
-        let disable_depth = std::env::var("DETIR_IMAGE_NO_DEPTH")
+        let disable_depth = std::env::var("JAG_IMAGE_NO_DEPTH")
             .ok()
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);

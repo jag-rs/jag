@@ -66,7 +66,7 @@ pub fn load_font(path: impl AsRef<Path>, index: usize) -> Result<FontFace> {
 
 /// Load a reasonable default system sans-serif font using `fontdb`.
 ///
-/// This mirrors the selection used by `engine-core::DetirTextProvider::from_system_fonts`
+/// This mirrors the selection used by `JagTextProvider::from_system_fonts`
 /// so that layout metrics match the primary rendering path.
 pub fn load_system_default_font() -> Result<FontFace> {
     use fontdb::{Database, Family, Query, Source, Stretch, Style, Weight};
