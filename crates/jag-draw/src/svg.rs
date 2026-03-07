@@ -18,12 +18,25 @@ static SYSTEM_FONTDB: std::sync::LazyLock<Arc<usvg::fontdb::Database>> =
         Arc::new(db)
     });
 
-/// Return embedded bytes for built-in SVG icons.
+/// Pluggable provider for embedded SVG icon bytes.
 ///
-/// Applications can bundle their own icons; this hook is reserved for
-/// future built-in icon support.
-fn builtin_svg_bytes(_path: &Path) -> Option<&'static [u8]> {
-    None
+/// Applications call [`set_builtin_svg_provider`] once at startup to
+/// register a lookup function.  When the SVG renderer cannot find a
+/// file on disk it falls back to this provider.
+type SvgBytesProvider = fn(&Path) -> Option<&'static [u8]>;
+
+static SVG_BYTES_PROVIDER: std::sync::OnceLock<SvgBytesProvider> = std::sync::OnceLock::new();
+
+/// Register a function that returns embedded SVG bytes for a given path.
+///
+/// Call this once at application startup so that chrome icons render even
+/// when the `images/` directory is not next to the binary.
+pub fn set_builtin_svg_provider(provider: fn(&Path) -> Option<&'static [u8]>) {
+    let _ = SVG_BYTES_PROVIDER.set(provider);
+}
+
+fn builtin_svg_bytes(path: &Path) -> Option<&'static [u8]> {
+    SVG_BYTES_PROVIDER.get().and_then(|f| f(path))
 }
 
 /// Optional style overrides for SVG rendering
