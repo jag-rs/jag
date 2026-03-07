@@ -1,10 +1,12 @@
 [package]
 name = "jag-text"
-version = "0.0.1"
+version = "0.1.0"
 description = "Text layout and editing utilities for jag"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 repository = "https://github.com/jag-rs/jag"
 edition = "2024"
+keywords = ["text", "layout", "shaping", "font", "unicode"]
+categories = ["text-processing", "rendering"]
 
 [lib]
 path = "src/lib.rs"
