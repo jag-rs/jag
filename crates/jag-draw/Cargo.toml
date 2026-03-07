@@ -1,0 +1,41 @@
+[package]
+name = "jag-draw"
+version = "0.0.1"
+edition = "2024"
+description = "GPU-accelerated 2D rendering engine built on wgpu"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jag-rs/jag"
+keywords = ["gpu", "rendering", "2d", "wgpu", "graphics"]
+categories = ["graphics", "rendering"]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+wgpu = { workspace = true }
+palette = { workspace = true }
+bytemuck = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+jag-shaders = { path = "../jag-shaders" }
+fontdue = { workspace = true }
+image = { workspace = true }
+swash = { workspace = true }
+lyon_tessellation = "1.0"
+lyon_path = "1.0"
+lyon_geom = "1.0"
+usvg = { version = "0.42", default-features = true }
+resvg = { version = "0.42", default-features = true }
+tiny-skia = "0.11"
+cosmic-text = { version = "0.15", default-features = true, features = ["swash"], optional = true }
+freetype-rs = { version = "0.38", optional = true }
+jag-text = { path = "../jag-text" }
+fontdb = { workspace = true }
+pdf-writer = { workspace = true, optional = true }
+
+[features]
+default = ["cosmic_text_shaper"]
+fontdue-rgb-patch = []
+cosmic_text_shaper = ["dep:cosmic-text"]
+freetype_ffi = ["dep:freetype-rs", "cosmic_text_shaper"]
+pdf_export = ["dep:pdf-writer"]

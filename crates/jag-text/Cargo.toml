@@ -1,0 +1,23 @@
+[package]
+name = "jag-text"
+version = "0.0.1"
+description = "Text layout and editing utilities for jag"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jag-rs/jag"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+unicode-segmentation = { workspace = true }
+unicode-linebreak = { workspace = true }
+unicode-bidi = { workspace = true }
+swash = { workspace = true }
+hashbrown = "0.14"
+harfrust = { workspace = true }
+fontdb = { workspace = true }
+
+# Clipboard support (not available on Android)
+[target.'cfg(not(target_os = "android"))'.dependencies]
+arboard = { workspace = true }

@@ -1,0 +1,14 @@
+[package]
+name = "jag-shaders"
+version = "0.0.1"
+description = "WGSL shader modules for jag-draw"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jag-rs/jag"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+bytemuck = { workspace = true }
+

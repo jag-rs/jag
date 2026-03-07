@@ -1,0 +1,14 @@
+[package]
+name = "jag"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "GPU-accelerated 2D rendering and UI toolkit"
+keywords = ["gpu", "rendering", "ui", "2d", "wgpu"]
+categories = ["graphics", "gui", "rendering"]
+
+[dependencies]
+jag-draw = { path = "../jag-draw" }
+jag-ui = { path = "../jag-ui" }
+jag-surface = { path = "../jag-surface" }

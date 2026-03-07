@@ -1,0 +1,34 @@
+[workspace]
+members = [
+    "crates/jag",
+    "crates/jag-draw",
+    "crates/jag-ui",
+    "crates/jag-shaders",
+    "crates/jag-text",
+    "crates/jag-surface",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+version = "0.0.1"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jag-rs/jag"
+
+[workspace.dependencies]
+wgpu = "0.19"
+palette = "0.7"
+bytemuck = { version = "1.14", features = ["derive"] }
+anyhow = "1"
+thiserror = "1"
+fontdue = "0.7"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+unicode-segmentation = "1.11"
+unicode-linebreak = "0.1"
+unicode-bidi = "0.3"
+swash = "0.1"
+fontdb = "0.23"
+harfrust = "0.3.2"
+arboard = "3.4"
+pdf-writer = "0.14.0"
+taffy = "0.5"

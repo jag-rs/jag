@@ -1,0 +1,13 @@
+[package]
+name = "jag-surface"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+image = { workspace = true }
+jag-draw = { path = "../jag-draw" }
+
