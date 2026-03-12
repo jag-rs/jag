@@ -5,7 +5,7 @@
 use crate::focus::FocusManager;
 use crate::hit_region::HitRegionRegistry;
 use crate::layout::Layout;
-use crate::theme::Theme;
+use crate::theme::{DefaultTheme, Theme};
 
 /// Central coordinator for a jag UI.
 ///
@@ -20,7 +20,7 @@ pub struct Ui {
     /// Taffy-backed layout tree.
     pub layout: Layout,
     /// Active theme (colors, spacing, font size).
-    pub theme: Theme,
+    pub theme: Box<dyn Theme>,
 }
 
 impl Ui {
@@ -30,17 +30,17 @@ impl Ui {
             focus: FocusManager::new(),
             hit_registry: HitRegionRegistry::new(),
             layout: Layout::new(),
-            theme: Theme::default(),
+            theme: Box::new(DefaultTheme::default()),
         }
     }
 
     /// Create a new `Ui` with the given theme.
-    pub fn with_theme(theme: Theme) -> Self {
+    pub fn with_theme(theme: impl Theme + 'static) -> Self {
         Self {
             focus: FocusManager::new(),
             hit_registry: HitRegionRegistry::new(),
             layout: Layout::new(),
-            theme,
+            theme: Box::new(theme),
         }
     }
 }
@@ -64,13 +64,13 @@ mod tests {
     fn new_creates_default_ui() {
         let ui = Ui::new();
         assert!(ui.focus.current().is_none());
-        assert_eq!(ui.theme.mode, ThemeMode::Dark);
+        assert_eq!(ui.theme.mode(), ThemeMode::Dark);
     }
 
     #[test]
     fn with_theme_uses_provided_theme() {
-        let ui = Ui::with_theme(Theme::light());
-        assert_eq!(ui.theme.mode, ThemeMode::Light);
+        let ui = Ui::with_theme(DefaultTheme::light());
+        assert_eq!(ui.theme.mode(), ThemeMode::Light);
     }
 
     #[test]

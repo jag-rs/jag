@@ -73,12 +73,12 @@ impl Button {
     }
 
     /// Create a button that derives its colors from a [`Theme`].
-    pub fn with_theme(label: impl Into<String>, theme: &Theme) -> Self {
+    pub fn with_theme(label: impl Into<String>, theme: &dyn Theme) -> Self {
         let mut btn = Self::new(label);
-        btn.bg = theme.colors.button_bg;
-        btn.fg = theme.colors.button_fg;
-        btn.radius = theme.border_radius;
-        btn.label_size = theme.font_size;
+        btn.bg = theme.button_bg();
+        btn.fg = theme.button_fg();
+        btn.radius = theme.button_border_radius();
+        btn.label_size = theme.button_font_size();
         btn
     }
 
@@ -306,12 +306,13 @@ mod tests {
 
     #[test]
     fn button_with_theme() {
-        let theme = Theme::dark();
+        use crate::theme::DefaultTheme;
+        let theme = DefaultTheme::dark();
         let btn = Button::with_theme("Themed", &theme);
-        assert_eq!(btn.bg, theme.colors.button_bg);
-        assert_eq!(btn.fg, theme.colors.button_fg);
-        assert_eq!(btn.radius, theme.border_radius);
-        assert_eq!(btn.label_size, theme.font_size);
+        assert_eq!(btn.bg, theme.button_bg());
+        assert_eq!(btn.fg, theme.button_fg());
+        assert_eq!(btn.radius, theme.button_border_radius());
+        assert_eq!(btn.label_size, theme.button_font_size());
     }
 
     #[test]

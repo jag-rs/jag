@@ -18,5 +18,5 @@ pub use event::*;
 pub use focus::{FocusDirection, FocusId, FocusManager, FocusResult};
 pub use hit_region::HitRegionRegistry;
 pub use layout::Layout;
-pub use theme::{ElementColors, Theme, ThemeMode};
+pub use theme::{DefaultTheme, ElementColors, Sides, Theme, ThemeMode};
 pub use ui::Ui;

@@ -9,7 +9,7 @@ use jag_draw::{
 };
 use jag_surface::JagSurface;
 use jag_ui::elements::{Button, Checkbox, Element, Text};
-use jag_ui::{ElementState, EventHandler, EventResult, MouseButton, MouseClickEvent, Theme};
+use jag_ui::{DefaultTheme, ElementState, EventHandler, EventResult, MouseButton, MouseClickEvent};
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::window::Window;
@@ -57,7 +57,7 @@ fn main() -> anyhow::Result<()> {
     );
 
     // --- Build UI elements (persist across frames) ---
-    let theme = Theme::default();
+    let theme = DefaultTheme::default();
 
     let mut btn1 = Button::with_theme("Primary Button", &theme);
     btn1.rect = Rect {
