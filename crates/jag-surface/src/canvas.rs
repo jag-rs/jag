@@ -99,6 +99,11 @@ impl Canvas {
         self.viewport
     }
 
+    /// Current DPI scale factor used for text measurement and rendering.
+    pub fn dpi_scale(&self) -> f32 {
+        self.dpi_scale
+    }
+
     /// Get the current transform from the painter's transform stack.
     pub fn current_transform(&self) -> Transform2D {
         self.painter.current_transform()
@@ -912,10 +917,16 @@ impl Canvas {
     /// `font_size * 0.55 * text.len()` to match legacy behavior.
     pub fn measure_text_width(&self, text: &str, size_px: f32) -> f32 {
         if let Some(provider) = self.text_provider() {
-            if let Some(shaped) = provider.shape_paragraph(text, size_px) {
+            // Measure at physical pixel size (matching rendering) and divide back.
+            let sf = if self.dpi_scale.is_finite() && self.dpi_scale > 0.0 {
+                self.dpi_scale
+            } else {
+                1.0
+            };
+            let phys_size = (size_px * sf).max(1.0);
+            if let Some(shaped) = provider.shape_paragraph(text, phys_size) {
                 let total: f32 = shaped.glyphs.iter().map(|g| g.x_advance).sum();
-                // Clamp to non-negative to avoid surprising negatives in rare cases.
-                return total.max(0.0);
+                return (total / sf).max(0.0);
             }
         }
         // Fallback heuristic consistent with text_measure.rs and legacy elements.
@@ -935,16 +946,24 @@ impl Canvas {
         family: Option<&str>,
     ) -> f32 {
         if let Some(provider) = self.text_provider() {
+            // Measure at *physical* pixel size (matching draw_text_run_styled)
+            // and divide back to logical units. This keeps measurement and
+            // rendering in sync when hinting shifts glyph advances.
+            let sf = if self.dpi_scale.is_finite() && self.dpi_scale > 0.0 {
+                self.dpi_scale
+            } else {
+                1.0
+            };
             let run = TextRun {
                 text: text.to_string(),
                 pos: [0.0, 0.0],
-                size: size_px,
+                size: (size_px * sf).max(1.0),
                 color: ColorLinPremul::from_srgba_u8([0, 0, 0, 0]),
                 weight,
                 style,
                 family: family.map(String::from),
             };
-            provider.measure_run(&run)
+            provider.measure_run(&run) / sf
         } else {
             text.chars().count() as f32 * size_px * 0.55
         }
