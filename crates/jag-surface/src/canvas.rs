@@ -935,16 +935,25 @@ impl Canvas {
         family: Option<&str>,
     ) -> f32 {
         if let Some(provider) = self.text_provider() {
+            // Measure at the same *physical* pixel size that draw_text_run_styled
+            // uses for rasterization so that variable-font axes (especially
+            // optical size / opsz) produce identical advance widths.  Scale the
+            // result back to logical pixels afterward.
+            let sf = if self.dpi_scale.is_finite() && self.dpi_scale > 0.0 {
+                self.dpi_scale
+            } else {
+                1.0
+            };
             let run = TextRun {
                 text: text.to_string(),
                 pos: [0.0, 0.0],
-                size: size_px,
+                size: (size_px * sf).max(1.0),
                 color: ColorLinPremul::from_srgba_u8([0, 0, 0, 0]),
                 weight,
                 style,
                 family: family.map(String::from),
             };
-            provider.measure_run(&run)
+            provider.measure_run(&run) / sf
         } else {
             text.chars().count() as f32 * size_px * 0.55
         }
