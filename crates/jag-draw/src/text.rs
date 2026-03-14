@@ -882,13 +882,44 @@ impl JagTextProvider {
         let mut db = Database::new();
         db.load_system_fonts();
 
+        // macOS: Apple's SF system font (SFNS.ttf) is hidden from standard
+        // font enumeration but is readable on disk. Load it explicitly so
+        // `from_system_fonts` matches Chrome's default sans-serif.
+        #[cfg(target_os = "macos")]
+        {
+            let sfns_path = std::path::Path::new("/System/Library/Fonts/SFNS.ttf");
+            if sfns_path.exists() {
+                db.load_font_file(sfns_path).ok();
+            }
+            let sfns_italic = std::path::Path::new("/System/Library/Fonts/SFNSItalic.ttf");
+            if sfns_italic.exists() {
+                db.load_font_file(sfns_italic).ok();
+            }
+            let sfns_mono = std::path::Path::new("/System/Library/Fonts/SFNSMono.ttf");
+            if sfns_mono.exists() {
+                db.load_font_file(sfns_mono).ok();
+            }
+            let sfns_mono_italic =
+                std::path::Path::new("/System/Library/Fonts/SFNSMonoItalic.ttf");
+            if sfns_mono_italic.exists() {
+                db.load_font_file(sfns_mono_italic).ok();
+            }
+        }
+
         // Load primary text font (regular weight)
         let id = db
             .query(&Query {
                 families: &[
-                    Family::Name("Segoe UI".into()),
-                    Family::SansSerif,
+                    // macOS system UI font (SFNS.ttf registers as "System Font"
+                    // or ".SFNS-Regular" in fontdb after explicit loading).
+                    Family::Name("System Font".into()),
+                    Family::Name(".AppleSystemUIFont".into()),
                     Family::Name("SF Pro Text".into()),
+                    Family::Name(".SF NS Text".into()),
+                    // Windows system UI font
+                    Family::Name("Segoe UI".into()),
+                    // Generic fallbacks
+                    Family::SansSerif,
                     Family::Name("Arial".into()),
                     Family::Name("Helvetica Neue".into()),
                 ],
@@ -960,16 +991,18 @@ impl JagTextProvider {
         let mono_font = db
             .query(&Query {
                 families: &[
-                    Family::Monospace,
                     // macOS
                     Family::Name("SF Mono".into()),
+                    Family::Name(".SF NS Mono".into()),
                     Family::Name("Menlo".into()),
+                    Family::Name("Monaco".into()),
                     // Windows
                     Family::Name("Cascadia Code".into()),
                     Family::Name("Consolas".into()),
                     // Linux
                     Family::Name("DejaVu Sans Mono".into()),
                     Family::Name("Liberation Mono".into()),
+                    Family::Monospace,
                 ],
                 weight: Weight::NORMAL,
                 stretch: Stretch::Normal,
@@ -1125,21 +1158,26 @@ impl JagTextProvider {
                     Family::Name("Times"),
                 ],
                 GenericFamily::SansSerif => vec![
+                    Family::Name("System Font"),
+                    Family::Name("SF Pro Text"),
                     Family::Name("Segoe UI"),
                     Family::SansSerif,
-                    Family::Name("SF Pro Text"),
                     Family::Name("Arial"),
                     Family::Name("Helvetica Neue"),
                 ],
                 GenericFamily::Monospace => vec![
-                    Family::Monospace,
                     Family::Name("SF Mono"),
+                    Family::Name(".SF NS Mono"),
                     Family::Name("Menlo"),
+                    Family::Name("Monaco"),
                     Family::Name("Cascadia Code"),
                     Family::Name("Consolas"),
                     Family::Name("DejaVu Sans Mono"),
+                    Family::Monospace,
                 ],
                 GenericFamily::SystemUi => vec![
+                    // macOS system font (SFNS.ttf loaded explicitly).
+                    Family::Name("System Font"),
                     // Prefer platform UI faces first so `system-ui` /
                     // `-apple-system` metrics match browser text wrapping.
                     Family::Name("Segoe UI"),
@@ -1338,6 +1376,24 @@ impl JagTextProvider {
         self.font.clone()
     }
 
+    /// Build font variation axis settings for variable fonts.
+    ///
+    /// Always sets `wght` (weight) and `opsz` (optical size). For static
+    /// fonts these are silently ignored by both HarfBuzz and Swash.
+    /// The `opsz` axis is critical for SF Pro (macOS system font) — it
+    /// thickens strokes at small sizes for readability, matching Chrome/Safari.
+    ///
+    /// Returns `(4-byte ASCII tag, value)` pairs usable by both harfrust
+    /// (via `Tag::new`) and swash (via string conversion).
+    fn build_variations(weight: f32, size_px: f32) -> Vec<([u8; 4], f32)> {
+        vec![
+            (*b"wght", weight),
+            // Optical size: clamp to the SFNS axis range (17–96).
+            // Using font size in px directly is the CSS convention.
+            (*b"opsz", size_px.clamp(17.0, 96.0)),
+        ]
+    }
+
     /// Pick the best weight/style variant from a cached font set.
     fn pick_variant(
         set: &CachedFontSet,
@@ -1412,19 +1468,53 @@ impl TextProvider for JagTextProvider {
         let size = run.size.max(1.0);
         let face = self.select_face(run);
 
+        // Build variation settings for variable fonts (wght + opsz).
+        let requested_weight = run.weight.clamp(100.0, 900.0);
+        let raw_variations = Self::build_variations(requested_weight, size);
+
         // Shape the entire run with HarfBuzz so that advances include kerning,
-        // ligatures, and contextual alternates. This makes pen positions match
-        // what shape_paragraph / TextLayout produce for measurement and caret
-        // positioning.
-        let shaped = TextShaper::shape_ltr(&run.text, 0..run.text.len(), &face, 0, size);
+        // ligatures, and contextual alternates. Pass variations so variable
+        // fonts produce correctly-weighted, optically-sized glyph outlines.
+        let shaped = {
+            use jag_text::shaping::hb_tag_from_bytes;
+            let hb_vars: Vec<_> = raw_variations
+                .iter()
+                .map(|(tag, val)| (hb_tag_from_bytes(tag), *val))
+                .collect();
+            TextShaper::shape_ltr_with_variations(
+                &run.text,
+                0..run.text.len(),
+                &face,
+                0,
+                size,
+                &hb_vars,
+            )
+        };
 
         // Build swash resources for rasterisation of shaped glyph IDs.
         let font_bytes = face.as_bytes();
-        let font_ref = FontRef::from_index(&font_bytes, 0)
+        let font_ref = FontRef::from_index(&font_bytes, face.index())
             .expect("jag-text FontFace bytes should be a valid swash FontRef");
 
+        // Compute normalized coordinates for all variation axes so the scaler
+        // renders outlines at the correct weight and optical size.
+        // swash Setting<f32> implements From<&([u8; 4], f32)>, so we
+        // can pass a reference to our raw_variations slice directly.
+        let norm_coords: Vec<swash::NormalizedCoord> = if raw_variations.is_empty() {
+            Vec::new()
+        } else {
+            font_ref
+                .variations()
+                .normalized_coords(&raw_variations)
+                .collect()
+        };
+
         let mut ctx = ScaleContext::new();
-        let mut scaler = ctx.builder(font_ref).size(size).hint(true).build();
+        let mut builder = ctx.builder(font_ref).size(size).hint(true);
+        if !norm_coords.is_empty() {
+            builder = builder.normalized_coords(&norm_coords);
+        }
+        let mut scaler = builder.build();
         let renderer = Render::new(&[
             Source::Outline,
             Source::Bitmap(StrikeWith::BestFit),
@@ -1583,7 +1673,23 @@ impl TextProvider for JagTextProvider {
 
         // Shape with HarfBuzz — returns the same advances used by rasterize_run,
         // so measurement and rendering always agree.
-        let shaped = TextShaper::shape_ltr(&run.text, 0..run.text.len(), &face, 0, size);
+        let requested_weight = run.weight.clamp(100.0, 900.0);
+        let raw_variations = Self::build_variations(requested_weight, size);
+        let shaped = {
+            use jag_text::shaping::hb_tag_from_bytes;
+            let hb_vars: Vec<_> = raw_variations
+                .iter()
+                .map(|(tag, val)| (hb_tag_from_bytes(tag), *val))
+                .collect();
+            TextShaper::shape_ltr_with_variations(
+                &run.text,
+                0..run.text.len(),
+                &face,
+                0,
+                size,
+                &hb_vars,
+            )
+        };
         if std::env::var("JAG_TEXT_DEBUG_FAMILY").is_ok()
             && (run.text.contains("Z-Ordering")
                 || run.text.contains("Hit Testing")
@@ -2080,6 +2186,75 @@ mod tests {
         let sans =
             JagTextProvider::cache_key_for(&FontFamilyCandidate::Generic(GenericFamily::SansSerif));
         assert_ne!(serif, sans);
+    }
+
+    #[test]
+    fn system_provider_selects_distinct_face_for_monospace_family() {
+        let provider = JagTextProvider::from_system_fonts(SubpixelOrientation::RGB);
+        if provider.is_err() {
+            // Skip on systems without fonts (CI containers)
+            return;
+        }
+        let provider = provider.unwrap();
+
+        let base_run = crate::scene::TextRun {
+            text: "font-family".to_string(),
+            pos: [0.0, 0.0],
+            size: 14.0,
+            color: crate::scene::ColorLinPremul::rgba(255, 255, 255, 255),
+            weight: 400.0,
+            style: crate::scene::FontStyle::Normal,
+            family: Some(
+                "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif".to_string(),
+            ),
+        };
+        let mono_run = crate::scene::TextRun {
+            family: Some("\"SF Mono\", \"Fira Code\", \"Cascadia Code\", monospace".to_string()),
+            ..base_run.clone()
+        };
+
+        let default_face = provider.select_face(&base_run);
+        let mono_face = provider.select_face(&mono_run);
+
+        assert!(
+            default_face.index() != mono_face.index()
+                || default_face.as_bytes() != mono_face.as_bytes(),
+            "monospace family should resolve to a different face than the default sans stack"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn system_provider_resolves_hidden_sf_mono_for_explicit_family() {
+        let sf_mono_path = std::path::Path::new("/System/Library/Fonts/SFNSMono.ttf");
+        if !sf_mono_path.exists() {
+            return;
+        }
+
+        let provider = JagTextProvider::from_system_fonts(SubpixelOrientation::RGB);
+        if provider.is_err() {
+            return;
+        }
+        let provider = provider.unwrap();
+
+        let run = crate::scene::TextRun {
+            text: "mono".to_string(),
+            pos: [0.0, 0.0],
+            size: 14.0,
+            color: crate::scene::ColorLinPremul::rgba(255, 255, 255, 255),
+            weight: 400.0,
+            style: crate::scene::FontStyle::Normal,
+            family: Some("\"SF Mono\", monospace".to_string()),
+        };
+
+        let selected = provider.select_face(&run);
+        let expected = std::fs::read(sf_mono_path).expect("read SFNSMono.ttf");
+
+        assert_eq!(
+            selected.as_bytes().as_ref(),
+            expected.as_slice(),
+            "explicit SF Mono family should resolve to the hidden SFNSMono font on macOS"
+        );
     }
 
     #[test]

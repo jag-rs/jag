@@ -821,6 +821,32 @@ impl Canvas {
         provider: &dyn TextProvider,
         z: i32,
     ) {
+        self.draw_text_direct_styled(
+            origin,
+            text,
+            size_px,
+            400.0,
+            FontStyle::Normal,
+            None,
+            color,
+            provider,
+            z,
+        );
+    }
+
+    /// Draw text directly with explicit font styling, bypassing the display list.
+    pub fn draw_text_direct_styled(
+        &mut self,
+        origin: [f32; 2],
+        text: &str,
+        size_px: f32,
+        weight: f32,
+        style: FontStyle,
+        family: Option<&str>,
+        color: ColorLinPremul,
+        provider: &dyn TextProvider,
+        z: i32,
+    ) {
         // Apply current transform to origin (handles zone positioning)
         let transform = self.painter.current_transform();
         let [a, b, c, d, e, f] = transform.m;
@@ -839,15 +865,16 @@ impl Canvas {
             1.0
         };
 
-        // Rasterize at *physical* pixel size; treat this as normal-weight text.
+        // Rasterize at *physical* pixel size so small styled text matches the
+        // same provider path used by display-list text.
         let run = TextRun {
             text: text.to_string(),
             pos: [0.0, 0.0],
             size: (size_px * sf).max(1.0),
             color,
-            weight: 400.0,
-            style: FontStyle::Normal,
-            family: None,
+            weight,
+            style,
+            family: family.map(str::to_string),
         };
 
         // Rasterize glyphs, using the shared cache to avoid
