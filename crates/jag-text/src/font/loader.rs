@@ -74,13 +74,31 @@ pub fn load_system_default_font() -> Result<FontFace> {
     let mut db = Database::new();
     db.load_system_fonts();
 
+    // Match JagTextProvider::from_system_fonts on macOS by explicitly loading
+    // Apple's hidden system UI faces when present.
+    #[cfg(target_os = "macos")]
+    {
+        let sfns_path = std::path::Path::new("/System/Library/Fonts/SFNS.ttf");
+        if sfns_path.exists() {
+            db.load_font_file(sfns_path).ok();
+        }
+        let sfns_italic = std::path::Path::new("/System/Library/Fonts/SFNSItalic.ttf");
+        if sfns_italic.exists() {
+            db.load_font_file(sfns_italic).ok();
+        }
+    }
+
     let id = db
         .query(&Query {
             families: &[
+                Family::Name("System Font".into()),
+                Family::Name(".AppleSystemUIFont".into()),
                 Family::Name("SF Pro Text".into()),
+                Family::Name(".SF NS Text".into()),
                 Family::Name("Segoe UI".into()),
                 Family::SansSerif,
                 Family::Name("Arial".into()),
+                Family::Name("Helvetica Neue".into()),
             ],
             weight: Weight::NORMAL,
             stretch: Stretch::Normal,
