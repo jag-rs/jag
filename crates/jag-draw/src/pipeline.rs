@@ -1829,8 +1829,9 @@ impl ImageRenderer {
             ],
         });
 
-        // Per-draw image params:
-        // [opacity, premultiplied_input_flag, pad0, pad1]
+        // Per-draw image params (ImageParams uniform):
+        // 12 floats = 48 bytes: [opacity, premultiplied, clip_enabled, pad,
+        //                        clip_rect(4), clip_radii(4)]
         let params_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("image-params-bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -1839,7 +1840,7 @@ impl ImageRenderer {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: std::num::NonZeroU64::new(16),
+                    min_binding_size: std::num::NonZeroU64::new(48),
                 },
                 count: None,
             }],
@@ -1958,17 +1959,45 @@ impl ImageRenderer {
         })
     }
 
+    /// Create the image-params uniform bind group.
+    ///
+    /// `rounded_clip`: if `Some`, the shader discards fragments outside
+    /// the rounded rect (SDF-based).  The rect and radii must be in
+    /// **device pixels** (after DPI scaling).
     pub fn params_bind_group(
         &self,
         device: &wgpu::Device,
         opacity: f32,
         premultiplied_input: bool,
     ) -> (wgpu::BindGroup, wgpu::Buffer) {
-        let params: [f32; 4] = [
+        self.params_bind_group_clipped(device, opacity, premultiplied_input, None)
+    }
+
+    pub fn params_bind_group_clipped(
+        &self,
+        device: &wgpu::Device,
+        opacity: f32,
+        premultiplied_input: bool,
+        rounded_clip: Option<&crate::scene::RoundedRectClipGpu>,
+    ) -> (wgpu::BindGroup, wgpu::Buffer) {
+        let (clip_enabled, clip_rect, clip_radii) = match rounded_clip {
+            Some(c) => (1.0_f32, c.rect, c.radii),
+            None => (0.0, [0.0; 4], [0.0; 4]),
+        };
+        // Must match the WGSL ImageParams struct: 12 floats (3 vec4s).
+        let params: [f32; 12] = [
             opacity.clamp(0.0, 1.0),
             if premultiplied_input { 1.0 } else { 0.0 },
-            0.0,
-            0.0,
+            clip_enabled,
+            0.0, // _pad1
+            clip_rect[0],
+            clip_rect[1],
+            clip_rect[2],
+            clip_rect[3],
+            clip_radii[0],
+            clip_radii[1],
+            clip_radii[2],
+            clip_radii[3],
         ];
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("image-params-buffer"),

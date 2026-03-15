@@ -5,6 +5,16 @@ use jag_draw::{
     RoundedRect, Stroke, TextProvider, TextRun, Transform2D, Viewport, snap_to_device,
 };
 
+/// Rounded-rect clip region in device pixels, passed to the image shader
+/// for SDF-based fragment discard.
+#[derive(Debug, Clone, Copy)]
+pub struct RoundedRectClip {
+    /// Bounding rect in device pixels.
+    pub rect: Rect,
+    /// Per-corner radii in device pixels (tl, tr, br, bl).
+    pub radii: [f32; 4],
+}
+
 /// How an image should fit within its bounds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFitMode {
@@ -28,7 +38,7 @@ pub struct Canvas {
     pub(crate) painter: Painter,
     pub(crate) clear_color: Option<ColorLinPremul>,
     pub(crate) text_provider: Option<Arc<dyn TextProvider + Send + Sync>>, // optional high-level text shaper
-    pub(crate) glyph_draws: Vec<([f32; 2], RasterizedGlyph, ColorLinPremul, i32)>, // low-level glyph masks with z-index
+    pub(crate) glyph_draws: Vec<([f32; 2], RasterizedGlyph, ColorLinPremul, i32, Option<Rect>)>, // low-level glyph masks with z-index + clip
     pub(crate) svg_draws: Vec<(
         std::path::PathBuf,
         [f32; 2],
@@ -46,13 +56,17 @@ pub struct Canvas {
         i32,
         Transform2D,
         Option<Rect>,
-    )>, // (path, origin, size, fit, z, transform, device_clip)
+        Option<RoundedRectClip>,
+    )>, // (path, origin, size, fit, z, transform, device_clip, rounded_clip)
     /// Raw pixel data draws: (pixels_rgba, src_width, src_height, origin, dst_size, z, transform)
     pub(crate) raw_image_draws: Vec<RawImageDraw>,
     pub(crate) dpi_scale: f32, // DPI scale factor for text rendering
     // Effective clip stack in device coordinates for direct text rendering.
     // Each entry is the intersection of all active clips at that depth.
     pub(crate) clip_stack: Vec<Option<Rect>>,
+    // Parallel stack: optional rounded-rect clip for the current depth.
+    // When present, image draws receive this for SDF-based corner clipping.
+    pub(crate) rounded_clip_stack: Vec<Option<RoundedRectClip>>,
     // Overlay rectangles that render without depth testing (for modal scrims).
     // These are rendered in a separate pass after the main scene.
     pub(crate) overlay_draws: Vec<(Rect, ColorLinPremul)>,
@@ -627,11 +641,11 @@ impl Canvas {
                                 (clipped_origin_logical[1] * sf).round() / sf;
                         }
                         self.glyph_draws
-                            .push((clipped_origin_logical, clipped, color, z));
+                            .push((clipped_origin_logical, clipped, color, z, None));
                     }
                 } else {
                     self.glyph_draws
-                        .push((glyph_origin_logical, g.clone(), color, z));
+                        .push((glyph_origin_logical, g.clone(), color, z, None));
                 }
             }
         } else {
@@ -771,12 +785,17 @@ impl Canvas {
                             clipped_origin_logical[1] =
                                 (clipped_origin_logical[1] * sf).round() / sf;
                         }
-                        self.glyph_draws
-                            .push((clipped_origin_logical, clipped, glyph_color, z));
+                        self.glyph_draws.push((
+                            clipped_origin_logical,
+                            clipped,
+                            glyph_color,
+                            z,
+                            None,
+                        ));
                     }
                 } else {
                     self.glyph_draws
-                        .push((glyph_origin_logical, g.clone(), glyph_color, z));
+                        .push((glyph_origin_logical, g.clone(), glyph_color, z, None));
                 }
             }
         } else {
@@ -914,11 +933,11 @@ impl Canvas {
                         clipped_origin_logical[1] = (clipped_origin_logical[1] * sf).round() / sf;
                     }
                     self.glyph_draws
-                        .push((clipped_origin_logical, clipped, color, z));
+                        .push((clipped_origin_logical, clipped, color, z, None));
                 }
             } else {
                 self.glyph_draws
-                    .push((glyph_origin_logical, g.clone(), color, z));
+                    .push((glyph_origin_logical, g.clone(), color, z, None));
             }
         }
     }
@@ -995,7 +1014,7 @@ impl Canvas {
         z: i32,
     ) {
         for g in glyphs.iter().cloned() {
-            self.glyph_draws.push((origin, g, color, z));
+            self.glyph_draws.push((origin, g, color, z, None));
         }
     }
 
@@ -1188,9 +1207,10 @@ impl Canvas {
             }
         }
         let device_clip = self.clip_stack.last().copied().flatten();
+        let rounded_clip = self.rounded_clip_stack.last().cloned().flatten();
         let transform = self.painter.current_transform();
         self.image_draws
-            .push((path.into(), origin, size, fit, z, transform, device_clip));
+            .push((path.into(), origin, size, fit, z, transform, device_clip, rounded_clip));
     }
 
     /// Queue raw pixel data to be drawn at origin with the given size.
@@ -1274,6 +1294,43 @@ impl Canvas {
 
     // Expose some painter helpers for advanced users
     pub fn push_clip_rect(&mut self, rect: Rect) {
+        self.push_clip_rect_inner(rect);
+        // No rounded clip for plain rect clips.
+        self.rounded_clip_stack.push(None);
+    }
+
+    /// Push a rounded-rect clip.  The AABB is used for scissor-based coarse
+    /// clipping; the full rounded rect (with per-corner radii) is forwarded
+    /// to image draws for SDF-based fragment discard in the shader.
+    pub fn push_clip_rounded_rect(&mut self, rrect: RoundedRect) {
+        self.push_clip_rect_inner(rrect.rect);
+        // Compute device-space rounded clip for the image shader.
+        let s = self.dpi_scale;
+        let t = self.painter.current_transform();
+        let [a, _b, _c, d, e, f] = t.m;
+        // Assumes axis-aligned transform (translation + uniform scale).
+        let sx = a.abs() * s;
+        let sy = d.abs() * s;
+        let dev_rect = Rect {
+            x: (rrect.rect.x * a + e) * s,
+            y: (rrect.rect.y * d + f) * s,
+            w: rrect.rect.w * sx,
+            h: rrect.rect.h * sy,
+        };
+        let scale_r = sx.min(sy); // uniform radius scale
+        let dev_radii = [
+            rrect.radii.tl * scale_r,
+            rrect.radii.tr * scale_r,
+            rrect.radii.br * scale_r,
+            rrect.radii.bl * scale_r,
+        ];
+        self.rounded_clip_stack.push(Some(RoundedRectClip {
+            rect: dev_rect,
+            radii: dev_radii,
+        }));
+    }
+
+    fn push_clip_rect_inner(&mut self, rect: Rect) {
         // Forward to Painter to keep display list behavior.
         self.painter.push_clip_rect(rect);
 
@@ -1306,10 +1363,6 @@ impl Canvas {
         let merged = match self.clip_stack.last().cloned().unwrap_or(None) {
             None => Some(new_clip),
             Some(prev) => {
-                // If the new clip doesn't intersect the parent clip, push a
-                // zero-area rect instead of None.  None is interpreted as
-                // "no clip active" which would let draws through; a zero-area
-                // rect correctly blocks all draws inside this clip scope.
                 Some(intersect_rect(prev, new_clip).unwrap_or(Rect {
                     x: prev.x,
                     y: prev.y,
@@ -1325,6 +1378,9 @@ impl Canvas {
         self.painter.pop_clip();
         if self.clip_stack.len() > 1 {
             self.clip_stack.pop();
+        }
+        if self.rounded_clip_stack.len() > 1 {
+            self.rounded_clip_stack.pop();
         }
     }
     pub fn push_transform(&mut self, t: Transform2D) {

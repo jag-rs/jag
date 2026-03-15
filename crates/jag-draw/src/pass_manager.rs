@@ -2922,6 +2922,7 @@ impl PassManager {
         width: u32,
         height: u32,
         scene: &GpuScene,
+        solid_batches: &[crate::upload::SolidBatch],
         transparent_scene: &GpuScene,
         transparent_batches: &[crate::upload::TransparentBatch],
         glyph_draws: &[(
@@ -2929,7 +2930,8 @@ impl PassManager {
             crate::text::RasterizedGlyph,
             crate::ColorLinPremul,
             i32,
-        )], // (origin, glyph, color, z)
+            Option<crate::Rect>,
+        )], // (origin, glyph, color, z, clip)
         svg_draws: &[(
             std::path::PathBuf,
             [f32; 2],
@@ -2945,6 +2947,7 @@ impl PassManager {
             [f32; 2],
             i32,
             Option<crate::Rect>,
+            Option<crate::RoundedRectClipGpu>,
         )],
         external_texture_draws: &[crate::upload::ExtractedExternalTextureDraw],
         clear: wgpu::Color,
@@ -3013,8 +3016,9 @@ impl PassManager {
                 [f32; 2],
                 f32,
                 Option<crate::Rect>,
+                Option<&crate::RoundedRectClipGpu>,
             )> = Vec::new();
-            for (path, origin, size, z, clip) in image_draws.iter() {
+            for (path, origin, size, z, clip, rounded_clip) in image_draws.iter() {
                 let tex_opt =
                     if let Some(view) = self.try_get_image_view(std::path::Path::new(path)) {
                         Some(view)
@@ -3022,7 +3026,7 @@ impl PassManager {
                         self.load_image_to_view(std::path::Path::new(path), queue)
                     };
                 if let Some((tex_view, _w, _h)) = tex_opt {
-                    image_views.push((tex_view, *origin, *size, *z as f32, *clip));
+                    image_views.push((tex_view, *origin, *size, *z as f32, *clip, rounded_clip.as_ref()));
                 }
             }
 
@@ -3059,22 +3063,37 @@ impl PassManager {
                 }
             }
 
-            // Group text by z-index for proper depth rendering
-            // eprintln!("🎨 render_unified received {} glyph_draws", glyph_draws.len());
-            let mut text_by_z: std::collections::HashMap<
-                i32,
-                Vec<(
+            // Group text by (z-index, clip rect) for proper depth rendering
+            // and per-clip-region scissor rects.
+            //
+            // We use a Vec of groups instead of a HashMap because Option<Rect>
+            // (with f32 fields) cannot be hashed. Groups with the same (z, clip)
+            // are merged by scanning linearly.
+            struct TextGroup<'a> {
+                z: i32,
+                clip: Option<crate::Rect>,
+                glyphs: Vec<(
                     usize,
                     [f32; 2],
-                    &crate::text::RasterizedGlyph,
-                    &crate::ColorLinPremul,
+                    &'a crate::text::RasterizedGlyph,
+                    &'a crate::ColorLinPremul,
                 )>,
-            > = std::collections::HashMap::new();
-            for (idx, (origin, glyph, color, z)) in glyph_draws.iter().enumerate() {
-                text_by_z
-                    .entry(*z)
-                    .or_insert_with(Vec::new)
-                    .push((idx, *origin, glyph, color));
+            }
+            let mut text_groups_by_zclip: Vec<TextGroup<'_>> = Vec::new();
+            for (idx, (origin, glyph, color, z, clip)) in glyph_draws.iter().enumerate() {
+                // Try to merge with an existing group at the same (z, clip).
+                let found = text_groups_by_zclip
+                    .iter_mut()
+                    .find(|g| g.z == *z && g.clip == *clip);
+                if let Some(group) = found {
+                    group.glyphs.push((idx, *origin, glyph, color));
+                } else {
+                    text_groups_by_zclip.push(TextGroup {
+                        z: *z,
+                        clip: *clip,
+                        glyphs: vec![(idx, *origin, glyph, color)],
+                    });
+                }
             }
             // eprintln!("🎨 Grouped text into {} z-index groups", text_by_z.len());
 
@@ -3112,10 +3131,13 @@ impl PassManager {
                 let mut next_row_height = 0u32;
                 let mut atlas_max_x = 0u32;
                 let mut atlas_max_y = 0u32;
-                let mut all_text_groups: Vec<(i32, Vec<TextQuadVtx>)> = Vec::new();
+                let mut all_text_groups: Vec<(i32, Option<crate::Rect>, Vec<TextQuadVtx>)> =
+                    Vec::new();
 
-                // Process each z-index group
-                for (z_index, glyphs) in text_by_z.iter() {
+                // Process each (z-index, clip) group
+                for tg in text_groups_by_zclip.iter() {
+                    let z_index = &tg.z;
+                    let glyphs = &tg.glyphs;
                     let mut vertices: Vec<TextQuadVtx> = Vec::new();
                     let force_grayscale = transparent_text_z.contains(z_index);
                     // eprintln!("      🔠 Processing z={} with {} glyphs", z_index, glyphs.len());
@@ -3207,9 +3229,9 @@ impl PassManager {
                         atlas_cursor_x += w;
                     }
 
-                    // Store vertices for this z-index group
+                    // Store vertices for this (z-index, clip) group
                     if !vertices.is_empty() {
-                        all_text_groups.push((*z_index, vertices));
+                        all_text_groups.push((*z_index, tg.clip, vertices));
                     }
                 }
 
@@ -3222,8 +3244,9 @@ impl PassManager {
                     u32,
                     wgpu::BindGroup,
                     wgpu::Buffer,
+                    Option<crate::Rect>,
                 )> = Vec::new();
-                for (z_index, vertices) in all_text_groups {
+                for (z_index, clip, vertices) in all_text_groups {
                     // eprintln!(
                     //     "  🛠️  Creating resources for z={}, vertices={}",
                     //     z_index,
@@ -3267,7 +3290,15 @@ impl PassManager {
                     // eprintln!("    💎 z={} (passing as z-index to shader)", z_index);
                     let (z_bg, z_buf) = self.create_group_z_bind_group(z_index as f32, queue);
 
-                    text_resources.push((z_index, vbuf, ibuf, indices.len() as u32, z_bg, z_buf));
+                    text_resources.push((
+                        z_index,
+                        vbuf,
+                        ibuf,
+                        indices.len() as u32,
+                        z_bg,
+                        z_buf,
+                        clip,
+                    ));
                 }
 
                 // Store atlas usage for next frame's clearing
@@ -3280,7 +3311,7 @@ impl PassManager {
             };
 
             // Sort text groups by z-index (back to front)
-            text_groups.sort_by_key(|(z, _, _, _, _, _)| *z);
+            text_groups.sort_by_key(|(z, _, _, _, _, _, _)| *z);
 
             // Create text bind groups before render pass so they live long enough
             let vp_bg_text = self.text.vp_bind_group(&self.device, &self.vp_buffer);
@@ -3298,7 +3329,7 @@ impl PassManager {
                 Option<crate::Rect>,
             )> = Vec::new();
             let mut image_z_vals: Vec<i32> = Vec::new();
-            for (tex_view, origin, size, z_val, clip) in image_views.iter() {
+            for (tex_view, origin, size, z_val, clip, rounded_clip) in image_views.iter() {
                 let verts = [
                     ImageQuadVtx {
                         pos: [origin[0], origin[1]],
@@ -3339,7 +3370,7 @@ impl PassManager {
                 let (z_bg_img, z_buf_img) = self.create_group_z_bind_group(*z_val as f32, queue);
                 let tex_bg = self.image.tex_bind_group(&self.device, tex_view);
                 let (params_bg, params_buf) =
-                    self.image.params_bind_group(&self.device, 1.0, false);
+                    self.image.params_bind_group_clipped(&self.device, 1.0, false, *rounded_clip);
 
                 image_z_vals.push(*z_val as i32);
                 image_resources.push((
@@ -3509,8 +3540,36 @@ impl PassManager {
                 timestamp_writes: None,
             });
 
-            // Render solids first (they're already sorted by z-index in the scene)
-            self.solid_direct.record(&mut pass, &vp_bg, scene);
+            // Render opaque solids in per-clip batches. Each batch has its own
+            // scissor rect so that overflow:hidden/scroll clips content correctly.
+            if solid_batches.is_empty() {
+                // No clip batches recorded — fall back to drawing all at once.
+                self.solid_direct.record(&mut pass, &vp_bg, scene);
+            } else {
+                for batch in solid_batches {
+                    if batch.index_count == 0 {
+                        continue;
+                    }
+                    if let Some(c) = batch.clip {
+                        pass.set_scissor_rect(
+                            c.x.max(0.0) as u32,
+                            c.y.max(0.0) as u32,
+                            (c.w.max(1.0) as u32).min(width.saturating_sub(c.x.max(0.0) as u32)),
+                            (c.h.max(1.0) as u32).min(height.saturating_sub(c.y.max(0.0) as u32)),
+                        );
+                    }
+                    self.solid_direct.record_index_range(
+                        &mut pass,
+                        &vp_bg,
+                        scene,
+                        batch.index_start,
+                        batch.index_count,
+                    );
+                    if batch.clip.is_some() {
+                        pass.set_scissor_rect(0, 0, width, height);
+                    }
+                }
+            }
 
             // Unified z-sorted rendering: interleave ALL draw types (transparent
             // solids, text, images, SVGs, external textures) by z-index so that
@@ -3529,7 +3588,7 @@ impl PassManager {
             for (i, batch) in transparent_batches.iter().enumerate() {
                 all_items.push((batch.z, DrawItem::TransparentBatch(i)));
             }
-            for (i, (z, _, _, _, _, _)) in text_groups.iter().enumerate() {
+            for (i, (z, _, _, _, _, _, _)) in text_groups.iter().enumerate() {
                 all_items.push((*z, DrawItem::TextGroup(i)));
             }
             for (i, z) in image_z_vals.iter().enumerate() {
@@ -3548,6 +3607,16 @@ impl PassManager {
                 match item {
                     DrawItem::TransparentBatch(i) => {
                         let batch = &transparent_batches[i];
+                        if let Some(c) = batch.clip {
+                            pass.set_scissor_rect(
+                                c.x.max(0.0) as u32,
+                                c.y.max(0.0) as u32,
+                                (c.w.max(1.0) as u32)
+                                    .min(width.saturating_sub(c.x.max(0.0) as u32)),
+                                (c.h.max(1.0) as u32)
+                                    .min(height.saturating_sub(c.y.max(0.0) as u32)),
+                            );
+                        }
                         self.transparent_solid_direct.record_index_range(
                             &mut pass,
                             &vp_bg,
@@ -3555,10 +3624,23 @@ impl PassManager {
                             batch.index_start,
                             batch.index_count,
                         );
+                        if batch.clip.is_some() {
+                            pass.set_scissor_rect(0, 0, width, height);
+                        }
                     }
                     DrawItem::TextGroup(i) => {
-                        let (_z, vbuf, ibuf, index_count, z_bg, _z_buf) = &text_groups[i];
+                        let (_z, vbuf, ibuf, index_count, z_bg, _z_buf, clip) = &text_groups[i];
                         if *index_count > 0 {
+                            if let Some(c) = clip {
+                                pass.set_scissor_rect(
+                                    c.x.max(0.0) as u32,
+                                    c.y.max(0.0) as u32,
+                                    (c.w.max(1.0) as u32)
+                                        .min(width.saturating_sub(c.x.max(0.0) as u32)),
+                                    (c.h.max(1.0) as u32)
+                                        .min(height.saturating_sub(c.y.max(0.0) as u32)),
+                                );
+                            }
                             pass.set_pipeline(&self.text.pipeline);
                             pass.set_bind_group(0, &vp_bg_text, &[]);
                             pass.set_bind_group(1, z_bg, &[]);
@@ -3566,6 +3648,9 @@ impl PassManager {
                             pass.set_vertex_buffer(0, vbuf.slice(..));
                             pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint16);
                             pass.draw_indexed(0..*index_count, 0, 0..1);
+                            if clip.is_some() {
+                                pass.set_scissor_rect(0, 0, width, height);
+                            }
                         }
                     }
                     DrawItem::Image(i) => {
@@ -3634,9 +3719,10 @@ impl PassManager {
             [f32; 2],
             f32,
             Option<crate::Rect>,
+            Option<&crate::RoundedRectClipGpu>,
         )> = Vec::new();
         // eprintln!("🔍 Pre-fetching {} images for unified offscreen render", image_draws.len());
-        for (path, origin, size, z, clip) in image_draws.iter() {
+        for (path, origin, size, z, clip, rounded_clip) in image_draws.iter() {
             // eprintln!("  📦 Image at z={}: {:?}", z, path.file_name().unwrap_or_default());
             let tex_opt = if let Some(view) = self.try_get_image_view(std::path::Path::new(path)) {
                 Some(view)
@@ -3644,7 +3730,7 @@ impl PassManager {
                 self.load_image_to_view(std::path::Path::new(path), queue)
             };
             if let Some((tex_view, _w, _h)) = tex_opt {
-                image_views_off.push((tex_view, *origin, *size, *z as f32, *clip));
+                image_views_off.push((tex_view, *origin, *size, *z as f32, *clip, rounded_clip.as_ref()));
             }
         }
 
@@ -3682,21 +3768,31 @@ impl PassManager {
             }
         }
 
-        // Group text by z-index for proper depth rendering (offscreen path)
-        let mut text_by_z_off: std::collections::HashMap<
-            i32,
-            Vec<(
+        // Group text by (z-index, clip) for proper depth rendering (offscreen path)
+        struct TextGroupOff<'a> {
+            z: i32,
+            clip: Option<crate::Rect>,
+            glyphs: Vec<(
                 usize,
                 [f32; 2],
-                &crate::text::RasterizedGlyph,
-                &crate::ColorLinPremul,
+                &'a crate::text::RasterizedGlyph,
+                &'a crate::ColorLinPremul,
             )>,
-        > = std::collections::HashMap::new();
-        for (idx, (origin, glyph, color, z)) in glyph_draws.iter().enumerate() {
-            text_by_z_off
-                .entry(*z)
-                .or_insert_with(Vec::new)
-                .push((idx, *origin, glyph, color));
+        }
+        let mut text_groups_by_zclip_off: Vec<TextGroupOff<'_>> = Vec::new();
+        for (idx, (origin, glyph, color, z, clip)) in glyph_draws.iter().enumerate() {
+            let found = text_groups_by_zclip_off
+                .iter_mut()
+                .find(|g| g.z == *z && g.clip == *clip);
+            if let Some(group) = found {
+                group.glyphs.push((idx, *origin, glyph, color));
+            } else {
+                text_groups_by_zclip_off.push(TextGroupOff {
+                    z: *z,
+                    clip: *clip,
+                    glyphs: vec![(idx, *origin, glyph, color)],
+                });
+            }
         }
 
         // Prepare text rendering data (same as direct path)
@@ -3734,10 +3830,12 @@ impl PassManager {
             let mut next_row_height = 0u32;
             let mut atlas_max_x = 0u32;
             let mut atlas_max_y = 0u32;
-            let mut all_text_groups: Vec<(i32, Vec<TextQuadVtx>)> = Vec::new();
+            let mut all_text_groups: Vec<(i32, Option<crate::Rect>, Vec<TextQuadVtx>)> = Vec::new();
 
-            // Process each z-index group
-            for (z_index, glyphs) in text_by_z_off.iter() {
+            // Process each (z-index, clip) group
+            for tg in text_groups_by_zclip_off.iter() {
+                let z_index = &tg.z;
+                let glyphs = &tg.glyphs;
                 let mut vertices: Vec<TextQuadVtx> = Vec::new();
                 let force_grayscale = transparent_text_z.contains(z_index);
 
@@ -3816,9 +3914,9 @@ impl PassManager {
                     atlas_cursor_x += w;
                 }
 
-                // Store vertices for this z-index group
+                // Store vertices for this (z-index, clip) group
                 if !vertices.is_empty() {
-                    all_text_groups.push((*z_index, vertices));
+                    all_text_groups.push((*z_index, tg.clip, vertices));
                 }
             }
 
@@ -3830,8 +3928,9 @@ impl PassManager {
                 u32,
                 wgpu::BindGroup,
                 wgpu::Buffer,
+                Option<crate::Rect>,
             )> = Vec::new();
-            for (z_index, vertices) in all_text_groups {
+            for (z_index, clip, vertices) in all_text_groups {
                 let quad_count = vertices.len() / 4;
                 let mut indices: Vec<u16> = Vec::with_capacity(quad_count * 6);
                 for i in 0..quad_count {
@@ -3869,7 +3968,7 @@ impl PassManager {
                 // Pass z_index as float directly - shader will convert to depth
                 let (z_bg, z_buf) = self.create_group_z_bind_group(z_index as f32, queue);
 
-                text_resources.push((z_index, vbuf, ibuf, indices.len() as u32, z_bg, z_buf));
+                text_resources.push((z_index, vbuf, ibuf, indices.len() as u32, z_bg, z_buf, clip));
             }
 
             // Store atlas usage for next frame's clearing
@@ -3882,7 +3981,7 @@ impl PassManager {
         };
 
         // Sort text groups by z-index (back to front)
-        text_groups_off.sort_by_key(|(z, _, _, _, _, _)| *z);
+        text_groups_off.sort_by_key(|(z, _, _, _, _, _, _)| *z);
 
         // Create text bind groups (use offscreen text renderer for offscreen rendering)
         let vp_bg_text_off = self
@@ -3902,7 +4001,7 @@ impl PassManager {
             wgpu::Buffer,
             Option<crate::Rect>,
         )> = Vec::new();
-        for (tex_view, origin, size, z_val, clip) in image_views_off.iter() {
+        for (tex_view, origin, size, z_val, clip, rounded_clip) in image_views_off.iter() {
             let verts = [
                 ImageQuadVtx {
                     pos: [origin[0], origin[1]],
@@ -3946,7 +4045,7 @@ impl PassManager {
             let tex_bg = self.image_offscreen.tex_bind_group(&self.device, tex_view);
             let (params_bg, params_buf) =
                 self.image_offscreen
-                    .params_bind_group(&self.device, 1.0, false);
+                    .params_bind_group_clipped(&self.device, 1.0, false, *rounded_clip);
 
             image_z_vals_off.push(*z_val as i32);
             image_resources_off.push((
@@ -4115,9 +4214,34 @@ impl PassManager {
             timestamp_writes: None,
         });
 
-        // Render solids first
-        // eprintln!("🟢 OFFSCREEN PATH: Rendering {} solid vertices", scene.vertices);
-        self.solid_offscreen.record(&mut pass, &vp_bg_off, scene);
+        // Render opaque solids in per-clip batches (offscreen path).
+        if solid_batches.is_empty() {
+            self.solid_offscreen.record(&mut pass, &vp_bg_off, scene);
+        } else {
+            for batch in solid_batches {
+                if batch.index_count == 0 {
+                    continue;
+                }
+                if let Some(c) = batch.clip {
+                    pass.set_scissor_rect(
+                        c.x.max(0.0) as u32,
+                        c.y.max(0.0) as u32,
+                        (c.w.max(1.0) as u32).min(width.saturating_sub(c.x.max(0.0) as u32)),
+                        (c.h.max(1.0) as u32).min(height.saturating_sub(c.y.max(0.0) as u32)),
+                    );
+                }
+                self.solid_offscreen.record_index_range(
+                    &mut pass,
+                    &vp_bg_off,
+                    scene,
+                    batch.index_start,
+                    batch.index_count,
+                );
+                if batch.clip.is_some() {
+                    pass.set_scissor_rect(0, 0, width, height);
+                }
+            }
+        }
 
         // Unified z-sorted rendering (offscreen path): interleave ALL draw types
         // by z-index for correct depth ordering across element types.
@@ -4134,7 +4258,7 @@ impl PassManager {
             for (i, batch) in transparent_batches.iter().enumerate() {
                 all_items.push((batch.z, DrawItemOff::TransparentBatch(i)));
             }
-            for (i, (z, _, _, _, _, _)) in text_groups_off.iter().enumerate() {
+            for (i, (z, _, _, _, _, _, _)) in text_groups_off.iter().enumerate() {
                 all_items.push((*z, DrawItemOff::TextGroup(i)));
             }
             for (i, z) in image_z_vals_off.iter().enumerate() {
@@ -4152,6 +4276,16 @@ impl PassManager {
                 match item {
                     DrawItemOff::TransparentBatch(i) => {
                         let batch = &transparent_batches[i];
+                        if let Some(c) = batch.clip {
+                            pass.set_scissor_rect(
+                                c.x.max(0.0) as u32,
+                                c.y.max(0.0) as u32,
+                                (c.w.max(1.0) as u32)
+                                    .min(width.saturating_sub(c.x.max(0.0) as u32)),
+                                (c.h.max(1.0) as u32)
+                                    .min(height.saturating_sub(c.y.max(0.0) as u32)),
+                            );
+                        }
                         self.transparent_solid_offscreen.record_index_range(
                             &mut pass,
                             &vp_bg_off,
@@ -4159,10 +4293,23 @@ impl PassManager {
                             batch.index_start,
                             batch.index_count,
                         );
+                        if batch.clip.is_some() {
+                            pass.set_scissor_rect(0, 0, width, height);
+                        }
                     }
                     DrawItemOff::TextGroup(i) => {
-                        let (_z, vbuf, ibuf, index_count, z_bg, _z_buf) = &text_groups_off[i];
+                        let (_z, vbuf, ibuf, index_count, z_bg, _z_buf, clip) = &text_groups_off[i];
                         if *index_count > 0 {
+                            if let Some(c) = clip {
+                                pass.set_scissor_rect(
+                                    c.x.max(0.0) as u32,
+                                    c.y.max(0.0) as u32,
+                                    (c.w.max(1.0) as u32)
+                                        .min(width.saturating_sub(c.x.max(0.0) as u32)),
+                                    (c.h.max(1.0) as u32)
+                                        .min(height.saturating_sub(c.y.max(0.0) as u32)),
+                                );
+                            }
                             pass.set_pipeline(&self.text_offscreen.pipeline);
                             pass.set_bind_group(0, &vp_bg_text_off, &[]);
                             pass.set_bind_group(1, z_bg, &[]);
@@ -4170,6 +4317,9 @@ impl PassManager {
                             pass.set_vertex_buffer(0, vbuf.slice(..));
                             pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint16);
                             pass.draw_indexed(0..*index_count, 0, 0..1);
+                            if clip.is_some() {
+                                pass.set_scissor_rect(0, 0, width, height);
+                            }
                         }
                     }
                     DrawItemOff::Image(i) => {

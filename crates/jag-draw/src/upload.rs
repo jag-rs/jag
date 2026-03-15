@@ -28,6 +28,9 @@ pub struct ExtractedTextDraw {
     pub run: TextRun,
     pub z: i32,
     pub transform: Transform2D,
+    /// Clip rect (in logical scene coordinates) inherited from the display list
+    /// clip stack. `None` means no clipping.
+    pub clip: Option<Rect>,
 }
 
 /// Extracted image draw from DisplayList (placeholder for future)
@@ -69,11 +72,23 @@ pub struct TransparentBatch {
     pub z: i32,
     pub index_start: u32,
     pub index_count: u32,
+    /// Clip rect inherited from the display list clip stack.
+    pub clip: Option<Rect>,
+}
+
+/// A contiguous range inside the opaque solid index buffer sharing a clip rect.
+#[derive(Clone, Copy, Debug)]
+pub struct SolidBatch {
+    pub index_start: u32,
+    pub index_count: u32,
+    /// Clip rect inherited from the display list clip stack.
+    pub clip: Option<Rect>,
 }
 
 /// Complete unified scene data extracted from DisplayList
 pub struct UnifiedSceneData {
     pub gpu_scene: GpuScene,
+    pub solid_batches: Vec<SolidBatch>,
     pub transparent_gpu_scene: GpuScene,
     pub transparent_batches: Vec<TransparentBatch>,
     pub text_draws: Vec<ExtractedTextDraw>,
@@ -1291,31 +1306,94 @@ pub fn upload_display_list_unified(
     let mut transparent_vertices: Vec<Vertex> = Vec::new();
     let mut transparent_indices: Vec<u16> = Vec::new();
     let mut transparent_batches: Vec<TransparentBatch> = Vec::new();
+    let mut solid_batches: Vec<SolidBatch> = Vec::new();
     let mut text_draws: Vec<ExtractedTextDraw> = Vec::new();
     let mut image_draws: Vec<ExtractedImageDraw> = Vec::new();
     let mut svg_draws: Vec<ExtractedSvgDraw> = Vec::new();
     let mut external_texture_draws: Vec<ExtractedExternalTextureDraw> = Vec::new();
     let is_transparent = |alpha: f32| alpha < 0.999;
-    let record_transparent_batch =
-        |batches: &mut Vec<TransparentBatch>, z: i32, index_start: usize, index_end: usize| {
-            if index_end <= index_start {
-                return;
+
+    // Clip stack: tracks nested PushClip/PopClip regions.
+    // Each entry is the intersection of all ancestor clips.
+    let mut clip_stack: Vec<Option<Rect>> = vec![None];
+    let current_clip = |stack: &[Option<Rect>]| *stack.last().unwrap_or(&None);
+
+    // Helper: intersect two optional clip rects.
+    fn intersect_clips(a: Option<Rect>, b: Rect) -> Option<Rect> {
+        match a {
+            None => Some(b),
+            Some(a) => {
+                let x0 = a.x.max(b.x);
+                let y0 = a.y.max(b.y);
+                let x1 = (a.x + a.w).min(b.x + b.w);
+                let y1 = (a.y + a.h).min(b.y + b.h);
+                if x1 > x0 && y1 > y0 {
+                    Some(Rect {
+                        x: x0,
+                        y: y0,
+                        w: x1 - x0,
+                        h: y1 - y0,
+                    })
+                } else {
+                    // Empty intersection — clip everything
+                    Some(Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 0.0,
+                        h: 0.0,
+                    })
+                }
             }
-            let start = index_start as u32;
-            let count = (index_end - index_start) as u32;
-            if let Some(last) = batches.last_mut()
-                && last.z == z
-                && last.index_start + last.index_count == start
-            {
-                last.index_count += count;
-            } else {
-                batches.push(TransparentBatch {
-                    z,
-                    index_start: start,
-                    index_count: count,
-                });
-            }
-        };
+        }
+    }
+
+    // Track the start of the current opaque solid batch and its clip rect.
+    let mut solid_batch_start: usize = 0;
+    let mut solid_batch_clip: Option<Rect> = None;
+
+    // Finalize the current solid batch up to `index_end`.
+    let flush_solid_batch = |batches: &mut Vec<SolidBatch>,
+                             batch_start: &mut usize,
+                             batch_clip: &mut Option<Rect>,
+                             index_end: usize,
+                             new_clip: Option<Rect>| {
+        if index_end > *batch_start {
+            batches.push(SolidBatch {
+                index_start: *batch_start as u32,
+                index_count: (index_end - *batch_start) as u32,
+                clip: *batch_clip,
+            });
+        }
+        *batch_start = index_end;
+        *batch_clip = new_clip;
+    };
+
+    let record_transparent_batch = |batches: &mut Vec<TransparentBatch>,
+                                    z: i32,
+                                    index_start: usize,
+                                    index_end: usize,
+                                    clip: Option<Rect>| {
+        if index_end <= index_start {
+            return;
+        }
+        let start = index_start as u32;
+        let count = (index_end - index_start) as u32;
+        // Only merge if same z AND same clip rect.
+        if let Some(last) = batches.last_mut()
+            && last.z == z
+            && last.clip == clip
+            && last.index_start + last.index_count == start
+        {
+            last.index_count += count;
+        } else {
+            batches.push(TransparentBatch {
+                z,
+                index_start: start,
+                index_count: count,
+                clip,
+            });
+        }
+    };
 
     // Track transform stack for completeness, but note that draw commands
     // already carry fully-composed world transforms. For unified upload we
@@ -1374,6 +1452,7 @@ pub fn upload_display_list_unified(
                     run: text_run,
                     z: *z,
                     transform: final_transform,
+                    clip: current_clip(&clip_stack),
                 });
             }
 
@@ -1409,6 +1488,7 @@ pub fn upload_display_list_unified(
                     run: text_run,
                     z: *z,
                     transform: final_transform,
+                    clip: current_clip(&clip_stack),
                 });
 
                 // Draw underline if enabled
@@ -1465,6 +1545,7 @@ pub fn upload_display_list_unified(
                             *z,
                             index_start,
                             transparent_indices.len(),
+                            current_clip(&clip_stack),
                         );
                     } else {
                         let base = vertices.len() as u16;
@@ -1499,6 +1580,7 @@ pub fn upload_display_list_unified(
                                 *z,
                                 index_start,
                                 transparent_indices.len(),
+                                current_clip(&clip_stack),
                             );
                         } else {
                             let base = vertices.len() as u16;
@@ -1540,6 +1622,7 @@ pub fn upload_display_list_unified(
                                 *z,
                                 index_start,
                                 transparent_indices.len(),
+                                current_clip(&clip_stack),
                             );
                         } else {
                             push_rect_linear_gradient(
@@ -1582,6 +1665,7 @@ pub fn upload_display_list_unified(
                                 *z,
                                 index_start,
                                 transparent_indices.len(),
+                                current_clip(&clip_stack),
                             );
                         } else {
                             push_rounded_rect(
@@ -1620,6 +1704,7 @@ pub fn upload_display_list_unified(
                                 *z,
                                 index_start,
                                 transparent_indices.len(),
+                                current_clip(&clip_stack),
                             );
                         } else {
                             push_rounded_rect_linear_gradient(
@@ -1664,6 +1749,7 @@ pub fn upload_display_list_unified(
                                 *z,
                                 index_start,
                                 transparent_indices.len(),
+                                current_clip(&clip_stack),
                             );
                         } else {
                             push_rounded_rect_radial_gradient(
@@ -1708,6 +1794,7 @@ pub fn upload_display_list_unified(
                             *z,
                             index_start,
                             transparent_indices.len(),
+                            current_clip(&clip_stack),
                         );
                     } else {
                         push_rect_stroke(
@@ -1750,6 +1837,7 @@ pub fn upload_display_list_unified(
                             *z,
                             index_start,
                             transparent_indices.len(),
+                            current_clip(&clip_stack),
                         );
                     } else {
                         push_rounded_rect_stroke(
@@ -1793,6 +1881,7 @@ pub fn upload_display_list_unified(
                                 *z,
                                 index_start,
                                 transparent_indices.len(),
+                                current_clip(&clip_stack),
                             );
                         } else {
                             push_ellipse(
@@ -1843,6 +1932,7 @@ pub fn upload_display_list_unified(
                                 *z,
                                 index_start,
                                 transparent_indices.len(),
+                                current_clip(&clip_stack),
                             );
                         } else {
                             push_ellipse_radial_gradient(
@@ -1884,6 +1974,7 @@ pub fn upload_display_list_unified(
                         *z,
                         index_start,
                         transparent_indices.len(),
+                        current_clip(&clip_stack),
                     );
                 } else {
                     tessellate_path_fill(
@@ -1923,6 +2014,7 @@ pub fn upload_display_list_unified(
                         *z,
                         index_start,
                         transparent_indices.len(),
+                        current_clip(&clip_stack),
                     );
                 } else {
                     tessellate_path_stroke(
@@ -2002,9 +2094,30 @@ pub fn upload_display_list_unified(
             Command::HitRegionRect { .. } => {}
             Command::HitRegionRoundedRect { .. } => {}
             Command::HitRegionEllipse { .. } => {}
-            // Clip commands would need special handling in unified rendering
-            Command::PushClip(_) => {}
-            Command::PopClip => {}
+            Command::PushClip(clip_rect) => {
+                // Flush the current opaque solid batch before changing clip state.
+                let new_clip = intersect_clips(current_clip(&clip_stack), clip_rect.0);
+                flush_solid_batch(
+                    &mut solid_batches,
+                    &mut solid_batch_start,
+                    &mut solid_batch_clip,
+                    indices.len(),
+                    new_clip,
+                );
+                clip_stack.push(new_clip);
+            }
+            Command::PopClip => {
+                clip_stack.pop();
+                let restored_clip = current_clip(&clip_stack);
+                // Flush the current opaque solid batch before restoring clip state.
+                flush_solid_batch(
+                    &mut solid_batches,
+                    &mut solid_batch_start,
+                    &mut solid_batch_clip,
+                    indices.len(),
+                    restored_clip,
+                );
+            }
             Command::PushOpacity(alpha) => {
                 let parent = current_opacity(&opacity_stack);
                 opacity_stack.push(parent * alpha.clamp(0.0, 1.0));
@@ -2016,6 +2129,15 @@ pub fn upload_display_list_unified(
             }
         }
     }
+
+    // Flush the final opaque solid batch.
+    flush_solid_batch(
+        &mut solid_batches,
+        &mut solid_batch_start,
+        &mut solid_batch_clip,
+        indices.len(),
+        None,
+    );
 
     // Ensure index buffer size meets COPY_BUFFER_ALIGNMENT (4 bytes)
     let align_indices = |indices: &mut Vec<u16>| {
@@ -2072,6 +2194,7 @@ pub fn upload_display_list_unified(
 
     Ok(UnifiedSceneData {
         gpu_scene,
+        solid_batches,
         transparent_gpu_scene,
         transparent_batches,
         text_draws,

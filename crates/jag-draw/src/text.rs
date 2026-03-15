@@ -899,8 +899,7 @@ impl JagTextProvider {
             if sfns_mono.exists() {
                 db.load_font_file(sfns_mono).ok();
             }
-            let sfns_mono_italic =
-                std::path::Path::new("/System/Library/Fonts/SFNSMonoItalic.ttf");
+            let sfns_mono_italic = std::path::Path::new("/System/Library/Fonts/SFNSMonoItalic.ttf");
             if sfns_mono_italic.exists() {
                 db.load_font_file(sfns_mono_italic).ok();
             }

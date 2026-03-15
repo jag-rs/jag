@@ -652,9 +652,29 @@ fn vs_main(inp: VsIn) -> VsOut {
 struct ImageParams {
     opacity: f32,
     premultiplied_input: f32,
-    _pad: vec2<f32>,
+    clip_enabled: f32,
+    _pad1: f32,
+    // Rounded-rect clip in device pixels: (x, y, width, height).
+    clip_rect: vec4<f32>,
+    // Per-corner radii in device pixels: (top-left, top-right, bottom-right, bottom-left).
+    clip_radii: vec4<f32>,
 };
 @group(3) @binding(0) var<uniform> img_params: ImageParams;
+
+// Signed distance to a rounded rectangle.
+// `p` is the test point, `center` the rect center, `half` the half-extents,
+// `r` the corner radius for the quadrant containing `p`.
+fn rounded_box_sdf(p: vec2<f32>, center: vec2<f32>, half: vec2<f32>, radii: vec4<f32>) -> f32 {
+    let q = p - center;
+    // Pick the corner radius for this quadrant (tl, tr, br, bl).
+    let r = select(
+        select(radii.z, radii.w, q.x < 0.0),   // bottom: br or bl
+        select(radii.y, radii.x, q.x < 0.0),   // top:    tr or tl
+        q.y < 0.0
+    );
+    let d = abs(q) - half + vec2<f32>(r, r);
+    return min(max(d.x, d.y), 0.0) + length(max(d, vec2<f32>(0.0, 0.0))) - r;
+}
 
 @fragment
 fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
@@ -662,7 +682,23 @@ fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
     let is_premul = img_params.premultiplied_input > 0.5;
     let rgb_pm = select(c.rgb * c.a, c.rgb, is_premul);
     let out_alpha = c.a * img_params.opacity;
-    return vec4<f32>(rgb_pm * img_params.opacity, out_alpha);
+    var color = vec4<f32>(rgb_pm * img_params.opacity, out_alpha);
+
+    // Rounded-rect clip: discard fragments outside the boundary.
+    if img_params.clip_enabled > 0.5 {
+        let cr = img_params.clip_rect;
+        let center = vec2<f32>(cr.x + cr.z * 0.5, cr.y + cr.w * 0.5);
+        let half = vec2<f32>(cr.z * 0.5, cr.w * 0.5);
+        let d = rounded_box_sdf(inp.pos.xy, center, half, img_params.clip_radii);
+        if d > 0.5 {
+            discard;
+        }
+        // Anti-aliased edge (smooth over ~1px).
+        let aa = 1.0 - smoothstep(-0.5, 0.5, d);
+        color = vec4<f32>(color.rgb * aa, color.a * aa);
+    }
+
+    return color;
 }
 "#;
 

@@ -27,6 +27,8 @@ use crate::canvas::{Canvas, ImageFitMode};
 pub struct CachedFrameData {
     /// The GPU scene (vertex/index buffers for opaque geometry).
     pub gpu_scene: jag_draw::GpuScene,
+    /// Per-clip-region ranges in the opaque solid index buffer.
+    pub solid_batches: Vec<jag_draw::SolidBatch>,
     /// The GPU scene for transparent (per-z-batch) geometry.
     pub transparent_gpu_scene: jag_draw::GpuScene,
     /// Per-z-index ranges in the transparent index buffer.
@@ -37,6 +39,7 @@ pub struct CachedFrameData {
         jag_draw::RasterizedGlyph,
         jag_draw::ColorLinPremul,
         i32,
+        Option<jag_draw::Rect>,
     )>,
     /// Resolved SVG draws.
     pub svg_draws: Vec<(
@@ -55,6 +58,7 @@ pub struct CachedFrameData {
         [f32; 2],
         i32,
         Option<jag_draw::Rect>,
+        Option<jag_draw::RoundedRectClipGpu>,
     )>,
     /// External texture draws (e.g. Canvas3D, opacity group layers).
     pub external_texture_draws: Vec<jag_draw::ExtractedExternalTextureDraw>,
@@ -393,6 +397,7 @@ impl JagSurface {
         jag_draw::RasterizedGlyph,
         jag_draw::ColorLinPremul,
         i32,
+        Option<jag_draw::Rect>,
     )> {
         let Some(provider) = provider else {
             return Vec::new();
@@ -454,6 +459,7 @@ impl JagSurface {
                     Self::grayscale_glyph_for_compositing(g),
                     run.color,
                     text_draw.z,
+                    text_draw.clip,
                 ));
             }
         }
@@ -546,6 +552,7 @@ impl JagSurface {
             [f32; 2],
             i32,
             Option<jag_draw::Rect>,
+            Option<jag_draw::RoundedRectClipGpu>,
         )> = Vec::new();
         for draw in &group_scene.image_draws {
             let resolved_path = crate::resolve_asset_path(&draw.path);
@@ -554,10 +561,10 @@ impl JagSurface {
                 .load_image_to_view(&resolved_path, &self.queue)
                 .is_some()
             {
-                group_images.push((resolved_path, draw.origin, draw.size, draw.z, None));
+                group_images.push((resolved_path, draw.origin, draw.size, draw.z, None, None));
             }
         }
-        group_images.sort_by_key(|(_, _, _, z, _)| *z);
+        group_images.sort_by_key(|(_, _, _, z, _, _)| *z);
 
         let width = viewport.width.max(1);
         let height = viewport.height.max(1);
@@ -592,6 +599,7 @@ impl JagSurface {
             width,
             height,
             &group_scene.gpu_scene,
+            &group_scene.solid_batches,
             &group_scene.transparent_gpu_scene,
             &group_scene.transparent_batches,
             &group_glyphs,
@@ -704,6 +712,7 @@ impl JagSurface {
             raw_image_draws: Vec::new(),
             dpi_scale: self.dpi_scale,
             clip_stack: vec![None],
+            rounded_clip_stack: vec![None],
             overlay_draws: Vec::new(),
             scrim_draws: Vec::new(),
         }
@@ -810,7 +819,7 @@ impl JagSurface {
 
         // Sort image draws by z-index and prepare simplified data (for unified pass)
         let mut image_draws = canvas.image_draws.clone();
-        image_draws.sort_by_key(|(_, _, _, _, z, _, _)| *z);
+        image_draws.sort_by_key(|(_, _, _, _, z, _, _, _)| *z);
 
         // Convert image draws to simplified format (path, origin, size, z, clip)
         // Apply transforms and fit calculations here. We synchronously load images
@@ -825,8 +834,9 @@ impl JagSurface {
             [f32; 2],
             i32,
             Option<jag_draw::Rect>,
+            Option<jag_draw::RoundedRectClipGpu>,
         )> = Vec::new();
-        for (path, origin, size, fit, z, transform, clip) in image_draws.iter() {
+        for (path, origin, size, fit, z, transform, clip, rounded_clip) in image_draws.iter() {
             // Resolve path to check app bundle resources
             let resolved_path = crate::resolve_asset_path(path);
 
@@ -851,6 +861,10 @@ impl JagSurface {
                     render_size,
                     *z,
                     *clip,
+                    rounded_clip.as_ref().map(|rc| jag_draw::RoundedRectClipGpu {
+                        rect: [rc.rect.x, rc.rect.y, rc.rect.w, rc.rect.h],
+                        radii: rc.radii,
+                    }),
                 ));
             }
         }
@@ -961,6 +975,7 @@ impl JagSurface {
                 raw_draw.dst_size,
                 raw_draw.z,
                 raw_draw.clip,
+                None, // no rounded clip for raw images
             ));
         }
 
@@ -1030,7 +1045,7 @@ impl JagSurface {
                         origin[0] = snap(origin[0]);
                         origin[1] = snap(origin[1]);
                     }
-                    glyph_draws.push((origin, g.clone(), run.color, text_draw.z));
+                    glyph_draws.push((origin, g.clone(), run.color, text_draw.z, text_draw.clip));
                 }
             }
         }
@@ -1045,6 +1060,7 @@ impl JagSurface {
             width,
             height,
             &unified_scene.gpu_scene,
+            &unified_scene.solid_batches,
             &unified_scene.transparent_gpu_scene,
             &unified_scene.transparent_batches,
             &glyph_draws,
@@ -1063,6 +1079,7 @@ impl JagSurface {
         // without rebuilding the display list or re-uploading geometry.
         self.frame_cache = Some(CachedFrameData {
             gpu_scene: unified_scene.gpu_scene,
+            solid_batches: unified_scene.solid_batches,
             transparent_gpu_scene: unified_scene.transparent_gpu_scene,
             transparent_batches: unified_scene.transparent_batches,
             glyph_draws,
@@ -1225,6 +1242,7 @@ impl JagSurface {
             width,
             height,
             &cache.gpu_scene,
+            &cache.solid_batches,
             &cache.transparent_gpu_scene,
             &cache.transparent_batches,
             &cache.glyph_draws,
@@ -1370,7 +1388,7 @@ impl JagSurface {
                         origin[0] = snap(origin[0]);
                         origin[1] = snap(origin[1]);
                     }
-                    glyph_draws.push((origin, g.clone(), run.color, text_draw.z));
+                    glyph_draws.push((origin, g.clone(), run.color, text_draw.z, text_draw.clip));
                 }
             }
         }
@@ -1396,7 +1414,7 @@ impl JagSurface {
 
         // Sort and prepare image draws
         let mut image_draws = canvas.image_draws.clone();
-        image_draws.sort_by_key(|(_, _, _, _, z, _, _)| *z);
+        image_draws.sort_by_key(|(_, _, _, _, z, _, _, _)| *z);
 
         let mut prepared_images: Vec<(
             std::path::PathBuf,
@@ -1404,8 +1422,9 @@ impl JagSurface {
             [f32; 2],
             i32,
             Option<jag_draw::Rect>,
+            Option<jag_draw::RoundedRectClipGpu>,
         )> = Vec::new();
-        for (path, origin, size, fit, z, transform, clip) in image_draws.iter() {
+        for (path, origin, size, fit, z, transform, clip, rounded_clip) in image_draws.iter() {
             let resolved_path = crate::resolve_asset_path(path);
             if let Some((tex_view, img_w, img_h)) =
                 self.pass.load_image_to_view(&resolved_path, &self.queue)
@@ -1425,6 +1444,10 @@ impl JagSurface {
                     render_size,
                     *z,
                     *clip,
+                    rounded_clip.as_ref().map(|rc| jag_draw::RoundedRectClipGpu {
+                        rect: [rc.rect.x, rc.rect.y, rc.rect.w, rc.rect.h],
+                        radii: rc.radii,
+                    }),
                 ));
             }
         }
@@ -1461,6 +1484,7 @@ impl JagSurface {
             width,
             height,
             &unified_scene.gpu_scene,
+            &unified_scene.solid_batches,
             &unified_scene.transparent_gpu_scene,
             &unified_scene.transparent_batches,
             &glyph_draws,
