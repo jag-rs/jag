@@ -448,6 +448,109 @@ fn push_rounded_rect_radial_gradient(
     });
 }
 
+/// Tessellate a conic gradient filling a rectangle using angular wedge sectors.
+/// `start_angle` is in radians (CSS convention: 0 = up/north, clockwise).
+fn push_rect_conic_gradient(
+    vertices: &mut Vec<Vertex>,
+    indices: &mut Vec<u16>,
+    rect: Rect,
+    center: [f32; 2],
+    start_angle: f32,
+    stops: &[(f32, [f32; 4])],
+    z: f32,
+    t: Transform2D,
+) {
+    let packed = normalize_gradient_stops(stops);
+    if packed.len() < 2 {
+        return;
+    }
+    let segs = 128u32;
+    let base_center = vertices.len() as u16;
+    // Center vertex colored with first stop
+    let cpos = apply_transform(center, t);
+    vertices.push(Vertex {
+        pos: cpos,
+        color: packed[0].1,
+        z_index: z,
+    });
+
+    // Compute max distance from center to any corner for the outer radius
+    let corners = [
+        [rect.x, rect.y],
+        [rect.x + rect.w, rect.y],
+        [rect.x + rect.w, rect.y + rect.h],
+        [rect.x, rect.y + rect.h],
+    ];
+    let max_r = corners
+        .iter()
+        .map(|c| {
+            let dx = c[0] - center[0];
+            let dy = c[1] - center[1];
+            (dx * dx + dy * dy).sqrt()
+        })
+        .fold(0.0f32, f32::max)
+        * 1.5; // extend to cover the full rect after clipping
+
+    // Emit a triangle fan: center → rim vertex i → rim vertex i+1
+    // Each rim vertex is at angle (i/segs * TAU + start_angle), colored by gradient t
+    let tau = std::f32::consts::TAU;
+    for i in 0..=segs {
+        let frac = (i as f32) / (segs as f32);
+        // CSS conic: 0 = top (north), goes clockwise
+        // atan2 convention: 0 = right, counter-clockwise
+        // So angle = start_angle + frac * TAU, where 0 = north, clockwise
+        let angle = start_angle + frac * tau;
+        // Convert to standard math: north=up means -PI/2, clockwise means negate
+        // x = sin(angle), y = -cos(angle) gives north-up clockwise
+        let px = center[0] + max_r * angle.sin();
+        let py = center[1] - max_r * angle.cos();
+        let p = apply_transform([px, py], t);
+        let color = sample_gradient_stops(&packed, frac);
+        vertices.push(Vertex {
+            pos: p,
+            color,
+            z_index: z,
+        });
+    }
+
+    // Triangle fan indices
+    for i in 0..segs {
+        let i0 = base_center;
+        let i1 = base_center + 1 + i as u16;
+        let i2 = base_center + 1 + (i + 1) as u16;
+        indices.extend_from_slice(&[i0, i1, i2]);
+    }
+}
+
+/// Tessellate a conic gradient filling a rounded rectangle.
+fn push_rounded_rect_conic_gradient(
+    vertices: &mut Vec<Vertex>,
+    indices: &mut Vec<u16>,
+    rrect: RoundedRect,
+    center: [f32; 2],
+    start_angle: f32,
+    stops: &[(f32, [f32; 4])],
+    z: f32,
+    t: Transform2D,
+) {
+    let packed = normalize_gradient_stops(stops);
+    if packed.len() < 2 {
+        return;
+    }
+
+    let path = rounded_rect_to_path(rrect);
+    let tau = std::f32::consts::TAU;
+    tessellate_path_fill_subdivided_with_color_fn(vertices, indices, &path, z, t, 6.0, |p| {
+        let dx = p[0] - center[0];
+        let dy = p[1] - center[1];
+        // atan2(dx, -dy) gives angle from north, clockwise
+        let angle = dx.atan2(-dy) - start_angle;
+        // Normalize to [0, 1)
+        let frac = ((angle % tau) + tau) % tau / tau;
+        sample_gradient_stops(&packed, frac)
+    });
+}
+
 fn tessellate_path_fill(
     vertices: &mut Vec<Vertex>,
     indices: &mut Vec<u16>,
@@ -1046,6 +1149,29 @@ pub fn upload_display_list(
                             *z as f32,
                         );
                     }
+                    Brush::ConicGradient {
+                        center,
+                        start_angle,
+                        stops,
+                    } => {
+                        let packed: Vec<(f32, [f32; 4])> = stops
+                            .iter()
+                            .map(|(tpos, c)| (*tpos, [c.r, c.g, c.b, c.a]))
+                            .collect();
+                        if packed.is_empty() {
+                            continue;
+                        }
+                        push_rect_conic_gradient(
+                            &mut vertices,
+                            &mut indices,
+                            *rect,
+                            *center,
+                            *start_angle,
+                            &packed,
+                            *z as f32,
+                            *transform,
+                        );
+                    }
                     _ => {}
                 }
             }
@@ -1104,6 +1230,29 @@ pub fn upload_display_list(
                         *rrect,
                         *center,
                         *radius,
+                        &packed,
+                        *z as f32,
+                        *transform,
+                    );
+                }
+                Brush::ConicGradient {
+                    center,
+                    start_angle,
+                    stops,
+                } => {
+                    let packed: Vec<(f32, [f32; 4])> = stops
+                        .iter()
+                        .map(|(tpos, c)| (*tpos, [c.r, c.g, c.b, c.a]))
+                        .collect();
+                    if packed.is_empty() {
+                        continue;
+                    }
+                    push_rounded_rect_conic_gradient(
+                        &mut vertices,
+                        &mut indices,
+                        *rrect,
+                        *center,
+                        *start_angle,
                         &packed,
                         *z as f32,
                         *transform,
@@ -1635,6 +1784,51 @@ pub fn upload_display_list_unified(
                             );
                         }
                     }
+                    Brush::ConicGradient {
+                        center,
+                        start_angle,
+                        stops,
+                    } => {
+                        let packed: Vec<(f32, [f32; 4])> = stops
+                            .iter()
+                            .map(|(tpos, c)| (*tpos, premul_opa([c.r, c.g, c.b, c.a], opa)))
+                            .collect();
+                        if packed.is_empty() {
+                            continue;
+                        }
+                        let gradient_transparent = packed.iter().any(|(_, c)| is_transparent(c[3]));
+                        if gradient_transparent {
+                            let index_start = transparent_indices.len();
+                            push_rect_conic_gradient(
+                                &mut transparent_vertices,
+                                &mut transparent_indices,
+                                *rect,
+                                *center,
+                                *start_angle,
+                                &packed,
+                                *z as f32,
+                                final_transform,
+                            );
+                            record_transparent_batch(
+                                &mut transparent_batches,
+                                *z,
+                                index_start,
+                                transparent_indices.len(),
+                                current_clip(&clip_stack),
+                            );
+                        } else {
+                            push_rect_conic_gradient(
+                                &mut vertices,
+                                &mut indices,
+                                *rect,
+                                *center,
+                                *start_angle,
+                                &packed,
+                                *z as f32,
+                                final_transform,
+                            );
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -1758,6 +1952,51 @@ pub fn upload_display_list_unified(
                                 *rrect,
                                 *center,
                                 *radius,
+                                &packed,
+                                *z as f32,
+                                final_transform,
+                            );
+                        }
+                    }
+                    Brush::ConicGradient {
+                        center,
+                        start_angle,
+                        stops,
+                    } => {
+                        let packed: Vec<(f32, [f32; 4])> = stops
+                            .iter()
+                            .map(|(tpos, c)| (*tpos, premul_opa([c.r, c.g, c.b, c.a], opa)))
+                            .collect();
+                        if packed.is_empty() {
+                            continue;
+                        }
+                        let gradient_transparent = packed.iter().any(|(_, c)| is_transparent(c[3]));
+                        if gradient_transparent {
+                            let index_start = transparent_indices.len();
+                            push_rounded_rect_conic_gradient(
+                                &mut transparent_vertices,
+                                &mut transparent_indices,
+                                *rrect,
+                                *center,
+                                *start_angle,
+                                &packed,
+                                *z as f32,
+                                final_transform,
+                            );
+                            record_transparent_batch(
+                                &mut transparent_batches,
+                                *z,
+                                index_start,
+                                transparent_indices.len(),
+                                current_clip(&clip_stack),
+                            );
+                        } else {
+                            push_rounded_rect_conic_gradient(
+                                &mut vertices,
+                                &mut indices,
+                                *rrect,
+                                *center,
+                                *start_angle,
                                 &packed,
                                 *z as f32,
                                 final_transform,

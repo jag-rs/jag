@@ -712,15 +712,17 @@ impl Canvas {
                     },
                     |s| s.1,
                 ),
-                Brush::RadialGradient { stops, .. } => stops.first().map_or(
-                    ColorLinPremul {
-                        r: 1.0,
-                        g: 1.0,
-                        b: 1.0,
-                        a: 1.0,
-                    },
-                    |s| s.1,
-                ),
+                Brush::RadialGradient { stops, .. } | Brush::ConicGradient { stops, .. } => {
+                    stops.first().map_or(
+                        ColorLinPremul {
+                            r: 1.0,
+                            g: 1.0,
+                            b: 1.0,
+                            a: 1.0,
+                        },
+                        |s| s.1,
+                    )
+                }
             };
 
             let run = TextRun {
@@ -739,7 +741,9 @@ impl Canvas {
 
             // Pre-convert gradient stops for the sampling function.
             let grad_stops: Vec<(f32, [f32; 4])> = match brush {
-                Brush::LinearGradient { stops, .. } | Brush::RadialGradient { stops, .. } => stops
+                Brush::LinearGradient { stops, .. }
+                | Brush::RadialGradient { stops, .. }
+                | Brush::ConicGradient { stops, .. } => stops
                     .iter()
                     .map(|(t, c)| (*t, [c.r, c.g, c.b, c.a]))
                     .collect(),
@@ -802,17 +806,17 @@ impl Canvas {
             // Fallback: extract solid color and use display list path.
             let fallback_color = match brush {
                 Brush::Solid(c) => *c,
-                Brush::LinearGradient { stops, .. } | Brush::RadialGradient { stops, .. } => {
-                    stops.first().map_or(
-                        ColorLinPremul {
-                            r: 1.0,
-                            g: 1.0,
-                            b: 1.0,
-                            a: 1.0,
-                        },
-                        |s| s.1,
-                    )
-                }
+                Brush::LinearGradient { stops, .. }
+                | Brush::RadialGradient { stops, .. }
+                | Brush::ConicGradient { stops, .. } => stops.first().map_or(
+                    ColorLinPremul {
+                        r: 1.0,
+                        g: 1.0,
+                        b: 1.0,
+                        a: 1.0,
+                    },
+                    |s| s.1,
+                ),
             };
             self.painter.text(
                 TextRun {
@@ -1209,8 +1213,16 @@ impl Canvas {
         let device_clip = self.clip_stack.last().copied().flatten();
         let rounded_clip = self.rounded_clip_stack.last().cloned().flatten();
         let transform = self.painter.current_transform();
-        self.image_draws
-            .push((path.into(), origin, size, fit, z, transform, device_clip, rounded_clip));
+        self.image_draws.push((
+            path.into(),
+            origin,
+            size,
+            fit,
+            z,
+            transform,
+            device_clip,
+            rounded_clip,
+        ));
     }
 
     /// Queue raw pixel data to be drawn at origin with the given size.
@@ -1362,14 +1374,12 @@ impl Canvas {
 
         let merged = match self.clip_stack.last().cloned().unwrap_or(None) {
             None => Some(new_clip),
-            Some(prev) => {
-                Some(intersect_rect(prev, new_clip).unwrap_or(Rect {
-                    x: prev.x,
-                    y: prev.y,
-                    w: 0.0,
-                    h: 0.0,
-                }))
-            }
+            Some(prev) => Some(intersect_rect(prev, new_clip).unwrap_or(Rect {
+                x: prev.x,
+                y: prev.y,
+                w: 0.0,
+                h: 0.0,
+            })),
         };
         self.clip_stack.push(merged);
     }

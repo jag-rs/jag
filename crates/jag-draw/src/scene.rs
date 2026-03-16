@@ -82,7 +82,12 @@ pub enum Brush {
         radius: f32,
         stops: Vec<(f32, ColorLinPremul)>,
     },
-    // Pattern, RadialGradient etc. can be added later.
+    ConicGradient {
+        center: [f32; 2],
+        /// Starting angle in radians (0 = up/north, clockwise)
+        start_angle: f32,
+        stops: Vec<(f32, ColorLinPremul)>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

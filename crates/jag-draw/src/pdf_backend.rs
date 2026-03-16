@@ -242,6 +242,7 @@ fn brush_solid_color(brush: &Brush) -> Option<ColorLinPremul> {
         Brush::Solid(c) => Some(*c),
         Brush::LinearGradient { stops, .. } => stops.last().map(|(_, c)| *c),
         Brush::RadialGradient { stops, .. } => stops.last().map(|(_, c)| *c),
+        Brush::ConicGradient { stops, .. } => stops.last().map(|(_, c)| *c),
     }
 }
 
