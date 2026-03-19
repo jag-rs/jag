@@ -861,10 +861,12 @@ impl JagSurface {
                     render_size,
                     *z,
                     *clip,
-                    rounded_clip.as_ref().map(|rc| jag_draw::RoundedRectClipGpu {
-                        rect: [rc.rect.x, rc.rect.y, rc.rect.w, rc.rect.h],
-                        radii: rc.radii,
-                    }),
+                    rounded_clip
+                        .as_ref()
+                        .map(|rc| jag_draw::RoundedRectClipGpu {
+                            rect: [rc.rect.x, rc.rect.y, rc.rect.w, rc.rect.h],
+                            radii: rc.radii,
+                        }),
                 ));
             }
         }
@@ -1444,10 +1446,12 @@ impl JagSurface {
                     render_size,
                     *z,
                     *clip,
-                    rounded_clip.as_ref().map(|rc| jag_draw::RoundedRectClipGpu {
-                        rect: [rc.rect.x, rc.rect.y, rc.rect.w, rc.rect.h],
-                        radii: rc.radii,
-                    }),
+                    rounded_clip
+                        .as_ref()
+                        .map(|rc| jag_draw::RoundedRectClipGpu {
+                            rect: [rc.rect.x, rc.rect.y, rc.rect.w, rc.rect.h],
+                            radii: rc.radii,
+                        }),
                 ));
             }
         }

@@ -3026,7 +3026,14 @@ impl PassManager {
                         self.load_image_to_view(std::path::Path::new(path), queue)
                     };
                 if let Some((tex_view, _w, _h)) = tex_opt {
-                    image_views.push((tex_view, *origin, *size, *z as f32, *clip, rounded_clip.as_ref()));
+                    image_views.push((
+                        tex_view,
+                        *origin,
+                        *size,
+                        *z as f32,
+                        *clip,
+                        rounded_clip.as_ref(),
+                    ));
                 }
             }
 
@@ -3370,7 +3377,8 @@ impl PassManager {
                 let (z_bg_img, z_buf_img) = self.create_group_z_bind_group(*z_val as f32, queue);
                 let tex_bg = self.image.tex_bind_group(&self.device, tex_view);
                 let (params_bg, params_buf) =
-                    self.image.params_bind_group_clipped(&self.device, 1.0, false, *rounded_clip);
+                    self.image
+                        .params_bind_group_clipped(&self.device, 1.0, false, *rounded_clip);
 
                 image_z_vals.push(*z_val as i32);
                 image_resources.push((
@@ -3730,7 +3738,14 @@ impl PassManager {
                 self.load_image_to_view(std::path::Path::new(path), queue)
             };
             if let Some((tex_view, _w, _h)) = tex_opt {
-                image_views_off.push((tex_view, *origin, *size, *z as f32, *clip, rounded_clip.as_ref()));
+                image_views_off.push((
+                    tex_view,
+                    *origin,
+                    *size,
+                    *z as f32,
+                    *clip,
+                    rounded_clip.as_ref(),
+                ));
             }
         }
 
@@ -4043,9 +4058,12 @@ impl PassManager {
             // Pass z_index as float directly - shader will convert to depth
             let (z_bg_img, z_buf_img) = self.create_group_z_bind_group(*z_val as f32, queue);
             let tex_bg = self.image_offscreen.tex_bind_group(&self.device, tex_view);
-            let (params_bg, params_buf) =
-                self.image_offscreen
-                    .params_bind_group_clipped(&self.device, 1.0, false, *rounded_clip);
+            let (params_bg, params_buf) = self.image_offscreen.params_bind_group_clipped(
+                &self.device,
+                1.0,
+                false,
+                *rounded_clip,
+            );
 
             image_z_vals_off.push(*z_val as i32);
             image_resources_off.push((
