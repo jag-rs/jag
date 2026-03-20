@@ -40,7 +40,7 @@
 
 **Architecture:** Three published crates — `jag-draw` (GPU 2D renderer, extracted from `engine-core`), `jag-ui` (elements/widgets/layout/events, extracted from `detir-scene`), and `jag` (meta-crate re-exporting both). `detir-scene` becomes a consumer via an IR bridge layer.
 
-**Tech Stack:** Rust 2024, wgpu 0.19, Taffy 0.5, cosmic-text 0.15, lyon 1.0, fontdue 0.7
+**Tech Stack:** Rust 2024, wgpu 0.19, Taffy 0.9, harfrust 0.5, lyon 1.0, fontdue 0.7
 
 **Design Doc:** `docs/plans/2026-03-07-jag-extraction-design.md`
 
@@ -87,10 +87,8 @@ thiserror = "1.0"
 fontdue = "0.7"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 swash = "0.1"
-cosmic-text = { version = "0.15", optional = true }
-freetype-rs = { version = "0.38", optional = true }
 fontdb = "0.23"
-harfrust = "0.3.2"
+harfrust = "0.5.2"
 unicode-segmentation = "1.11"
 unicode-linebreak = "0.1"
 unicode-bidi = "0.3"
