@@ -955,6 +955,14 @@ impl Canvas {
         self.text_provider.as_ref()
     }
 
+    pub fn dpi_scale(&self) -> f32 {
+        if self.dpi_scale.is_finite() && self.dpi_scale > 0.0 {
+            self.dpi_scale
+        } else {
+            1.0
+        }
+    }
+
     /// Measure the width of a text run in logical pixels using the active text provider.
     ///
     /// This is intended for layout/centering code that needs a more accurate width than
