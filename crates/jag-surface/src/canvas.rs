@@ -681,7 +681,8 @@ impl Canvas {
         style: FontStyle,
         family: Option<String>,
         brush: &Brush,
-        text_width: f32,
+        element_width: f32,
+        gradient_x_offset: f32,
         z: i32,
     ) {
         if let Some(ref provider) = self.text_provider
@@ -737,7 +738,8 @@ impl Canvas {
 
             let glyphs = jag_draw::rasterize_run_cached(provider.as_ref(), &run);
             let current_clip = self.clip_stack.last().cloned().unwrap_or(None);
-            let tw = text_width.max(1.0);
+            let ew = element_width.max(1.0);
+            let gx_offset = gradient_x_offset;
 
             // Pre-convert gradient stops for the sampling function.
             let grad_stops: Vec<(f32, [f32; 4])> = match brush {
@@ -768,13 +770,20 @@ impl Canvas {
                 }
 
                 // Pre-tint the glyph mask per-pixel-column with the gradient color.
-                // This gives smooth per-pixel gradient within each glyph, matching
-                // browser rendering of background-clip: text.
+                // The gradient spans the full element width (CSS background-clip: text spec).
+                // gx_offset positions the text run within the element for correct sampling.
                 let tinted = if grad_stops.is_empty() {
                     g.clone()
                 } else {
                     let glyph_x_device = g.offset[0];
-                    tint_glyph_mask_with_gradient(g, glyph_x_device, sf, tw, &grad_stops)
+                    let offset_device = gx_offset * sf;
+                    tint_glyph_mask_with_gradient(
+                        g,
+                        offset_device + glyph_x_device,
+                        sf,
+                        ew,
+                        &grad_stops,
+                    )
                 };
 
                 let glyph_origin_device =
