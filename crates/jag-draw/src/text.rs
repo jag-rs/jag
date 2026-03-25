@@ -837,6 +837,10 @@ pub struct JagTextProvider {
     /// generic family keyword. Protected by a `Mutex` because the
     /// `TextProvider` trait takes `&self`.
     font_cache: std::sync::Mutex<std::collections::HashMap<String, CachedFontSet>>,
+    /// Generation counter incremented on each `register_web_font` call.
+    /// Used as `cache_tag` to invalidate stale text-width caches after
+    /// new fonts are registered.
+    font_generation: std::sync::atomic::AtomicU64,
 }
 
 impl JagTextProvider {
@@ -851,6 +855,7 @@ impl JagTextProvider {
             orientation,
             font_db: None,
             font_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            font_generation: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -871,6 +876,7 @@ impl JagTextProvider {
             orientation,
             font_db: None,
             font_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            font_generation: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -1053,6 +1059,7 @@ impl JagTextProvider {
             orientation,
             font_db: Some(db),
             font_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            font_generation: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -1134,6 +1141,11 @@ impl JagTextProvider {
         // re-rasterizes text using the newly registered web font face
         // instead of returning stale bitmaps from the old fallback font.
         invalidate_glyph_run_cache();
+
+        // Bump generation so text-width caches (keyed by cache_tag)
+        // are invalidated — re-layout will re-measure with the new font.
+        self.font_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         Ok(true)
     }
@@ -1458,6 +1470,11 @@ impl JagTextProvider {
 }
 
 impl TextProvider for JagTextProvider {
+    fn cache_tag(&self) -> u64 {
+        self.font_generation
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     fn rasterize_run(&self, run: &crate::scene::TextRun) -> Vec<RasterizedGlyph> {
         use jag_text::shaping::TextShaper;
         use swash::FontRef;
