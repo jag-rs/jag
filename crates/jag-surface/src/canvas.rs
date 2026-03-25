@@ -750,6 +750,13 @@ impl Canvas {
                 _ => Vec::new(),
             };
 
+            let white = ColorLinPremul {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            };
+
             for g in glyphs.iter() {
                 let mut glyph_origin_logical = [
                     transformed_origin[0] + g.offset[0] / sf,
@@ -760,14 +767,14 @@ impl Canvas {
                     glyph_origin_logical[1] = (glyph_origin_logical[1] * sf).round() / sf;
                 }
 
-                // Sample gradient at the glyph's horizontal position.
-                let glyph_color = if grad_stops.is_empty() {
-                    solid_fallback
+                // Pre-tint the glyph mask per-pixel-column with the gradient color.
+                // This gives smooth per-pixel gradient within each glyph, matching
+                // browser rendering of background-clip: text.
+                let tinted = if grad_stops.is_empty() {
+                    g.clone()
                 } else {
-                    let glyph_x = g.offset[0] / sf;
-                    let t = (glyph_x / tw).clamp(0.0, 1.0);
-                    let [r, g, b, a] = jag_draw::sample_gradient_stops(&grad_stops, t);
-                    ColorLinPremul { r, g, b, a }
+                    let glyph_x_device = g.offset[0];
+                    tint_glyph_mask_with_gradient(g, glyph_x_device, sf, tw, &grad_stops)
                 };
 
                 let glyph_origin_device =
@@ -775,7 +782,7 @@ impl Canvas {
 
                 if let Some(clip) = current_clip {
                     if let Some((clipped_mask, clipped_origin_device)) =
-                        clip_glyph_to_rect(&g.mask, glyph_origin_device, clip)
+                        clip_glyph_to_rect(&tinted.mask, glyph_origin_device, clip)
                     {
                         let clipped = RasterizedGlyph {
                             offset: [0.0, 0.0],
@@ -792,14 +799,14 @@ impl Canvas {
                         self.glyph_draws.push((
                             clipped_origin_logical,
                             clipped,
-                            glyph_color,
+                            white,
                             z,
                             None,
                         ));
                     }
                 } else {
                     self.glyph_draws
-                        .push((glyph_origin_logical, g.clone(), glyph_color, z, None));
+                        .push((glyph_origin_logical, tinted, white, z, None));
                 }
             }
         } else {
@@ -1679,4 +1686,88 @@ fn clip_glyph_to_rect(
 
     let new_origin = [glyph_x0 + start_x as f32, glyph_y0 + start_y as f32];
     Some((clipped, new_origin))
+}
+
+/// Pre-tint a glyph mask with per-pixel-column gradient colors.
+///
+/// For each pixel column in the mask, samples the gradient at that column's
+/// logical x position and multiplies the mask's RGB coverage by the gradient
+/// color. The result can be rendered with `color = white` so the shader
+/// passes through the pre-tinted mask directly — giving smooth per-pixel
+/// gradient text that matches browser `background-clip: text` rendering.
+fn tint_glyph_mask_with_gradient(
+    glyph: &jag_draw::RasterizedGlyph,
+    glyph_x_device: f32,
+    sf: f32,
+    text_width: f32,
+    grad_stops: &[(f32, [f32; 4])],
+) -> jag_draw::RasterizedGlyph {
+    use jag_draw::{GlyphMask, SubpixelMask, ColorMask};
+
+    let tinted_mask = match &glyph.mask {
+        GlyphMask::Subpixel(mask) => {
+            let bpp = mask.bytes_per_pixel();
+            let mut data = mask.data.clone();
+            let w = mask.width as usize;
+            let h = mask.height as usize;
+
+            for col in 0..w {
+                // Sample gradient at this pixel column's logical x position.
+                let pixel_x_logical = (glyph_x_device + col as f32) / sf;
+                let t = (pixel_x_logical / text_width).clamp(0.0, 1.0);
+                let [gr, gg, gb, ga] = jag_draw::sample_gradient_stops(grad_stops, t);
+
+                for row in 0..h {
+                    let idx = (row * w + col) * bpp;
+                    if bpp == 4 && idx + 3 < data.len() {
+                        // RGBA8: multiply each channel by gradient color.
+                        data[idx] = (data[idx] as f32 * gr).round().min(255.0) as u8;
+                        data[idx + 1] = (data[idx + 1] as f32 * gg).round().min(255.0) as u8;
+                        data[idx + 2] = (data[idx + 2] as f32 * gb).round().min(255.0) as u8;
+                        data[idx + 3] = (data[idx + 3] as f32 * ga).round().min(255.0) as u8;
+                    }
+                }
+            }
+
+            GlyphMask::Subpixel(SubpixelMask {
+                width: mask.width,
+                height: mask.height,
+                format: mask.format,
+                data,
+            })
+        }
+        GlyphMask::Color(mask) => {
+            // Color emoji — tint RGBA pixels the same way.
+            let mut data = mask.data.clone();
+            let w = mask.width as usize;
+            let h = mask.height as usize;
+
+            for col in 0..w {
+                let pixel_x_logical = (glyph_x_device + col as f32) / sf;
+                let t = (pixel_x_logical / text_width).clamp(0.0, 1.0);
+                let [gr, gg, gb, ga] = jag_draw::sample_gradient_stops(grad_stops, t);
+
+                for row in 0..h {
+                    let idx = (row * w + col) * 4;
+                    if idx + 3 < data.len() {
+                        data[idx] = (data[idx] as f32 * gr).round().min(255.0) as u8;
+                        data[idx + 1] = (data[idx + 1] as f32 * gg).round().min(255.0) as u8;
+                        data[idx + 2] = (data[idx + 2] as f32 * gb).round().min(255.0) as u8;
+                        data[idx + 3] = (data[idx + 3] as f32 * ga).round().min(255.0) as u8;
+                    }
+                }
+            }
+
+            GlyphMask::Color(ColorMask {
+                width: mask.width,
+                height: mask.height,
+                data,
+            })
+        }
+    };
+
+    jag_draw::RasterizedGlyph {
+        offset: glyph.offset,
+        mask: tinted_mask,
+    }
 }

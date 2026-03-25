@@ -178,6 +178,56 @@ impl InputBox {
         }
     }
 
+    /// Insert a single character at cursor position.
+    pub fn insert_char(&mut self, c: char) {
+        if self.disabled {
+            return;
+        }
+        self.text.insert(self.cursor_position, c);
+        self.cursor_position += c.len_utf8();
+    }
+
+    /// Select all text (line selection). Arguments are ignored.
+    pub fn start_line_selection(&mut self, _x: f32, _y: f32) {
+        self.cursor_position = self.text.len();
+    }
+
+    /// Start word selection at coordinates. Stub: selects all.
+    pub fn start_word_selection(&mut self, _x: f32, _y: f32) {
+        self.cursor_position = self.text.len();
+    }
+
+    /// Start mouse-based text selection at coordinates. Stub: moves cursor to end.
+    pub fn start_mouse_selection(&mut self, _x: f32, _y: f32) {
+        self.cursor_position = self.text.len();
+    }
+
+    /// End mouse selection. No-op stub.
+    pub fn end_mouse_selection(&mut self) {}
+
+    /// Update scroll offset to keep cursor visible. Stub: no-op.
+    pub fn update_scroll(&mut self) {}
+
+    /// Update blink animation tick. Stub: no-op.
+    pub fn update_blink(&mut self) {}
+
+    /// Apply theme colors: text, background, border.
+    pub fn apply_theme_colors(
+        &mut self,
+        text: ColorLinPremul,
+        bg: ColorLinPremul,
+        border: ColorLinPremul,
+    ) {
+        self.text_color = text;
+        self.bg_color = bg;
+        self.border_color = border;
+    }
+
+    /// Render the input box with a text provider. Falls back to the Element::render path.
+    pub fn render(&self, canvas: &mut Canvas, z: i32, _provider: &dyn jag_draw::TextProvider) {
+        <Self as Element>::render(self, canvas, z);
+    }
+
     /// Hit-test the input field.
     pub fn hit_test(&self, x: f32, y: f32) -> bool {
         x >= self.rect.x
