@@ -487,6 +487,18 @@ pub trait TextProvider: Send + Sync {
         None
     }
 
+    /// Line metrics for a specific font family + weight + style.
+    /// Default falls back to `line_metrics()` (ignoring family/weight/style).
+    fn line_metrics_for_style(
+        &self,
+        px: f32,
+        _family: Option<&str>,
+        _weight: u16,
+        _style: crate::scene::FontStyle,
+    ) -> Option<LineMetrics> {
+        self.line_metrics(px)
+    }
+
     /// Measure the total advance width of a styled text run (in the same pixel
     /// units as `run.size`).  The default delegates to `shape_paragraph`,
     /// ignoring weight/style/family.  Providers that support multiple font faces
@@ -1679,6 +1691,39 @@ impl TextProvider for JagTextProvider {
             descent: m.descent,
             line_gap: m.line_gap,
         })
+    }
+
+    fn line_metrics_for_style(
+        &self,
+        px: f32,
+        family: Option<&str>,
+        weight: u16,
+        style: crate::scene::FontStyle,
+    ) -> Option<LineMetrics> {
+        // Try to find the specific font face from the cache (web fonts, system fonts).
+        if let Some(family_str) = family {
+            let is_italic = matches!(
+                style,
+                crate::scene::FontStyle::Italic | crate::scene::FontStyle::Oblique
+            );
+            let candidates = parse_font_family_stack(family_str);
+            let cache = self.font_cache.lock().unwrap();
+            for candidate in &candidates {
+                let key = Self::cache_key_for(candidate);
+                if let Some(set) = cache.get(&key) {
+                    if let Some(face) = Self::pick_variant(set, weight, is_italic) {
+                        let m = face.scaled_metrics(px.max(1.0));
+                        return Some(LineMetrics {
+                            ascent: m.ascent,
+                            descent: m.descent,
+                            line_gap: m.line_gap,
+                        });
+                    }
+                }
+            }
+        }
+        // Fall back to the default font
+        self.line_metrics(px)
     }
 
     fn measure_run(&self, run: &crate::scene::TextRun) -> f32 {
