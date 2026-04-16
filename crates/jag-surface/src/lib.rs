@@ -7,6 +7,7 @@
 )]
 
 mod canvas;
+mod canvas_ext;
 pub mod shapes;
 mod surface;
 

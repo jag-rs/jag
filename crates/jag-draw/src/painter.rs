@@ -71,6 +71,12 @@ impl Painter {
         self.list.commands.len()
     }
 
+    /// Append previously-captured commands to the display list.
+    /// Used by paint-cache replay to re-emit cached self-paint commands.
+    pub fn extend_commands(&mut self, commands: &[Command]) {
+        self.list.commands.extend_from_slice(commands);
+    }
+
     pub fn rect(&mut self, rect: Rect, brush: Brush, z: i32) {
         let t = self.current_transform();
         self.list.commands.push(Command::DrawRect {
