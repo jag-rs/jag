@@ -64,6 +64,18 @@ pub struct ColorLinPremul {
     pub a: f32,
 }
 
+/// An authored sRGB color with 8-bit RGBA channels.
+///
+/// This is useful at API boundaries where the distinction between authored/UI
+/// color and render-ready linear premultiplied color needs to stay explicit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SrgbColor {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
+}
+
 /// Alias for the premultiplied linear color type, for a friendlier name in APIs.
 pub type Color = ColorLinPremul;
 
@@ -157,7 +169,13 @@ pub enum FontStyle {
 pub struct TextRun {
     pub text: String,
     pub pos: [f32; 2],
+    /// Font size in **physical device pixels** (CSS px × DPI scale).
     pub size: f32,
+    /// Font size in **CSS logical pixels** (before DPI scaling).
+    /// Used for the `opsz` (optical size) variation axis so that
+    /// variable fonts pick the correct stroke weight for the reading
+    /// size, matching Chrome.  Zero means "same as `size`" (no DPI).
+    pub logical_size: f32,
     pub color: ColorLinPremul,
     /// CSS-like font weight in the 100–900 range (normal = 400, bold ≈ 700).
     /// Renderers that do not support varying weights may ignore this.

@@ -591,6 +591,7 @@ impl Canvas {
                 text,
                 pos: [0.0, 0.0],
                 size: (size_px * sf).max(1.0),
+                logical_size: size_px,
                 color,
                 weight,
                 style,
@@ -655,6 +656,7 @@ impl Canvas {
                     text,
                     pos: origin,
                     size: size_px,
+                    logical_size: size_px,
                     color,
                     weight,
                     style,
@@ -730,6 +732,7 @@ impl Canvas {
                 text,
                 pos: [0.0, 0.0],
                 size: (size_px * sf).max(1.0),
+                logical_size: size_px,
                 color: solid_fallback,
                 weight,
                 style,
@@ -805,13 +808,8 @@ impl Canvas {
                             clipped_origin_logical[1] =
                                 (clipped_origin_logical[1] * sf).round() / sf;
                         }
-                        self.glyph_draws.push((
-                            clipped_origin_logical,
-                            clipped,
-                            white,
-                            z,
-                            None,
-                        ));
+                        self.glyph_draws
+                            .push((clipped_origin_logical, clipped, white, z, None));
                     }
                 } else {
                     self.glyph_draws
@@ -839,6 +837,7 @@ impl Canvas {
                     text,
                     pos: origin,
                     size: size_px,
+                    logical_size: size_px,
                     color: fallback_color,
                     weight,
                     style,
@@ -910,6 +909,7 @@ impl Canvas {
             text: text.to_string(),
             pos: [0.0, 0.0],
             size: (size_px * sf).max(1.0),
+            logical_size: size_px,
             color,
             weight,
             style,
@@ -1022,6 +1022,7 @@ impl Canvas {
                 text: text.to_string(),
                 pos: [0.0, 0.0],
                 size: (size_px * sf).max(1.0),
+                logical_size: size_px,
                 color: ColorLinPremul::from_srgba_u8([0, 0, 0, 0]),
                 weight,
                 style,
@@ -1711,7 +1712,7 @@ fn tint_glyph_mask_with_gradient(
     text_width: f32,
     grad_stops: &[(f32, [f32; 4])],
 ) -> jag_draw::RasterizedGlyph {
-    use jag_draw::{GlyphMask, SubpixelMask, ColorMask};
+    use jag_draw::{ColorMask, GlyphMask, SubpixelMask};
 
     let tinted_mask = match &glyph.mask {
         GlyphMask::Subpixel(mask) => {

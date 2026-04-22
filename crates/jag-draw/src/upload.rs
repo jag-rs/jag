@@ -1628,6 +1628,7 @@ pub fn upload_display_list_unified(
                     text: hyperlink.text.clone(),
                     pos: hyperlink.pos,
                     size: hyperlink.size,
+                    logical_size: 0.0,
                     color: link_color,
                     weight: hyperlink.weight,
                     style: hyperlink.style,

@@ -10,7 +10,7 @@ use crate::layout::{
     selection::{Selection, SelectionRect},
     undo::{TextOperation, UndoStack},
 };
-use crate::shaping::TextShaper;
+use crate::shaping::{TextShaper, hb_tag_from_bytes};
 
 /// Complete text layout with all lines for a single font.
 ///
@@ -146,6 +146,21 @@ impl TextLayout {
     fn resolve_line_height(line_height_override: Option<f32>, scaled: &ScaledFontMetrics) -> f32 {
         let min_height = scaled.ascent + scaled.descent;
         line_height_override.unwrap_or(min_height + scaled.line_gap)
+    }
+
+    fn shape_layout_run(
+        text: &str,
+        text_range: core::ops::Range<usize>,
+        font: &FontFace,
+        font_size: f32,
+    ) -> crate::shaping::ShapedRun {
+        let variations = [
+            (hb_tag_from_bytes(b"wght"), 400.0),
+            (hb_tag_from_bytes(b"opsz"), font_size.clamp(17.0, 96.0)),
+            (hb_tag_from_bytes(b"ital"), 0.0),
+            (hb_tag_from_bytes(b"slnt"), 0.0),
+        ];
+        TextShaper::shape_ltr_with_variations(text, text_range, font, 0, font_size, &variations)
     }
 
     /// Convenience: layout text using a default system font.
@@ -2208,7 +2223,7 @@ impl TextLayout {
             return 0.0;
         }
 
-        let run = TextShaper::shape_ltr(text, 0..text.len(), font, 0, font_size);
+        let run = Self::shape_layout_run(text, 0..text.len(), font, font_size);
         run.width
     }
 
@@ -2560,7 +2575,7 @@ impl TextLayout {
 
         // No wrapping requested or no width constraint: single line.
         if max_width.is_none() || matches!(wrap_mode, WrapMode::NoWrap) {
-            let run = TextShaper::shape_ltr(paragraph, range.clone(), font, 0, font_size);
+            let run = Self::shape_layout_run(paragraph, range.clone(), font, font_size);
             let line = LineBox {
                 text_range: range,
                 width: run.width,
@@ -2643,11 +2658,10 @@ impl TextLayout {
             for br in breaks.iter().filter(|b| b.offset > local_start) {
                 let local_end = br.offset.min(para_len);
                 let segment = &paragraph[local_start..local_end];
-                let run = TextShaper::shape_ltr(
+                let run = Self::shape_layout_run(
                     segment,
                     (range.start + local_start)..(range.start + local_end),
                     font,
-                    0,
                     font_size,
                 );
                 if run.width <= max_width {
@@ -2682,11 +2696,10 @@ impl TextLayout {
             for (idx, g) in paragraph[local_start..].grapheme_indices(true) {
                 let local_end = local_start + idx + g.len();
                 let segment = &paragraph[local_start..local_end];
-                let run = TextShaper::shape_ltr(
+                let run = Self::shape_layout_run(
                     segment,
                     (range.start + local_start)..(range.start + local_end),
                     font,
-                    0,
                     font_size,
                 );
                 if run.width <= max_width {
@@ -2717,11 +2730,10 @@ impl TextLayout {
                 if let Some((idx, g)) = iter.next() {
                     let local_end = local_start + idx + g.len();
                     let segment = &paragraph[local_start..local_end];
-                    let run = TextShaper::shape_ltr(
+                    let run = Self::shape_layout_run(
                         segment,
                         (range.start + local_start)..(range.start + local_end),
                         font,
-                        0,
                         font_size,
                     );
                     let line = LineBox {
@@ -2768,11 +2780,10 @@ impl TextLayout {
             for (idx, g) in paragraph[local_start..].grapheme_indices(true) {
                 let local_end = local_start + idx + g.len();
                 let segment = &paragraph[local_start..local_end];
-                let run = TextShaper::shape_ltr(
+                let run = Self::shape_layout_run(
                     segment,
                     (range.start + local_start)..(range.start + local_end),
                     font,
-                    0,
                     font_size,
                 );
                 if run.width <= max_width {
@@ -2803,11 +2814,10 @@ impl TextLayout {
                 if let Some((idx, g)) = iter.next() {
                     let local_end = local_start + idx + g.len();
                     let segment = &paragraph[local_start..local_end];
-                    let run = TextShaper::shape_ltr(
+                    let run = Self::shape_layout_run(
                         segment,
                         (range.start + local_start)..(range.start + local_end),
                         font,
-                        0,
                         font_size,
                     );
                     let line = LineBox {
