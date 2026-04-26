@@ -816,6 +816,13 @@ struct CachedFontSet {
     italic_faces: Vec<(u16, jag_text::FontFace)>,
 }
 
+#[derive(Clone)]
+struct TextFaceSegment {
+    start: usize,
+    end: usize,
+    face: jag_text::FontFace,
+}
+
 // ---------------------------------------------------------------------------
 // JagTextProvider
 // ---------------------------------------------------------------------------
@@ -849,6 +856,11 @@ pub struct JagTextProvider {
     /// generic family keyword. Protected by a `Mutex` because the
     /// `TextProvider` trait takes `&self`.
     font_cache: std::sync::Mutex<std::collections::HashMap<String, CachedFontSet>>,
+    /// Cache of system fallback faces by source character. The primary CSS
+    /// face often resolves to Arial/System UI, which does not cover Indic
+    /// scripts used by google.com language links.
+    char_fallback_cache:
+        std::sync::Mutex<std::collections::HashMap<char, Option<jag_text::FontFace>>>,
     /// Generation counter incremented on each `register_web_font` call.
     /// Used as `cache_tag` to invalidate stale text-width caches after
     /// new fonts are registered.
@@ -867,6 +879,7 @@ impl JagTextProvider {
             orientation,
             font_db: None,
             font_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            char_fallback_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             font_generation: std::sync::atomic::AtomicU64::new(0),
         })
     }
@@ -888,6 +901,7 @@ impl JagTextProvider {
             orientation,
             font_db: None,
             font_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            char_fallback_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             font_generation: std::sync::atomic::AtomicU64::new(0),
         })
     }
@@ -927,12 +941,15 @@ impl JagTextProvider {
         let id = db
             .query(&Query {
                 families: &[
-                    // macOS system UI font (SFNS.ttf registers as "System Font"
-                    // or ".SFNS-Regular" in fontdb after explicit loading).
-                    Family::Name("System Font".into()),
+                    // Prefer the modern macOS UI font (SF Pro / .AppleSystemUIFont)
+                    // so HarfBuzz advances match Chrome's `system-ui` resolution.
+                    // Fall back to the legacy SFNS.ttf (registered as `System
+                    // Font` after explicit load) only on older macOS where the
+                    // newer faces aren't enumerable in fontdb.
                     Family::Name(".AppleSystemUIFont".into()),
                     Family::Name("SF Pro Text".into()),
                     Family::Name(".SF NS Text".into()),
+                    Family::Name("System Font".into()),
                     // Windows system UI font
                     Family::Name("Segoe UI".into()),
                     // Generic fallbacks
@@ -1071,6 +1088,7 @@ impl JagTextProvider {
             orientation,
             font_db: Some(db),
             font_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+            char_fallback_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             font_generation: std::sync::atomic::AtomicU64::new(0),
         })
     }
@@ -1199,20 +1217,23 @@ impl JagTextProvider {
                     Family::Monospace,
                 ],
                 GenericFamily::SystemUi => vec![
-                    // macOS system font (SFNS.ttf loaded explicitly).
+                    // Match Chrome's `system-ui` on macOS — it routes through
+                    // CoreText's `.AppleSystemUIFont` virtual font, landing on
+                    // SF Pro Text/Display. The legacy SFNS.ttf (registered as
+                    // `System Font` after explicit load) has wider advances
+                    // and used to be first here; keep it as a fallback for
+                    // older macOS where SF Pro isn't enumerable in fontdb.
+                    Family::Name(".AppleSystemUIFont"),
+                    Family::Name("SF Pro Text"),
+                    Family::Name(".SF NS Text"),
+                    Family::Name("SF Pro Display"),
+                    Family::Name(".SF NS Display"),
                     Family::Name("System Font"),
-                    // Prefer platform UI faces first so `system-ui` /
-                    // `-apple-system` metrics match browser text wrapping.
                     Family::Name("Segoe UI"),
                     Family::Name("system-ui"),
                     Family::Name("-apple-system"),
                     Family::Name("BlinkMacSystemFont"),
                     Family::SansSerif,
-                    Family::Name("SF Pro Text"),
-                    Family::Name("SF Pro Display"),
-                    Family::Name(".SF NS Text"),
-                    Family::Name(".SF NS Display"),
-                    Family::Name(".AppleSystemUIFont"),
                     Family::Name("Arial"),
                     Family::Name("Helvetica Neue"),
                 ],
@@ -1332,6 +1353,212 @@ impl JagTextProvider {
         best.map(|(_, face)| face.clone())
     }
 
+    fn face_key(face: &jag_text::FontFace) -> (usize, usize) {
+        let bytes = face.as_bytes();
+        (bytes.as_ptr() as usize, face.index())
+    }
+
+    fn face_supports_char(face: &jag_text::FontFace, ch: char) -> bool {
+        if ch.is_control() {
+            return true;
+        }
+        let bytes = face.as_bytes();
+        swash::FontRef::from_index(&bytes, face.index())
+            .map(|font| font.charmap().map(ch) != 0)
+            .unwrap_or(false)
+    }
+
+    fn fallback_family_names_for_char(ch: char) -> &'static [&'static str] {
+        match ch as u32 {
+            0x0900..=0x097f => &[
+                "Noto Sans Devanagari",
+                "Devanagari Sangam MN",
+                "Kohinoor Devanagari",
+                "Nirmala UI",
+                "Mangal",
+            ],
+            0x0980..=0x09ff => &[
+                "Noto Sans Bengali",
+                "Bangla Sangam MN",
+                "Kohinoor Bangla",
+                "Nirmala UI",
+                "Vrinda",
+            ],
+            0x0a00..=0x0a7f => &[
+                "Noto Sans Gurmukhi",
+                "Gurmukhi MN",
+                "Gurmukhi Sangam MN",
+                "Nirmala UI",
+                "Raavi",
+            ],
+            0x0a80..=0x0aff => &[
+                "Noto Sans Gujarati",
+                "Gujarati Sangam MN",
+                "Kohinoor Gujarati",
+                "Nirmala UI",
+                "Shruti",
+            ],
+            0x0b80..=0x0bff => &[
+                "Noto Sans Tamil",
+                "Tamil Sangam MN",
+                "Tamil MN",
+                "Nirmala UI",
+                "Latha",
+            ],
+            0x0c00..=0x0c7f => &[
+                "Noto Sans Telugu",
+                "Telugu Sangam MN",
+                "Kohinoor Telugu",
+                "Nirmala UI",
+                "Gautami",
+            ],
+            0x0c80..=0x0cff => &[
+                "Noto Sans Kannada",
+                "Kannada Sangam MN",
+                "Kohinoor Kannada",
+                "Nirmala UI",
+                "Tunga",
+            ],
+            0x0d00..=0x0d7f => &[
+                "Noto Sans Malayalam",
+                "Malayalam Sangam MN",
+                "Malayalam MN",
+                "Nirmala UI",
+                "Kartika",
+            ],
+            0x0600..=0x06ff => &[
+                "Noto Sans Arabic",
+                "Geeza Pro",
+                "Arial",
+                "Segoe UI",
+                "Tahoma",
+            ],
+            0x0590..=0x05ff => &[
+                "Noto Sans Hebrew",
+                "Arial Hebrew",
+                "New Peninim MT",
+                "Segoe UI",
+                "Arial",
+            ],
+            0x4e00..=0x9fff | 0x3400..=0x4dbf => &[
+                "Noto Sans CJK SC",
+                "PingFang SC",
+                "Hiragino Sans GB",
+                "Microsoft YaHei",
+                "SimSun",
+            ],
+            0x3040..=0x30ff => &[
+                "Noto Sans CJK JP",
+                "Hiragino Sans",
+                "Hiragino Kaku Gothic ProN",
+                "Yu Gothic",
+                "Meiryo",
+            ],
+            0xac00..=0xd7af => &[
+                "Noto Sans CJK KR",
+                "Apple SD Gothic Neo",
+                "Malgun Gothic",
+                "NanumGothic",
+            ],
+            _ => &[
+                "Arial Unicode MS",
+                "Noto Sans",
+                "DejaVu Sans",
+                "Segoe UI",
+                "Arial",
+            ],
+        }
+    }
+
+    fn resolve_fallback_face_for_char(
+        &self,
+        ch: char,
+        requested_weight: u16,
+        style: crate::scene::FontStyle,
+    ) -> Option<jag_text::FontFace> {
+        if let Some(cached) = self.char_fallback_cache.lock().unwrap().get(&ch).cloned() {
+            return cached;
+        }
+
+        let mut resolved = None;
+        if let Some(db) = &self.font_db {
+            use fontdb::{Family, Query, Stretch, Style, Weight};
+
+            let requested_style = if matches!(
+                style,
+                crate::scene::FontStyle::Italic | crate::scene::FontStyle::Oblique
+            ) {
+                Style::Italic
+            } else {
+                Style::Normal
+            };
+
+            for family in Self::fallback_family_names_for_char(ch) {
+                let id = db.query(&Query {
+                    families: &[Family::Name(family)],
+                    weight: Weight(requested_weight),
+                    stretch: Stretch::Normal,
+                    style: requested_style,
+                });
+                if let Some(face) = id
+                    .and_then(|id| db.face(id))
+                    .and_then(Self::load_face_from_db)
+                    .filter(|face| Self::face_supports_char(face, ch))
+                {
+                    resolved = Some(face);
+                    break;
+                }
+            }
+        }
+
+        self.char_fallback_cache
+            .lock()
+            .unwrap()
+            .insert(ch, resolved.clone());
+        resolved
+    }
+
+    fn face_segments_for_run(
+        &self,
+        run: &crate::scene::TextRun,
+        primary_face: &jag_text::FontFace,
+    ) -> Vec<TextFaceSegment> {
+        let requested_weight = run.weight.clamp(100.0, 900.0).round() as u16;
+        let mut segments: Vec<TextFaceSegment> = Vec::new();
+        let mut current_start = 0;
+        let mut current_face = primary_face.clone();
+        let mut current_key = Self::face_key(&current_face);
+
+        for (byte_index, ch) in run.text.char_indices() {
+            let face = if ch.is_whitespace() {
+                current_face.clone()
+            } else if Self::face_supports_char(primary_face, ch) {
+                primary_face.clone()
+            } else {
+                self.resolve_fallback_face_for_char(ch, requested_weight, run.style)
+                    .unwrap_or_else(|| primary_face.clone())
+            };
+            let key = Self::face_key(&face);
+            if byte_index > current_start && key != current_key {
+                segments.push(TextFaceSegment {
+                    start: current_start,
+                    end: byte_index,
+                    face: current_face,
+                });
+                current_start = byte_index;
+                current_key = key;
+            }
+            current_face = face;
+        }
+
+        segments.push(TextFaceSegment {
+            start: current_start,
+            end: run.text.len(),
+            face: current_face,
+        });
+        segments
+    }
+
     /// Select the appropriate font face based on a `TextRun`'s family, weight,
     /// and style.
     ///
@@ -1432,11 +1659,31 @@ impl JagTextProvider {
             style,
             crate::scene::FontStyle::Italic | crate::scene::FontStyle::Oblique
         );
+        // For `system-ui`, Chrome / macOS CoreText returns the system font
+        // configured at the "Text" optical design (~opsz 19–20), NOT at the
+        // literal CSS px size. Passing the raw CSS px (e.g. 16) clamps to
+        // SFNS's axis minimum of 17 and produces ~3.7% wider advances than
+        // Chrome. Apply this floor ONLY when the CSS family list hints at
+        // system-ui so other fonts (web fonts, named families, the default
+        // fallback used by tests with `family: None`) keep their existing
+        // opsz semantics.
+        const SYSTEM_UI_OPSZ_FLOOR: f32 = 20.0;
+        let is_system_ui_request = run
+            .family
+            .as_deref()
+            .map(|f| {
+                let lower = f.to_ascii_lowercase();
+                lower.contains("system-ui") || lower.contains("-apple-system")
+            })
+            .unwrap_or(false);
+        let opsz = if is_system_ui_request {
+            logical_size_px.max(SYSTEM_UI_OPSZ_FLOOR).clamp(17.0, 96.0)
+        } else {
+            logical_size_px.clamp(17.0, 96.0)
+        };
         vec![
             (*b"wght", weight),
-            // Optical size: use the CSS logical px, NOT device px.
-            // Clamp to the SFNS axis range (17–96).
-            (*b"opsz", logical_size_px.clamp(17.0, 96.0)),
+            (*b"opsz", opsz),
             // Italic toggle: 0 = upright, 1 = italic (CSS Fonts §4.9).
             (*b"ital", if is_italic { 1.0 } else { 0.0 }),
             // Slant angle: 0 = upright, -12 = standard CSS oblique (CSS Fonts §4.8).
@@ -1536,54 +1783,11 @@ impl TextProvider for JagTextProvider {
 
         let size = run.size.max(1.0);
         let face = self.select_face(run);
+        let segments = self.face_segments_for_run(run, &face);
 
         // Build variation settings for variable fonts (wght, opsz, ital, slnt).
         let requested_weight = run.weight.clamp(100.0, 900.0);
         let raw_variations = Self::build_variations(requested_weight, run, run.style);
-
-        // Shape the entire run with HarfBuzz so that advances include kerning,
-        // ligatures, and contextual alternates. Pass variations so variable
-        // fonts produce correctly-weighted, optically-sized glyph outlines.
-        let shaped = {
-            use jag_text::shaping::hb_tag_from_bytes;
-            let hb_vars: Vec<_> = raw_variations
-                .iter()
-                .map(|(tag, val)| (hb_tag_from_bytes(tag), *val))
-                .collect();
-            TextShaper::shape_ltr_with_variations(
-                &run.text,
-                0..run.text.len(),
-                &face,
-                0,
-                size,
-                &hb_vars,
-            )
-        };
-
-        // Build swash resources for rasterisation of shaped glyph IDs.
-        let font_bytes = face.as_bytes();
-        let font_ref = FontRef::from_index(&font_bytes, face.index())
-            .expect("jag-text FontFace bytes should be a valid swash FontRef");
-
-        // Compute normalized coordinates for all variation axes so the scaler
-        // renders outlines at the correct weight and optical size.
-        // swash Setting<f32> implements From<&([u8; 4], f32)>, so we
-        // can pass a reference to our raw_variations slice directly.
-        let norm_coords: Vec<swash::NormalizedCoord> = if raw_variations.is_empty() {
-            Vec::new()
-        } else {
-            font_ref
-                .variations()
-                .normalized_coords(&raw_variations)
-                .collect()
-        };
-
-        let mut ctx = ScaleContext::new();
-        let mut builder = ctx.builder(font_ref).size(size).hint(true);
-        if !norm_coords.is_empty() {
-            builder = builder.normalized_coords(&norm_coords);
-        }
-        let mut scaler = builder.build();
         let renderer = Render::new(&[
             Source::Outline,
             Source::Bitmap(StrikeWith::BestFit),
@@ -1596,111 +1800,149 @@ impl TextProvider for JagTextProvider {
         let mut out = Vec::new();
         let mut pen_x: f32 = 0.0;
 
-        for idx in 0..shaped.glyphs.len() {
-            let glyph_id = shaped.glyphs[idx];
-            let advance = shaped.advances[idx];
-
-            if glyph_id == 0 {
-                // .notdef — try emoji fallback using the source character at this cluster
-                let cluster_byte = shaped.clusters[idx] as usize;
-                let emoji_rendered = emoji_bytes.as_ref().and_then(|eb| {
-                    let ch = run.text[cluster_byte..].chars().next()?;
-                    let emoji_font_ref = FontRef::from_index(eb, 0)?;
-                    let emoji_gid = emoji_font_ref.charmap().map(ch);
-                    if emoji_gid == 0 {
-                        return None;
-                    }
-                    let mut emoji_ctx = ScaleContext::new();
-                    let mut emoji_scaler = emoji_ctx
-                        .builder(emoji_font_ref)
-                        .size(size)
-                        .hint(false)
-                        .build();
-                    let emoji_renderer = Render::new(&[
-                        Source::ColorOutline(0),
-                        Source::ColorBitmap(StrikeWith::BestFit),
-                        Source::Bitmap(StrikeWith::BestFit),
-                        Source::Outline,
-                    ]);
-                    let img = emoji_renderer.render(&mut emoji_scaler, emoji_gid)?;
-                    let w = img.placement.width;
-                    let h = img.placement.height;
-                    if w == 0 || h == 0 {
-                        return None;
-                    }
-                    let mask = match img.content {
-                        Content::Mask => GlyphMask::Subpixel(grayscale_to_subpixel_rgb(
-                            w,
-                            h,
-                            &img.data,
-                            self.orientation,
-                        )),
-                        Content::SubpixelMask => GlyphMask::Subpixel(SubpixelMask {
-                            width: w,
-                            height: h,
-                            format: MaskFormat::Rgba8,
-                            data: img.data.clone(),
-                        }),
-                        Content::Color => GlyphMask::Color(ColorMask {
-                            width: w,
-                            height: h,
-                            data: img.data.clone(),
-                        }),
-                    };
-                    let ox = pen_x + img.placement.left as f32;
-                    let oy = -img.placement.top as f32;
-                    out.push(RasterizedGlyph {
-                        offset: [ox, oy],
-                        mask,
-                    });
-                    Some(w as f32)
-                });
-
-                if let Some(emoji_width) = emoji_rendered {
-                    pen_x += emoji_width;
-                } else {
-                    // No emoji fallback — skip with approximate advance
-                    pen_x += size * 0.5;
-                }
+        for segment in segments {
+            let text = &run.text[segment.start..segment.end];
+            if text.is_empty() {
                 continue;
             }
 
-            // Rasterize from primary font using the HarfBuzz-produced glyph ID.
-            if let Some(img) = renderer.render(&mut scaler, glyph_id) {
-                let w = img.placement.width;
-                let h = img.placement.height;
-                if w > 0 && h > 0 {
-                    let mask = match img.content {
-                        Content::Mask => GlyphMask::Subpixel(grayscale_to_subpixel_rgb(
-                            w,
-                            h,
-                            &img.data,
-                            self.orientation,
-                        )),
-                        Content::SubpixelMask => GlyphMask::Subpixel(SubpixelMask {
-                            width: w,
-                            height: h,
-                            format: MaskFormat::Rgba8,
-                            data: img.data.clone(),
-                        }),
-                        Content::Color => GlyphMask::Color(ColorMask {
-                            width: w,
-                            height: h,
-                            data: img.data.clone(),
-                        }),
-                    };
+            let shaped = {
+                use jag_text::shaping::hb_tag_from_bytes;
+                let hb_vars: Vec<_> = raw_variations
+                    .iter()
+                    .map(|(tag, val)| (hb_tag_from_bytes(tag), *val))
+                    .collect();
+                TextShaper::shape_ltr_with_variations(
+                    text,
+                    0..text.len(),
+                    &segment.face,
+                    0,
+                    size,
+                    &hb_vars,
+                )
+            };
 
-                    let ox = pen_x + img.placement.left as f32;
-                    let oy = -img.placement.top as f32;
-                    out.push(RasterizedGlyph {
-                        offset: [ox, oy],
-                        mask,
-                    });
-                }
+            let font_bytes = segment.face.as_bytes();
+            let font_ref = FontRef::from_index(&font_bytes, segment.face.index())
+                .expect("jag-text FontFace bytes should be a valid swash FontRef");
+            let norm_coords: Vec<swash::NormalizedCoord> = if raw_variations.is_empty() {
+                Vec::new()
+            } else {
+                font_ref
+                    .variations()
+                    .normalized_coords(&raw_variations)
+                    .collect()
+            };
+
+            let mut ctx = ScaleContext::new();
+            let mut builder = ctx.builder(font_ref).size(size).hint(true);
+            if !norm_coords.is_empty() {
+                builder = builder.normalized_coords(&norm_coords);
             }
+            let mut scaler = builder.build();
 
-            // Advance by the HarfBuzz-computed advance (includes kerning)
-            pen_x += advance;
+            for idx in 0..shaped.glyphs.len() {
+                let glyph_id = shaped.glyphs[idx];
+                let advance = shaped.advances[idx];
+
+                if glyph_id == 0 {
+                    let cluster_byte = shaped.clusters[idx] as usize;
+                    let emoji_rendered = emoji_bytes.as_ref().and_then(|eb| {
+                        let ch = text[cluster_byte..].chars().next()?;
+                        let emoji_font_ref = FontRef::from_index(eb, 0)?;
+                        let emoji_gid = emoji_font_ref.charmap().map(ch);
+                        if emoji_gid == 0 {
+                            return None;
+                        }
+                        let mut emoji_ctx = ScaleContext::new();
+                        let mut emoji_scaler = emoji_ctx
+                            .builder(emoji_font_ref)
+                            .size(size)
+                            .hint(false)
+                            .build();
+                        let emoji_renderer = Render::new(&[
+                            Source::ColorOutline(0),
+                            Source::ColorBitmap(StrikeWith::BestFit),
+                            Source::Bitmap(StrikeWith::BestFit),
+                            Source::Outline,
+                        ]);
+                        let img = emoji_renderer.render(&mut emoji_scaler, emoji_gid)?;
+                        let w = img.placement.width;
+                        let h = img.placement.height;
+                        if w == 0 || h == 0 {
+                            return None;
+                        }
+                        let mask = match img.content {
+                            Content::Mask => GlyphMask::Subpixel(grayscale_to_subpixel_rgb(
+                                w,
+                                h,
+                                &img.data,
+                                self.orientation,
+                            )),
+                            Content::SubpixelMask => GlyphMask::Subpixel(SubpixelMask {
+                                width: w,
+                                height: h,
+                                format: MaskFormat::Rgba8,
+                                data: img.data.clone(),
+                            }),
+                            Content::Color => GlyphMask::Color(ColorMask {
+                                width: w,
+                                height: h,
+                                data: img.data.clone(),
+                            }),
+                        };
+                        let ox = pen_x + img.placement.left as f32;
+                        let oy = -img.placement.top as f32;
+                        out.push(RasterizedGlyph {
+                            offset: [ox, oy],
+                            mask,
+                        });
+                        Some(w as f32)
+                    });
+
+                    if let Some(emoji_width) = emoji_rendered {
+                        pen_x += emoji_width;
+                    } else {
+                        pen_x += size * 0.5;
+                    }
+                    continue;
+                }
+
+                if let Some(img) = renderer.render(&mut scaler, glyph_id) {
+                    let w = img.placement.width;
+                    let h = img.placement.height;
+                    if w > 0 && h > 0 {
+                        let mask = match img.content {
+                            Content::Mask => GlyphMask::Subpixel(grayscale_to_subpixel_rgb(
+                                w,
+                                h,
+                                &img.data,
+                                self.orientation,
+                            )),
+                            Content::SubpixelMask => GlyphMask::Subpixel(SubpixelMask {
+                                width: w,
+                                height: h,
+                                format: MaskFormat::Rgba8,
+                                data: img.data.clone(),
+                            }),
+                            Content::Color => GlyphMask::Color(ColorMask {
+                                width: w,
+                                height: h,
+                                data: img.data.clone(),
+                            }),
+                        };
+
+                        let ox = pen_x + img.placement.left as f32;
+                        let oy = -img.placement.top as f32;
+                        out.push(RasterizedGlyph {
+                            offset: [ox, oy],
+                            mask,
+                        });
+                    }
+                }
+
+                pen_x += advance;
+            }
         }
 
         out
@@ -1772,26 +2014,35 @@ impl TextProvider for JagTextProvider {
 
         let size = run.size.max(1.0);
         let face = self.select_face(run);
+        let segments = self.face_segments_for_run(run, &face);
 
         // Shape with HarfBuzz — returns the same advances used by rasterize_run,
         // so measurement and rendering always agree.
         let requested_weight = run.weight.clamp(100.0, 900.0);
         let raw_variations = Self::build_variations(requested_weight, run, run.style);
-        let shaped = {
-            use jag_text::shaping::hb_tag_from_bytes;
-            let hb_vars: Vec<_> = raw_variations
-                .iter()
-                .map(|(tag, val)| (hb_tag_from_bytes(tag), *val))
-                .collect();
-            TextShaper::shape_ltr_with_variations(
-                &run.text,
-                0..run.text.len(),
-                &face,
-                0,
-                size,
-                &hb_vars,
-            )
-        };
+        let mut width = 0.0;
+        for segment in segments {
+            let text = &run.text[segment.start..segment.end];
+            if text.is_empty() {
+                continue;
+            }
+            let shaped = {
+                use jag_text::shaping::hb_tag_from_bytes;
+                let hb_vars: Vec<_> = raw_variations
+                    .iter()
+                    .map(|(tag, val)| (hb_tag_from_bytes(tag), *val))
+                    .collect();
+                TextShaper::shape_ltr_with_variations(
+                    text,
+                    0..text.len(),
+                    &segment.face,
+                    0,
+                    size,
+                    &hb_vars,
+                )
+            };
+            width += shaped.width;
+        }
         if std::env::var("JAG_TEXT_DEBUG_FAMILY").is_ok()
             && (run.text.contains("Z-Ordering")
                 || run.text.contains("Hit Testing")
@@ -1803,10 +2054,10 @@ impl TextProvider for JagTextProvider {
         {
             eprintln!(
                 "[TEXT] measure_run text={:?} size={} weight={} width={}",
-                run.text, run.size, run.weight, shaped.width
+                run.text, run.size, run.weight, width
             );
         }
-        shaped.width
+        width
     }
 
     fn register_web_font(
@@ -1908,6 +2159,38 @@ mod tests {
         let sans =
             JagTextProvider::cache_key_for(&FontFamilyCandidate::Generic(GenericFamily::SansSerif));
         assert_ne!(serif, sans);
+    }
+
+    #[test]
+    fn system_provider_uses_script_fallback_for_indic_text_when_available() {
+        let provider = JagTextProvider::from_system_fonts(SubpixelOrientation::RGB);
+        if provider.is_err() {
+            return;
+        }
+        let provider = provider.unwrap();
+        let Some(face) =
+            provider.resolve_fallback_face_for_char('ह', 400, crate::scene::FontStyle::Normal)
+        else {
+            return;
+        };
+        assert!(JagTextProvider::face_supports_char(&face, 'ह'));
+
+        let run = crate::scene::TextRun {
+            text: "हिन्दी".to_string(),
+            pos: [0.0, 0.0],
+            size: 14.0,
+            logical_size: 14.0,
+            color: crate::scene::ColorLinPremul::rgba(255, 255, 255, 255),
+            weight: 400.0,
+            style: crate::scene::FontStyle::Normal,
+            family: Some("Arial, sans-serif".to_string()),
+        };
+
+        assert!(provider.measure_run(&run) > 0.0);
+        assert!(
+            !provider.rasterize_run(&run).is_empty(),
+            "Indic text should rasterize through a script fallback face instead of becoming empty/tofu"
+        );
     }
 
     #[test]
