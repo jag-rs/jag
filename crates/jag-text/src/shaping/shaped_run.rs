@@ -12,8 +12,19 @@ pub enum Direction {
 /// Unicode script tag for the run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Script {
+    Arabic,
+    Bengali,
+    Devanagari,
+    Gujarati,
+    Gurmukhi,
+    Hebrew,
+    Kannada,
     Latin,
-    // Future: add more scripts or use Unicode script property directly.
+    Malayalam,
+    Tamil,
+    Telugu,
+    Unknown,
+    Other([u8; 4]),
 }
 
 /// A run of text shaped with a single font.

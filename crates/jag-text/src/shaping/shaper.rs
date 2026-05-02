@@ -2,7 +2,7 @@ use core::ops::Range;
 
 use harfrust::{
     Direction as HbDirection, FontRef as HbFontRef, Script as HbScript, ShaperData, ShaperInstance,
-    Tag as HbTag, UnicodeBuffer as HbUnicodeBuffer,
+    Tag as HbTag, UnicodeBuffer as HbUnicodeBuffer, script as hb_script,
 };
 use swash::GlyphId;
 
@@ -24,6 +24,31 @@ pub fn hb_tag_from_bytes(bytes: &[u8; 4]) -> HbTag {
 pub struct TextShaper;
 
 impl TextShaper {
+    fn direction_from_harfrust(direction: HbDirection) -> Direction {
+        match direction {
+            HbDirection::RightToLeft => Direction::RightToLeft,
+            _ => Direction::LeftToRight,
+        }
+    }
+
+    fn script_from_harfrust(script: HbScript) -> Script {
+        match script {
+            hb_script::ARABIC => Script::Arabic,
+            hb_script::BENGALI => Script::Bengali,
+            hb_script::DEVANAGARI => Script::Devanagari,
+            hb_script::GUJARATI => Script::Gujarati,
+            hb_script::GURMUKHI => Script::Gurmukhi,
+            hb_script::HEBREW => Script::Hebrew,
+            hb_script::KANNADA => Script::Kannada,
+            hb_script::LATIN => Script::Latin,
+            hb_script::MALAYALAM => Script::Malayalam,
+            hb_script::TAMIL => Script::Tamil,
+            hb_script::TELUGU => Script::Telugu,
+            hb_script::UNKNOWN => Script::Unknown,
+            other => Script::Other(other.tag().to_be_bytes()),
+        }
+    }
+
     /// Shape a UTF-8 string using the given font and size, assuming simple
     /// left-to-right directionality and Latin script.
     pub fn shape_ltr(
@@ -81,18 +106,15 @@ impl TextShaper {
             .point_size(None)
             .build();
 
-        // Build Unicode buffer; this will handle complex scripts, combining
-        // marks, ligatures, etc., though Phase 1.3 focuses on simple LTR usage.
+        // Build Unicode buffer. Leave segment properties unset so harfrust can
+        // infer the script and direction from the actual text. Forcing Latin
+        // here breaks Indic shaping and causes dotted-circle placeholder glyphs
+        // for dependent vowel signs and other combining marks.
         let mut buffer = HbUnicodeBuffer::new();
         buffer.push_str(text);
-        buffer.set_direction(HbDirection::LeftToRight);
-        // Latin script for now; later phases can infer script from text.
-        let latin_tag = HbTag::new(b"Latn");
-        if let Some(script) = HbScript::from_iso15924_tag(latin_tag) {
-            buffer.set_script(script);
-        }
-        // Let harfrust fill in any remaining segment properties.
         buffer.guess_segment_properties();
+        let direction = Self::direction_from_harfrust(buffer.direction());
+        let script = Self::script_from_harfrust(buffer.script());
 
         let glyph_buffer = shaper.shape(buffer, &[]);
         let infos = glyph_buffer.glyph_infos();
@@ -144,9 +166,29 @@ impl TextShaper {
             clusters,
             width,
             x_offset: 0.0,
-            bidi_level: 0,
-            direction: Direction::LeftToRight,
-            script: Script::Latin,
+            bidi_level: if direction == Direction::RightToLeft {
+                1
+            } else {
+                0
+            },
+            direction,
+            script,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shaper_infers_devanagari_script() {
+        let Ok(font) = crate::font::load_system_default_font() else {
+            return;
+        };
+        let text = "हिन्दी";
+        let run = TextShaper::shape_ltr(text, 0..text.len(), &font, 0, 16.0);
+        assert_eq!(run.script, Script::Devanagari);
+        assert_eq!(run.direction, Direction::LeftToRight);
     }
 }

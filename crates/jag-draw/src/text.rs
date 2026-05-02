@@ -24,6 +24,7 @@
 //!     text: "Hello, world!".to_string(),
 //!     pos: [0.0, 0.0],
 //!     size: 16.0,
+//!     logical_size: 16.0,
 //!     color: ColorLinPremul::rgba(255, 255, 255, 255),
 //!     weight: 400.0,
 //!     style: FontStyle::Normal,
@@ -141,6 +142,35 @@ impl GlyphBatch {
     }
 }
 
+// Swash outline masks render a little lighter than browser/CoreText text at
+// common UI sizes. Strengthen partial coverage only; empty and fully-covered
+// pixels stay unchanged, so glyph bounds and layout metrics do not move.
+const TEXT_COVERAGE_DARKENING: f32 = 0.18;
+
+fn strengthen_coverage(c: f32) -> f32 {
+    (c + c * (1.0 - c) * TEXT_COVERAGE_DARKENING).clamp(0.0, 1.0)
+}
+
+fn strengthen_coverage_u8(v: u8) -> u8 {
+    let c = strengthen_coverage(v as f32 / 255.0);
+    (c * 255.0 + 0.5) as u8
+}
+
+fn strengthen_coverage_u16(v: u16) -> u16 {
+    let c = strengthen_coverage(v as f32 / 65535.0);
+    (c * 65535.0 + 0.5) as u16
+}
+
+fn strengthen_subpixel_rgba8(data: &[u8]) -> Vec<u8> {
+    let mut out = data.to_vec();
+    for px in out.chunks_exact_mut(4) {
+        px[0] = strengthen_coverage_u8(px[0]);
+        px[1] = strengthen_coverage_u8(px[1]);
+        px[2] = strengthen_coverage_u8(px[2]);
+    }
+    out
+}
+
 /// Simple global cache for glyph runs keyed by (text, size, weight, style,
 /// family, provider pointer). Used by direct text rendering paths (e.g.,
 /// jag-surface Canvas) to avoid re-shaping and re-rasterizing identical
@@ -233,14 +263,14 @@ pub fn grayscale_to_subpixel_rgb(
     // Much lighter than the original 3-tap kernel to avoid blurring
     for y in 0..h {
         for x in 0..w {
-            let c0 = gray[y * w + x] as f32 / 255.0;
+            let c0 = strengthen_coverage(gray[y * w + x] as f32 / 255.0);
             let cl = if x > 0 {
-                gray[y * w + (x - 1)] as f32 / 255.0
+                strengthen_coverage(gray[y * w + (x - 1)] as f32 / 255.0)
             } else {
                 c0
             };
             let cr = if x + 1 < w {
-                gray[y * w + (x + 1)] as f32 / 255.0
+                strengthen_coverage(gray[y * w + (x + 1)] as f32 / 255.0)
             } else {
                 c0
             };
@@ -278,7 +308,7 @@ pub fn grayscale_to_rgb_equal(width: u32, height: u32, gray: &[u8]) -> SubpixelM
     let mut out = vec![0u8; w * h * 4];
     for y in 0..h {
         for x in 0..w {
-            let g = gray[y * w + x];
+            let g = strengthen_coverage_u8(gray[y * w + x]);
             let i = (y * w + x) * 4;
             out[i + 0] = g;
             out[i + 1] = g;
@@ -308,14 +338,14 @@ pub fn grayscale_to_subpixel_rgb16(
     let mut out = vec![0u8; w * h * 8];
     for y in 0..h {
         for x in 0..w {
-            let c0 = gray[y * w + x] as f32 / 255.0;
+            let c0 = strengthen_coverage(gray[y * w + x] as f32 / 255.0);
             let cl = if x > 0 {
-                gray[y * w + (x - 1)] as f32 / 255.0
+                strengthen_coverage(gray[y * w + (x - 1)] as f32 / 255.0)
             } else {
                 c0
             };
             let cr = if x + 1 < w {
-                gray[y * w + (x + 1)] as f32 / 255.0
+                strengthen_coverage(gray[y * w + (x + 1)] as f32 / 255.0)
             } else {
                 c0
             };
@@ -357,7 +387,7 @@ pub fn grayscale_to_rgb_equal16(width: u32, height: u32, gray: &[u8]) -> Subpixe
     let mut out = vec![0u8; w * h * 8];
     for y in 0..h {
         for x in 0..w {
-            let g = (gray[y * w + x] as u16) * 257; // 255->65535 scale
+            let g = strengthen_coverage_u16((gray[y * w + x] as u16) * 257); // 255->65535 scale
             let i = (y * w + x) * 8;
             let b = g.to_le_bytes();
             out[i + 0] = b[0];
@@ -1368,6 +1398,30 @@ impl JagTextProvider {
             .unwrap_or(false)
     }
 
+    fn face_supports_grapheme(face: &jag_text::FontFace, grapheme: &str) -> bool {
+        grapheme
+            .chars()
+            .all(|ch| ch.is_whitespace() || Self::face_supports_char(face, ch))
+    }
+
+    fn fallback_char_for_grapheme(
+        primary_face: &jag_text::FontFace,
+        grapheme: &str,
+    ) -> Option<char> {
+        grapheme
+            .chars()
+            .find(|&ch| {
+                !ch.is_whitespace()
+                    && !ch.is_control()
+                    && !Self::face_supports_char(primary_face, ch)
+            })
+            .or_else(|| {
+                grapheme
+                    .chars()
+                    .find(|&ch| !ch.is_whitespace() && !ch.is_control())
+            })
+    }
+
     fn fallback_family_names_for_char(ch: char) -> &'static [&'static str] {
         match ch as u32 {
             0x0900..=0x097f => &[
@@ -1523,23 +1577,41 @@ impl JagTextProvider {
         run: &crate::scene::TextRun,
         primary_face: &jag_text::FontFace,
     ) -> Vec<TextFaceSegment> {
+        use unicode_segmentation::UnicodeSegmentation;
+
         let requested_weight = run.weight.clamp(100.0, 900.0).round() as u16;
         let mut segments: Vec<TextFaceSegment> = Vec::new();
         let mut current_start = 0;
         let mut current_face = primary_face.clone();
         let mut current_key = Self::face_key(&current_face);
+        let mut initialized = false;
 
-        for (byte_index, ch) in run.text.char_indices() {
-            let face = if ch.is_whitespace() {
+        for (byte_index, grapheme) in run.text.grapheme_indices(true) {
+            let face = if grapheme.chars().all(char::is_whitespace) {
                 current_face.clone()
-            } else if Self::face_supports_char(primary_face, ch) {
+            } else if Self::face_supports_grapheme(primary_face, grapheme) {
                 primary_face.clone()
+            } else if initialized
+                && current_key != Self::face_key(primary_face)
+                && Self::face_supports_grapheme(&current_face, grapheme)
+            {
+                current_face.clone()
             } else {
-                self.resolve_fallback_face_for_char(ch, requested_weight, run.style)
+                Self::fallback_char_for_grapheme(primary_face, grapheme)
+                    .and_then(|ch| {
+                        self.resolve_fallback_face_for_char(ch, requested_weight, run.style)
+                    })
                     .unwrap_or_else(|| primary_face.clone())
             };
             let key = Self::face_key(&face);
-            if byte_index > current_start && key != current_key {
+            if !initialized {
+                current_start = byte_index;
+                current_face = face;
+                current_key = key;
+                initialized = true;
+                continue;
+            }
+            if key != current_key {
                 segments.push(TextFaceSegment {
                     start: current_start,
                     end: byte_index,
@@ -1551,11 +1623,13 @@ impl JagTextProvider {
             current_face = face;
         }
 
-        segments.push(TextFaceSegment {
-            start: current_start,
-            end: run.text.len(),
-            face: current_face,
-        });
+        if initialized {
+            segments.push(TextFaceSegment {
+                start: current_start,
+                end: run.text.len(),
+                face: current_face,
+            });
+        }
         segments
     }
 
@@ -1805,6 +1879,8 @@ impl TextProvider for JagTextProvider {
             if text.is_empty() {
                 continue;
             }
+            let segment_x = pen_x;
+            let mut segment_advance = 0.0;
 
             let shaped = {
                 use jag_text::shaping::hb_tag_from_bytes;
@@ -1844,6 +1920,7 @@ impl TextProvider for JagTextProvider {
             for idx in 0..shaped.glyphs.len() {
                 let glyph_id = shaped.glyphs[idx];
                 let advance = shaped.advances[idx];
+                let glyph_pos = shaped.positions[idx];
 
                 if glyph_id == 0 {
                     let cluster_byte = shaped.clusters[idx] as usize;
@@ -1883,7 +1960,7 @@ impl TextProvider for JagTextProvider {
                                 width: w,
                                 height: h,
                                 format: MaskFormat::Rgba8,
-                                data: img.data.clone(),
+                                data: strengthen_subpixel_rgba8(&img.data),
                             }),
                             Content::Color => GlyphMask::Color(ColorMask {
                                 width: w,
@@ -1891,8 +1968,8 @@ impl TextProvider for JagTextProvider {
                                 data: img.data.clone(),
                             }),
                         };
-                        let ox = pen_x + img.placement.left as f32;
-                        let oy = -img.placement.top as f32;
+                        let ox = segment_x + glyph_pos.x_offset + img.placement.left as f32;
+                        let oy = glyph_pos.y_offset - img.placement.top as f32;
                         out.push(RasterizedGlyph {
                             offset: [ox, oy],
                             mask,
@@ -1901,9 +1978,9 @@ impl TextProvider for JagTextProvider {
                     });
 
                     if let Some(emoji_width) = emoji_rendered {
-                        pen_x += emoji_width;
+                        segment_advance += emoji_width;
                     } else {
-                        pen_x += size * 0.5;
+                        segment_advance += size * 0.5;
                     }
                     continue;
                 }
@@ -1923,7 +2000,7 @@ impl TextProvider for JagTextProvider {
                                 width: w,
                                 height: h,
                                 format: MaskFormat::Rgba8,
-                                data: img.data.clone(),
+                                data: strengthen_subpixel_rgba8(&img.data),
                             }),
                             Content::Color => GlyphMask::Color(ColorMask {
                                 width: w,
@@ -1932,8 +2009,8 @@ impl TextProvider for JagTextProvider {
                             }),
                         };
 
-                        let ox = pen_x + img.placement.left as f32;
-                        let oy = -img.placement.top as f32;
+                        let ox = segment_x + glyph_pos.x_offset + img.placement.left as f32;
+                        let oy = glyph_pos.y_offset - img.placement.top as f32;
                         out.push(RasterizedGlyph {
                             offset: [ox, oy],
                             mask,
@@ -1941,8 +2018,9 @@ impl TextProvider for JagTextProvider {
                     }
                 }
 
-                pen_x += advance;
+                segment_advance += advance;
             }
+            pen_x = segment_x + segment_advance;
         }
 
         out
@@ -2162,6 +2240,24 @@ mod tests {
     }
 
     #[test]
+    fn coverage_strengthening_preserves_extremes_and_darkens_edges() {
+        assert_eq!(strengthen_coverage_u8(0), 0);
+        assert_eq!(strengthen_coverage_u8(255), 255);
+        assert!(strengthen_coverage_u8(96) > 96);
+        assert!(strengthen_coverage_u8(192) > 192);
+    }
+
+    #[test]
+    fn grayscale_masks_use_browser_strengthened_coverage() {
+        let mask = grayscale_to_rgb_equal(3, 1, &[0, 128, 255]);
+        assert_eq!(&mask.data[0..4], &[0, 0, 0, 0]);
+        assert!(mask.data[4] > 128);
+        assert_eq!(mask.data[4], mask.data[5]);
+        assert_eq!(mask.data[5], mask.data[6]);
+        assert_eq!(&mask.data[8..12], &[255, 255, 255, 0]);
+    }
+
+    #[test]
     fn system_provider_uses_script_fallback_for_indic_text_when_available() {
         let provider = JagTextProvider::from_system_fonts(SubpixelOrientation::RGB);
         if provider.is_err() {
@@ -2191,6 +2287,35 @@ mod tests {
             !provider.rasterize_run(&run).is_empty(),
             "Indic text should rasterize through a script fallback face instead of becoming empty/tofu"
         );
+    }
+
+    #[test]
+    fn fallback_segmentation_preserves_indic_graphemes() {
+        let provider = JagTextProvider::from_system_fonts(SubpixelOrientation::RGB);
+        if provider.is_err() {
+            return;
+        }
+        let provider = provider.unwrap();
+        let run = crate::scene::TextRun {
+            text: "हिन्दी".to_string(),
+            pos: [0.0, 0.0],
+            size: 14.0,
+            logical_size: 14.0,
+            color: crate::scene::ColorLinPremul::rgba(255, 255, 255, 255),
+            weight: 400.0,
+            style: crate::scene::FontStyle::Normal,
+            family: Some("Arial, sans-serif".to_string()),
+        };
+        let primary = provider.select_face(&run);
+        let segments = provider.face_segments_for_run(&run, &primary);
+
+        assert_eq!(
+            segments.len(),
+            1,
+            "Indic base letters and dependent marks must be shaped in one font segment"
+        );
+        assert_eq!(segments[0].start, 0);
+        assert_eq!(segments[0].end, run.text.len());
     }
 
     #[test]
