@@ -8,10 +8,12 @@
 
 mod canvas;
 mod canvas_ext;
+mod readback;
 pub mod shapes;
 mod surface;
 
 pub use canvas::{Canvas, ImageFitMode, RawImageDraw, RoundedRectClip, ScrimDraw};
+pub use readback::grab_last_frame_rgba;
 pub use surface::{CachedFrameData, JagSurface, get_last_raw_image_rect};
 
 /// Backward-compat alias for code that still references the old name.
