@@ -142,13 +142,27 @@ impl GlyphBatch {
     }
 }
 
-// Swash outline masks render a little lighter than browser/CoreText text at
-// common UI sizes. Strengthen partial coverage only; empty and fully-covered
-// pixels stay unchanged, so glyph bounds and layout metrics do not move.
-const TEXT_COVERAGE_DARKENING: f32 = 0.18;
-
 fn strengthen_coverage(c: f32) -> f32 {
-    (c + c * (1.0 - c) * TEXT_COVERAGE_DARKENING).clamp(0.0, 1.0)
+    let coverage = c.clamp(0.0, 1.0);
+    if coverage <= 0.0 || coverage >= 1.0 {
+        return coverage;
+    }
+
+    // Browser text edges are visually closer to sRGB/display-space alpha
+    // compositing. Jag's text shader blends premultiplied linear color, so a
+    // geometric 50% coverage mask becomes perceptually too light on white.
+    // Convert the coverage so linear blending produces approximately the same
+    // sRGB result while preserving empty/full pixels and glyph bounds.
+    1.0 - srgb_to_linear(1.0 - coverage)
+}
+
+fn srgb_to_linear(v: f32) -> f32 {
+    let value = v.clamp(0.0, 1.0);
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 fn strengthen_coverage_u8(v: u8) -> u8 {
@@ -2244,6 +2258,7 @@ mod tests {
         assert_eq!(strengthen_coverage_u8(0), 0);
         assert_eq!(strengthen_coverage_u8(255), 255);
         assert!(strengthen_coverage_u8(96) > 96);
+        assert!(strengthen_coverage_u8(128) > 190);
         assert!(strengthen_coverage_u8(192) > 192);
     }
 

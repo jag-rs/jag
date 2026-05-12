@@ -27,8 +27,8 @@ use crate::JagSurface;
 ///   next `begin_frame` (which will clear the intermediate).
 ///
 /// Returns `(width, height, rgba_bytes)` where `rgba_bytes.len() == width *
-/// height * 4`. The format matches the surface format chosen at
-/// `JagSurface::new` time (today: `Rgba8UnormSrgb`).
+/// height * 4`. The bytes are normalized to RGBA even when the underlying
+/// surface/intermediate texture uses BGRA, which is common for swapchains.
 pub fn grab_last_frame_rgba(surface: &mut JagSurface) -> Result<(u32, u32, Vec<u8>)> {
     // Take owned Arc clones first so we don't conflict with the
     // `&mut PassManager` borrow used to read the intermediate texture.
@@ -45,6 +45,7 @@ pub fn grab_last_frame_rgba(surface: &mut JagSurface) -> Result<(u32, u32, Vec<u
 
     let width = intermediate.key.width;
     let height = intermediate.key.height;
+    let format = intermediate.key.format;
 
     // wgpu requires bytes_per_row to be a multiple of
     // COPY_BYTES_PER_ROW_ALIGNMENT (256). Same padding rule as
@@ -103,10 +104,54 @@ pub fn grab_last_frame_rgba(surface: &mut JagSurface) -> Result<(u32, u32, Vec<u
     for row in 0..height {
         let start = (row * padded_bytes_per_row) as usize;
         let end = start + (width * bytes_per_pixel) as usize;
-        pixels.extend_from_slice(&mapped[start..end]);
+        append_rgba_row(&mut pixels, &mapped[start..end], format);
     }
     drop(mapped);
     readback.unmap();
 
     Ok((width, height, pixels))
+}
+
+fn append_rgba_row(out: &mut Vec<u8>, row: &[u8], format: wgpu::TextureFormat) {
+    if matches!(
+        format,
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    ) {
+        for px in row.chunks_exact(4) {
+            out.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
+        }
+    } else {
+        out.extend_from_slice(row);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use jag_draw::wgpu;
+
+    use super::append_rgba_row;
+
+    #[test]
+    fn readback_normalizes_bgra_rows_to_rgba() {
+        let mut out = Vec::new();
+        append_rgba_row(
+            &mut out,
+            &[0x08, 0xf0, 0xf4, 0xff, 0xf8, 0xfd, 0xff, 0xff],
+            wgpu::TextureFormat::Bgra8UnormSrgb,
+        );
+
+        assert_eq!(out, vec![0xf4, 0xf0, 0x08, 0xff, 0xff, 0xfd, 0xf8, 0xff]);
+    }
+
+    #[test]
+    fn readback_keeps_rgba_rows_unchanged() {
+        let mut out = Vec::new();
+        append_rgba_row(
+            &mut out,
+            &[0xf4, 0xf0, 0xe8, 0xff],
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        );
+
+        assert_eq!(out, vec![0xf4, 0xf0, 0xe8, 0xff]);
+    }
 }
