@@ -2938,6 +2938,7 @@ impl PassManager {
             [f32; 2],
             Option<crate::SvgStyle>,
             i32,
+            f32,
             crate::Transform2D,
             Option<crate::Rect>,
         )],
@@ -2946,6 +2947,7 @@ impl PassManager {
             [f32; 2],
             [f32; 2],
             i32,
+            f32,
             Option<crate::Rect>,
             Option<crate::RoundedRectClipGpu>,
         )],
@@ -3015,10 +3017,11 @@ impl PassManager {
                 [f32; 2],
                 [f32; 2],
                 f32,
+                f32,
                 Option<crate::Rect>,
                 Option<&crate::RoundedRectClipGpu>,
             )> = Vec::new();
-            for (path, origin, size, z, clip, rounded_clip) in image_draws.iter() {
+            for (path, origin, size, z, opacity, clip, rounded_clip) in image_draws.iter() {
                 let tex_opt =
                     if let Some(view) = self.try_get_image_view(std::path::Path::new(path)) {
                         Some(view)
@@ -3031,6 +3034,7 @@ impl PassManager {
                         *origin,
                         *size,
                         *z as f32,
+                        *opacity,
                         *clip,
                         rounded_clip.as_ref(),
                     ));
@@ -3043,9 +3047,10 @@ impl PassManager {
                 [f32; 2],
                 [f32; 2],
                 f32,
+                f32,
                 Option<crate::Rect>,
             )> = Vec::new();
-            for (path, origin, max_size, style, _z, transform, clip) in svg_draws.iter() {
+            for (path, origin, max_size, style, _z, opacity, transform, clip) in svg_draws.iter() {
                 if let Some((_view, w, h)) =
                     self.rasterize_svg_to_view(std::path::Path::new(path), 1.0, *style, queue)
                 {
@@ -3064,6 +3069,7 @@ impl PassManager {
                             transformed_origin,
                             [draw_w, draw_h],
                             *_z as f32,
+                            *opacity,
                             *clip,
                         ));
                     }
@@ -3336,7 +3342,7 @@ impl PassManager {
                 Option<crate::Rect>,
             )> = Vec::new();
             let mut image_z_vals: Vec<i32> = Vec::new();
-            for (tex_view, origin, size, z_val, clip, rounded_clip) in image_views.iter() {
+            for (tex_view, origin, size, z_val, opacity, clip, rounded_clip) in image_views.iter() {
                 let verts = [
                     ImageQuadVtx {
                         pos: [origin[0], origin[1]],
@@ -3376,9 +3382,12 @@ impl PassManager {
                 // Pass z_index as float directly - shader will convert to depth
                 let (z_bg_img, z_buf_img) = self.create_group_z_bind_group(*z_val as f32, queue);
                 let tex_bg = self.image.tex_bind_group(&self.device, tex_view);
-                let (params_bg, params_buf) =
-                    self.image
-                        .params_bind_group_clipped(&self.device, 1.0, false, *rounded_clip);
+                let (params_bg, params_buf) = self.image.params_bind_group_clipped(
+                    &self.device,
+                    *opacity,
+                    false,
+                    *rounded_clip,
+                );
 
                 image_z_vals.push(*z_val as i32);
                 image_resources.push((
@@ -3400,7 +3409,7 @@ impl PassManager {
                 wgpu::Buffer,
                 Option<crate::Rect>,
             )> = Vec::new();
-            for (view_scaled, origin, size, z_val, clip) in svg_views.iter() {
+            for (view_scaled, origin, size, z_val, opacity, clip) in svg_views.iter() {
                 let verts = [
                     ImageQuadVtx {
                         pos: [origin[0], origin[1]],
@@ -3441,7 +3450,7 @@ impl PassManager {
                 let (z_bg_svg, z_buf_svg) = self.create_group_z_bind_group(*z_val as f32, queue);
                 let tex_bg = self.image.tex_bind_group(&self.device, view_scaled);
                 let (params_bg, params_buf) =
-                    self.image.params_bind_group(&self.device, 1.0, false);
+                    self.image.params_bind_group(&self.device, *opacity, false);
 
                 svg_z_vals.push(*z_val as i32);
                 svg_resources.push((
@@ -3726,11 +3735,12 @@ impl PassManager {
             [f32; 2],
             [f32; 2],
             f32,
+            f32,
             Option<crate::Rect>,
             Option<&crate::RoundedRectClipGpu>,
         )> = Vec::new();
         // eprintln!("🔍 Pre-fetching {} images for unified offscreen render", image_draws.len());
-        for (path, origin, size, z, clip, rounded_clip) in image_draws.iter() {
+        for (path, origin, size, z, opacity, clip, rounded_clip) in image_draws.iter() {
             // eprintln!("  📦 Image at z={}: {:?}", z, path.file_name().unwrap_or_default());
             let tex_opt = if let Some(view) = self.try_get_image_view(std::path::Path::new(path)) {
                 Some(view)
@@ -3743,6 +3753,7 @@ impl PassManager {
                     *origin,
                     *size,
                     *z as f32,
+                    *opacity,
                     *clip,
                     rounded_clip.as_ref(),
                 ));
@@ -3755,9 +3766,10 @@ impl PassManager {
             [f32; 2],
             [f32; 2],
             f32,
+            f32,
             Option<crate::Rect>,
         )> = Vec::new();
-        for (path, origin, max_size, style, _z, transform, clip) in svg_draws.iter() {
+        for (path, origin, max_size, style, _z, opacity, transform, clip) in svg_draws.iter() {
             if let Some((_view, w, h)) =
                 self.rasterize_svg_to_view(std::path::Path::new(path), 1.0, *style, queue)
             {
@@ -3777,6 +3789,7 @@ impl PassManager {
                         transformed_origin,
                         [draw_w, draw_h],
                         *_z as f32,
+                        *opacity,
                         *clip,
                     ));
                 }
@@ -4016,7 +4029,7 @@ impl PassManager {
             wgpu::Buffer,
             Option<crate::Rect>,
         )> = Vec::new();
-        for (tex_view, origin, size, z_val, clip, rounded_clip) in image_views_off.iter() {
+        for (tex_view, origin, size, z_val, opacity, clip, rounded_clip) in image_views_off.iter() {
             let verts = [
                 ImageQuadVtx {
                     pos: [origin[0], origin[1]],
@@ -4060,7 +4073,7 @@ impl PassManager {
             let tex_bg = self.image_offscreen.tex_bind_group(&self.device, tex_view);
             let (params_bg, params_buf) = self.image_offscreen.params_bind_group_clipped(
                 &self.device,
-                1.0,
+                *opacity,
                 false,
                 *rounded_clip,
             );
@@ -4084,7 +4097,7 @@ impl PassManager {
             wgpu::Buffer,
             Option<crate::Rect>,
         )> = Vec::new();
-        for (view_scaled, origin, size, z_val, clip) in svg_views_off.iter() {
+        for (view_scaled, origin, size, z_val, opacity, clip) in svg_views_off.iter() {
             let verts = [
                 ImageQuadVtx {
                     pos: [origin[0], origin[1]],
@@ -4130,7 +4143,7 @@ impl PassManager {
                 .tex_bind_group(&self.device, view_scaled);
             let (params_bg, params_buf) =
                 self.image_offscreen
-                    .params_bind_group(&self.device, 1.0, false);
+                    .params_bind_group(&self.device, *opacity, false);
 
             svg_z_vals_off.push(*z_val as i32);
             svg_resources_off.push((

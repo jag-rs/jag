@@ -48,6 +48,7 @@ pub struct CachedFrameData {
         [f32; 2],
         Option<jag_draw::SvgStyle>,
         i32,
+        f32,
         Transform2D,
         Option<jag_draw::Rect>,
     )>,
@@ -57,6 +58,7 @@ pub struct CachedFrameData {
         [f32; 2],
         [f32; 2],
         i32,
+        f32,
         Option<jag_draw::Rect>,
         Option<jag_draw::RoundedRectClipGpu>,
     )>,
@@ -540,18 +542,20 @@ impl JagSurface {
                     draw.size,
                     None,
                     draw.z,
+                    draw.opacity,
                     Transform2D::identity(),
                     None, // no clip for opacity group internals
                 )
             })
             .collect();
-        group_svgs.sort_by_key(|(_, _, _, _, z, _, _)| *z);
+        group_svgs.sort_by_key(|(_, _, _, _, z, _, _, _)| *z);
 
         let mut group_images: Vec<(
             std::path::PathBuf,
             [f32; 2],
             [f32; 2],
             i32,
+            f32,
             Option<jag_draw::Rect>,
             Option<jag_draw::RoundedRectClipGpu>,
         )> = Vec::new();
@@ -562,10 +566,18 @@ impl JagSurface {
                 .load_image_to_view(&resolved_path, &self.queue)
                 .is_some()
             {
-                group_images.push((resolved_path, draw.origin, draw.size, draw.z, None, None));
+                group_images.push((
+                    resolved_path,
+                    draw.origin,
+                    draw.size,
+                    draw.z,
+                    draw.opacity,
+                    None,
+                    None,
+                ));
             }
         }
-        group_images.sort_by_key(|(_, _, _, z, _, _)| *z);
+        group_images.sort_by_key(|(_, _, _, z, _, _, _)| *z);
 
         let width = viewport.width.max(1);
         let height = viewport.height.max(1);
@@ -716,6 +728,7 @@ impl JagSurface {
             rounded_clip_stack: vec![None],
             overlay_draws: Vec::new(),
             scrim_draws: Vec::new(),
+            opacity_stack: vec![1.0],
         }
     }
 
@@ -803,24 +816,27 @@ impl JagSurface {
         let mut svg_draws: Vec<_> = canvas
             .svg_draws
             .iter()
-            .map(|(path, origin, max_size, style, z, transform, clip)| {
-                let resolved_path = crate::resolve_asset_path(path);
-                (
-                    resolved_path,
-                    *origin,
-                    *max_size,
-                    *style,
-                    *z,
-                    *transform,
-                    *clip,
-                )
-            })
+            .map(
+                |(path, origin, max_size, style, z, opacity, transform, clip)| {
+                    let resolved_path = crate::resolve_asset_path(path);
+                    (
+                        resolved_path,
+                        *origin,
+                        *max_size,
+                        *style,
+                        *z,
+                        *opacity,
+                        *transform,
+                        *clip,
+                    )
+                },
+            )
             .collect();
-        svg_draws.sort_by_key(|(_, _, _, _, z, _, _)| *z);
+        svg_draws.sort_by_key(|(_, _, _, _, z, _, _, _)| *z);
 
         // Sort image draws by z-index and prepare simplified data (for unified pass)
         let mut image_draws = canvas.image_draws.clone();
-        image_draws.sort_by_key(|(_, _, _, _, z, _, _, _)| *z);
+        image_draws.sort_by_key(|(_, _, _, _, z, _, _, _, _)| *z);
 
         // Convert image draws to simplified format (path, origin, size, z, clip)
         // Apply transforms and fit calculations here. We synchronously load images
@@ -834,10 +850,13 @@ impl JagSurface {
             [f32; 2],
             [f32; 2],
             i32,
+            f32,
             Option<jag_draw::Rect>,
             Option<jag_draw::RoundedRectClipGpu>,
         )> = Vec::new();
-        for (path, origin, size, fit, z, transform, clip, rounded_clip) in image_draws.iter() {
+        for (path, origin, size, fit, z, opacity, transform, clip, rounded_clip) in
+            image_draws.iter()
+        {
             // Resolve path to check app bundle resources
             let resolved_path = crate::resolve_asset_path(path);
 
@@ -861,6 +880,7 @@ impl JagSurface {
                     render_origin,
                     render_size,
                     *z,
+                    *opacity,
                     *clip,
                     rounded_clip
                         .as_ref()
@@ -977,6 +997,7 @@ impl JagSurface {
                 transformed_origin,
                 raw_draw.dst_size,
                 raw_draw.z,
+                1.0,
                 raw_draw.clip,
                 None, // no rounded clip for raw images
             ));
@@ -1402,34 +1423,40 @@ impl JagSurface {
         let mut svg_draws: Vec<_> = canvas
             .svg_draws
             .iter()
-            .map(|(path, origin, max_size, style, z, transform, clip)| {
-                let resolved_path = crate::resolve_asset_path(path);
-                (
-                    resolved_path,
-                    *origin,
-                    *max_size,
-                    *style,
-                    *z,
-                    *transform,
-                    *clip,
-                )
-            })
+            .map(
+                |(path, origin, max_size, style, z, opacity, transform, clip)| {
+                    let resolved_path = crate::resolve_asset_path(path);
+                    (
+                        resolved_path,
+                        *origin,
+                        *max_size,
+                        *style,
+                        *z,
+                        *opacity,
+                        *transform,
+                        *clip,
+                    )
+                },
+            )
             .collect();
-        svg_draws.sort_by_key(|(_, _, _, _, z, _, _)| *z);
+        svg_draws.sort_by_key(|(_, _, _, _, z, _, _, _)| *z);
 
         // Sort and prepare image draws
         let mut image_draws = canvas.image_draws.clone();
-        image_draws.sort_by_key(|(_, _, _, _, z, _, _, _)| *z);
+        image_draws.sort_by_key(|(_, _, _, _, z, _, _, _, _)| *z);
 
         let mut prepared_images: Vec<(
             std::path::PathBuf,
             [f32; 2],
             [f32; 2],
             i32,
+            f32,
             Option<jag_draw::Rect>,
             Option<jag_draw::RoundedRectClipGpu>,
         )> = Vec::new();
-        for (path, origin, size, fit, z, transform, clip, rounded_clip) in image_draws.iter() {
+        for (path, origin, size, fit, z, opacity, transform, clip, rounded_clip) in
+            image_draws.iter()
+        {
             let resolved_path = crate::resolve_asset_path(path);
             if let Some((tex_view, img_w, img_h)) =
                 self.pass.load_image_to_view(&resolved_path, &self.queue)
@@ -1448,6 +1475,7 @@ impl JagSurface {
                     render_origin,
                     render_size,
                     *z,
+                    *opacity,
                     *clip,
                     rounded_clip
                         .as_ref()

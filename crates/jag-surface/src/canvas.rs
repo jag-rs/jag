@@ -45,19 +45,21 @@ pub struct Canvas {
         [f32; 2],
         Option<jag_draw::SvgStyle>,
         i32,
+        f32,
         Transform2D,
         Option<Rect>,
-    )>, // (path, origin, max_size, style, z, transform, device_clip)
+    )>, // (path, origin, max_size, style, z, opacity, transform, device_clip)
     pub(crate) image_draws: Vec<(
         std::path::PathBuf,
         [f32; 2],
         [f32; 2],
         ImageFitMode,
         i32,
+        f32,
         Transform2D,
         Option<Rect>,
         Option<RoundedRectClip>,
-    )>, // (path, origin, size, fit, z, transform, device_clip, rounded_clip)
+    )>, // (path, origin, size, fit, z, opacity, transform, device_clip, rounded_clip)
     /// Raw pixel data draws: (pixels_rgba, src_width, src_height, origin, dst_size, z, transform)
     pub(crate) raw_image_draws: Vec<RawImageDraw>,
     pub(crate) dpi_scale: f32, // DPI scale factor for text rendering
@@ -73,6 +75,9 @@ pub struct Canvas {
     // Scrim draws that blend over content but allow z-ordered content to render on top.
     // Supports either a full-rect scrim or a scrim with a rounded-rect cutout via stencil.
     pub(crate) scrim_draws: Vec<ScrimDraw>,
+    // Effective opacity for side-channel draws (SVGs/images) that are not
+    // emitted through the display-list command stream.
+    pub(crate) opacity_stack: Vec<f32>,
 }
 
 /// Scrim drawing modes.
@@ -116,6 +121,10 @@ impl Canvas {
     /// Get the current transform from the painter's transform stack.
     pub fn current_transform(&self) -> Transform2D {
         self.painter.current_transform()
+    }
+
+    fn current_opacity(&self) -> f32 {
+        self.opacity_stack.last().copied().unwrap_or(1.0)
     }
 
     /// Set the frame clear/background color (premultiplied linear RGBA).
@@ -1172,6 +1181,7 @@ impl Canvas {
             max_size,
             None,
             z,
+            self.current_opacity(),
             transform,
             device_clip,
         ));
@@ -1207,6 +1217,7 @@ impl Canvas {
             max_size,
             Some(style),
             z,
+            self.current_opacity(),
             transform,
             device_clip,
         ));
@@ -1244,6 +1255,7 @@ impl Canvas {
             size,
             fit,
             z,
+            self.current_opacity(),
             transform,
             device_clip,
             rounded_clip,
@@ -1426,10 +1438,16 @@ impl Canvas {
     }
 
     pub fn push_opacity(&mut self, opacity: f32) {
+        let parent_opacity = self.current_opacity();
+        self.opacity_stack
+            .push(parent_opacity * opacity.clamp(0.0, 1.0));
         self.painter.push_opacity(opacity);
     }
 
     pub fn pop_opacity(&mut self) {
+        if self.opacity_stack.len() > 1 {
+            self.opacity_stack.pop();
+        }
         self.painter.pop_opacity();
     }
 
@@ -1797,6 +1815,117 @@ fn tint_glyph_mask_with_gradient(
     jag_draw::RasterizedGlyph {
         offset: glyph.offset,
         mask: tinted_mask,
+    }
+}
+
+#[cfg(test)]
+mod side_channel_opacity_tests {
+    use super::{Canvas, ImageFitMode, ScrimDraw};
+    use jag_draw::{ColorLinPremul, Painter, Rect, Viewport};
+
+    fn test_canvas() -> Canvas {
+        let viewport = Viewport {
+            width: 320,
+            height: 240,
+        };
+        Canvas {
+            viewport,
+            painter: Painter::begin_frame(viewport),
+            clear_color: None,
+            text_provider: None,
+            glyph_draws: Vec::new(),
+            svg_draws: Vec::new(),
+            image_draws: Vec::new(),
+            raw_image_draws: Vec::new(),
+            dpi_scale: 1.0,
+            clip_stack: vec![None],
+            rounded_clip_stack: vec![None],
+            overlay_draws: Vec::new(),
+            scrim_draws: Vec::<ScrimDraw>::new(),
+            opacity_stack: vec![1.0],
+        }
+    }
+
+    #[test]
+    fn svg_side_channel_captures_effective_parent_opacity() {
+        let mut canvas = test_canvas();
+        canvas.push_opacity(0.5);
+        canvas.push_opacity(0.25);
+
+        canvas.draw_svg("icon.svg", [10.0, 20.0], [16.0, 16.0], 7);
+
+        assert_eq!(canvas.svg_draws.len(), 1);
+        assert_eq!(canvas.svg_draws[0].5, 0.125);
+    }
+
+    #[test]
+    fn image_side_channel_captures_zero_parent_opacity() {
+        let mut canvas = test_canvas();
+        canvas.push_opacity(0.0);
+
+        canvas.draw_image(
+            "image.png",
+            [0.0, 0.0],
+            [24.0, 24.0],
+            ImageFitMode::Contain,
+            3,
+        );
+
+        assert_eq!(canvas.image_draws.len(), 1);
+        assert_eq!(canvas.image_draws[0].5, 0.0);
+    }
+
+    #[test]
+    fn side_channel_opacity_clamps_each_pushed_layer() {
+        let mut canvas = test_canvas();
+        canvas.push_opacity(0.5);
+        canvas.push_opacity(2.0);
+
+        canvas.draw_svg("icon.svg", [10.0, 20.0], [16.0, 16.0], 7);
+
+        assert_eq!(canvas.svg_draws.len(), 1);
+        assert_eq!(canvas.svg_draws[0].5, 0.5);
+    }
+
+    #[test]
+    fn pop_opacity_restores_side_channel_parent_opacity() {
+        let mut canvas = test_canvas();
+        canvas.push_opacity(0.5);
+        canvas.push_opacity(0.25);
+        canvas.pop_opacity();
+
+        canvas.draw_svg_styled(
+            "icon.svg",
+            [10.0, 20.0],
+            [16.0, 16.0],
+            jag_draw::SvgStyle::new().with_stroke(ColorLinPremul {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            }),
+            7,
+        );
+
+        assert_eq!(canvas.svg_draws.len(), 1);
+        assert_eq!(canvas.svg_draws[0].5, 0.5);
+    }
+
+    #[test]
+    fn clipping_does_not_drop_side_channel_opacity() {
+        let mut canvas = test_canvas();
+        canvas.push_clip_rect(Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 40.0,
+            h: 40.0,
+        });
+        canvas.push_opacity(0.75);
+
+        canvas.draw_svg("icon.svg", [4.0, 4.0], [16.0, 16.0], 7);
+
+        assert_eq!(canvas.svg_draws.len(), 1);
+        assert_eq!(canvas.svg_draws[0].5, 0.75);
     }
 }
 
