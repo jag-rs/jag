@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 // use anyhow::Result;
+use wgpu::util::DeviceExt;
 
 use crate::allocator::{RenderAllocator, TexKey};
 // use crate::display_list::{Command, DisplayList, Viewport};
 use crate::pipeline::{
-    BackgroundRenderer, BasicSolidRenderer, Blitter, BlurRenderer, Compositor,
-    OverlaySolidRenderer, ScrimSolidRenderer, ScrimStencilMaskRenderer, ScrimStencilRenderer,
-    ShadowCompositeRenderer, SmaaRenderer, TextRenderer,
+    BackdropBlurRenderer, BackgroundRenderer, BasicSolidRenderer, Blitter, BlurRenderer,
+    Compositor, OverlaySolidRenderer, ScrimSolidRenderer, ScrimStencilMaskRenderer,
+    ScrimStencilRenderer, ShadowCompositeRenderer, SmaaRenderer, TextRenderer,
 };
 use crate::scene::{BoxShadowSpec, RoundedRadii, RoundedRect};
 use crate::upload::GpuScene;
@@ -18,6 +19,45 @@ fn apply_transform_to_point(point: [f32; 2], transform: crate::Transform2D) -> [
     let x = point[0];
     let y = point[1];
     [a * x + c * y + e, b * x + d * y + f]
+}
+
+fn transformed_quad_points(
+    origin: [f32; 2],
+    size: [f32; 2],
+    transform: crate::Transform2D,
+) -> [[f32; 2]; 4] {
+    let right = origin[0] + size[0];
+    let bottom = origin[1] + size[1];
+    [
+        apply_transform_to_point(origin, transform),
+        apply_transform_to_point([right, origin[1]], transform),
+        apply_transform_to_point([right, bottom], transform),
+        apply_transform_to_point([origin[0], bottom], transform),
+    ]
+}
+
+#[cfg(test)]
+mod transform_tests {
+    use super::*;
+
+    #[test]
+    fn transformed_quad_preserves_rotated_svg_bounds() {
+        let transform = crate::Transform2D::rotate_around(std::f32::consts::PI, 408.0, 773.0);
+
+        let quad = transformed_quad_points([400.0, 765.0], [16.0, 16.0], transform);
+
+        assert_point_close(quad[0], [416.0, 781.0]);
+        assert_point_close(quad[1], [400.0, 781.0]);
+        assert_point_close(quad[2], [400.0, 765.0]);
+        assert_point_close(quad[3], [416.0, 765.0]);
+    }
+
+    fn assert_point_close(actual: [f32; 2], expected: [f32; 2]) {
+        assert!(
+            (actual[0] - expected[0]).abs() < 0.001 && (actual[1] - expected[1]).abs() < 0.001,
+            "expected point {expected:?}, got {actual:?}"
+        );
+    }
 }
 
 fn u16_unorm_to_u8(v: u16) -> u8 {
@@ -98,6 +138,7 @@ pub struct PassManager {
     // Shadow/blur pipelines and helpers
     pub mask_renderer: BasicSolidRenderer,
     pub blur_r8: BlurRenderer,
+    pub backdrop_blur: BackdropBlurRenderer,
     pub shadow_comp: ShadowCompositeRenderer,
     pub text: TextRenderer,
     pub text_offscreen: TextRenderer,
@@ -243,6 +284,7 @@ impl PassManager {
         let mask_renderer =
             BasicSolidRenderer::new(device.clone(), wgpu::TextureFormat::R8Unorm, 1);
         let blur_r8 = BlurRenderer::new(device.clone(), wgpu::TextureFormat::R8Unorm);
+        let backdrop_blur = BackdropBlurRenderer::new(device.clone(), offscreen_format);
         let shadow_comp = ShadowCompositeRenderer::new(device.clone(), target_format);
         let text = TextRenderer::new(device.clone(), target_format);
         let text_offscreen = TextRenderer::new(device.clone(), offscreen_format);
@@ -335,6 +377,7 @@ impl PassManager {
             scrim_stencil,
             mask_renderer,
             blur_r8,
+            backdrop_blur,
             shadow_comp,
             text,
             text_offscreen,
@@ -681,7 +724,10 @@ impl PassManager {
             width,
             height,
             format: self.offscreen_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
         });
         PassTargets { color }
     }
@@ -1485,6 +1531,155 @@ impl PassManager {
         }
 
         // Temp textures are dropped at end of scope
+    }
+
+    /// Draw a backdrop blur rectangle by sampling the current target contents and
+    /// writing the filtered result back through the existing depth buffer.
+    pub fn draw_backdrop_blur_rect(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        allocator: &mut RenderAllocator,
+        target: &crate::OwnedTexture,
+        width: u32,
+        height: u32,
+        draw: crate::BackdropBlurDraw,
+        queue: &wgpu::Queue,
+    ) {
+        if draw.rect.w <= 0.0 || draw.rect.h <= 0.0 || draw.radius <= 0.0 {
+            return;
+        }
+
+        let snapshot = allocator.allocate_texture(TexKey {
+            width: width.max(1),
+            height: height.max(1),
+            format: target.key.format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        });
+        encoder.copy_texture_to_texture(
+            wgpu::ImageCopyTexture {
+                texture: &target.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyTexture {
+                texture: &snapshot.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let logical =
+            crate::dpi::logical_multiplier(self.logical_pixels, self.scale_factor, self.ui_scale);
+        #[repr(C)]
+        #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+        struct Params {
+            texel: [f32; 2],
+            viewport_size: [f32; 2],
+            radius: f32,
+            logical: f32,
+            pad: [f32; 2],
+        }
+        let params = Params {
+            texel: [1.0 / width.max(1) as f32, 1.0 / height.max(1) as f32],
+            viewport_size: [width.max(1) as f32, height.max(1) as f32],
+            radius: draw.radius.max(0.0),
+            logical,
+            pad: [0.0, 0.0],
+        };
+        queue.write_buffer(
+            &self.backdrop_blur.param_buffer,
+            0,
+            bytemuck::bytes_of(&params),
+        );
+
+        #[repr(C)]
+        #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+        struct BackdropVtx {
+            pos: [f32; 2],
+            z: f32,
+        }
+        let x = draw.rect.x;
+        let y = draw.rect.y;
+        let w = draw.rect.w;
+        let h = draw.rect.h;
+        let z = draw.z as f32;
+        let p0 = apply_transform_to_point([x, y], draw.transform);
+        let p1 = apply_transform_to_point([x + w, y], draw.transform);
+        let p2 = apply_transform_to_point([x + w, y + h], draw.transform);
+        let p3 = apply_transform_to_point([x, y + h], draw.transform);
+        let verts = [
+            BackdropVtx { pos: p0, z },
+            BackdropVtx { pos: p1, z },
+            BackdropVtx { pos: p2, z },
+            BackdropVtx { pos: p3, z },
+        ];
+        let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
+        let vbuf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("backdrop-blur-vbuf"),
+                contents: bytemuck::cast_slice(&verts),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let ibuf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("backdrop-blur-ibuf"),
+                contents: bytemuck::cast_slice(&idx),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
+        let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("backdrop-blur-vp-bg"),
+            layout: self.backdrop_blur.viewport_bgl(),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.vp_buffer.as_entire_binding(),
+            }],
+        });
+        let blur_bg = self.backdrop_blur.bind_group(&self.device, &snapshot.view);
+
+        let depth_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
+            view: self.depth_view(),
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        });
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("backdrop-blur-pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &target.view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: depth_attachment,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        if let Some(c) = draw.clip {
+            pass.set_scissor_rect(
+                c.x.max(0.0) as u32,
+                c.y.max(0.0) as u32,
+                (c.w.max(1.0) as u32).min(width.saturating_sub(c.x.max(0.0) as u32)),
+                (c.h.max(1.0) as u32).min(height.saturating_sub(c.y.max(0.0) as u32)),
+            );
+        }
+        self.backdrop_blur
+            .record(&mut pass, &vp_bg, &blur_bg, &vbuf, &ibuf, idx.len() as u32);
+        drop(pass);
+        allocator.release_texture(snapshot);
     }
 
     /// Draw a simple overlay rectangle that darkens existing content without affecting depth.
@@ -2941,6 +3136,7 @@ impl PassManager {
             f32,
             crate::Transform2D,
             Option<crate::Rect>,
+            Option<crate::RoundedRectClipGpu>,
         )],
         image_draws: &[(
             std::path::PathBuf,
@@ -2951,6 +3147,7 @@ impl PassManager {
             Option<crate::Rect>,
             Option<crate::RoundedRectClipGpu>,
         )],
+        backdrop_blur_draws: &[crate::BackdropBlurDraw],
         external_texture_draws: &[crate::upload::ExtractedExternalTextureDraw],
         clear: wgpu::Color,
         direct: bool,
@@ -3044,13 +3241,15 @@ impl PassManager {
             // Pre-rasterize all SVGs before render pass (to avoid mutable borrow conflicts)
             let mut svg_views: Vec<(
                 wgpu::TextureView,
-                [f32; 2],
-                [f32; 2],
+                [[f32; 2]; 4],
                 f32,
                 f32,
                 Option<crate::Rect>,
+                Option<&crate::RoundedRectClipGpu>,
             )> = Vec::new();
-            for (path, origin, max_size, style, _z, opacity, transform, clip) in svg_draws.iter() {
+            for (path, origin, max_size, style, _z, opacity, transform, clip, rounded_clip) in
+                svg_draws.iter()
+            {
                 if let Some((_view, w, h)) =
                     self.rasterize_svg_to_view(std::path::Path::new(path), 1.0, *style, queue)
                 {
@@ -3063,14 +3262,15 @@ impl PassManager {
                     {
                         let draw_w = base_w * scale;
                         let draw_h = base_h * scale;
-                        let transformed_origin = apply_transform_to_point(*origin, *transform);
+                        let transformed_quad =
+                            transformed_quad_points(*origin, [draw_w, draw_h], *transform);
                         svg_views.push((
                             view_scaled,
-                            transformed_origin,
-                            [draw_w, draw_h],
+                            transformed_quad,
                             *_z as f32,
                             *opacity,
                             *clip,
+                            rounded_clip.as_ref(),
                         ));
                     }
                 }
@@ -3409,22 +3609,22 @@ impl PassManager {
                 wgpu::Buffer,
                 Option<crate::Rect>,
             )> = Vec::new();
-            for (view_scaled, origin, size, z_val, opacity, clip) in svg_views.iter() {
+            for (view_scaled, quad, z_val, opacity, clip, rounded_clip) in svg_views.iter() {
                 let verts = [
                     ImageQuadVtx {
-                        pos: [origin[0], origin[1]],
+                        pos: quad[0],
                         uv: [0.0, 0.0],
                     },
                     ImageQuadVtx {
-                        pos: [origin[0] + size[0], origin[1]],
+                        pos: quad[1],
                         uv: [1.0, 0.0],
                     },
                     ImageQuadVtx {
-                        pos: [origin[0] + size[0], origin[1] + size[1]],
+                        pos: quad[2],
                         uv: [1.0, 1.0],
                     },
                     ImageQuadVtx {
-                        pos: [origin[0], origin[1] + size[1]],
+                        pos: quad[3],
                         uv: [0.0, 1.0],
                     },
                 ];
@@ -3449,8 +3649,12 @@ impl PassManager {
                 // Pass z_index as float directly - shader will convert to depth
                 let (z_bg_svg, z_buf_svg) = self.create_group_z_bind_group(*z_val as f32, queue);
                 let tex_bg = self.image.tex_bind_group(&self.device, view_scaled);
-                let (params_bg, params_buf) =
-                    self.image.params_bind_group(&self.device, *opacity, false);
+                let (params_bg, params_buf) = self.image.params_bind_group_clipped(
+                    &self.device,
+                    *opacity,
+                    false,
+                    *rounded_clip,
+                );
 
                 svg_z_vals.push(*z_val as i32);
                 svg_resources.push((
@@ -3763,13 +3967,15 @@ impl PassManager {
         // Pre-rasterize all SVGs before creating render pass (to avoid mutable borrow conflicts)
         let mut svg_views_off: Vec<(
             wgpu::TextureView,
-            [f32; 2],
-            [f32; 2],
+            [[f32; 2]; 4],
             f32,
             f32,
             Option<crate::Rect>,
+            Option<&crate::RoundedRectClipGpu>,
         )> = Vec::new();
-        for (path, origin, max_size, style, _z, opacity, transform, clip) in svg_draws.iter() {
+        for (path, origin, max_size, style, _z, opacity, transform, clip, rounded_clip) in
+            svg_draws.iter()
+        {
             if let Some((_view, w, h)) =
                 self.rasterize_svg_to_view(std::path::Path::new(path), 1.0, *style, queue)
             {
@@ -3783,14 +3989,15 @@ impl PassManager {
                     // Use logical size, not rasterized pixel dimensions (see note above).
                     let draw_w = base_w * scale;
                     let draw_h = base_h * scale;
-                    let transformed_origin = apply_transform_to_point(*origin, *transform);
+                    let transformed_quad =
+                        transformed_quad_points(*origin, [draw_w, draw_h], *transform);
                     svg_views_off.push((
                         view_scaled,
-                        transformed_origin,
-                        [draw_w, draw_h],
+                        transformed_quad,
                         *_z as f32,
                         *opacity,
                         *clip,
+                        rounded_clip.as_ref(),
                     ));
                 }
             }
@@ -4097,22 +4304,22 @@ impl PassManager {
             wgpu::Buffer,
             Option<crate::Rect>,
         )> = Vec::new();
-        for (view_scaled, origin, size, z_val, opacity, clip) in svg_views_off.iter() {
+        for (view_scaled, quad, z_val, opacity, clip, rounded_clip) in svg_views_off.iter() {
             let verts = [
                 ImageQuadVtx {
-                    pos: [origin[0], origin[1]],
+                    pos: quad[0],
                     uv: [0.0, 0.0],
                 },
                 ImageQuadVtx {
-                    pos: [origin[0] + size[0], origin[1]],
+                    pos: quad[1],
                     uv: [1.0, 0.0],
                 },
                 ImageQuadVtx {
-                    pos: [origin[0] + size[0], origin[1] + size[1]],
+                    pos: quad[2],
                     uv: [1.0, 1.0],
                 },
                 ImageQuadVtx {
-                    pos: [origin[0], origin[1] + size[1]],
+                    pos: quad[3],
                     uv: [0.0, 1.0],
                 },
             ];
@@ -4141,9 +4348,12 @@ impl PassManager {
             let tex_bg = self
                 .image_offscreen
                 .tex_bind_group(&self.device, view_scaled);
-            let (params_bg, params_buf) =
-                self.image_offscreen
-                    .params_bind_group(&self.device, *opacity, false);
+            let (params_bg, params_buf) = self.image_offscreen.params_bind_group_clipped(
+                &self.device,
+                *opacity,
+                false,
+                *rounded_clip,
+            );
 
             svg_z_vals_off.push(*z_val as i32);
             svg_resources_off.push((
@@ -4276,9 +4486,11 @@ impl PassManager {
 
         // Unified z-sorted rendering (offscreen path): interleave ALL draw types
         // by z-index for correct depth ordering across element types.
+        drop(pass);
         {
             #[derive(Clone, Copy)]
             enum DrawItemOff {
+                BackdropBlur(usize),
                 TransparentBatch(usize),
                 TextGroup(usize),
                 Image(usize),
@@ -4286,6 +4498,9 @@ impl PassManager {
                 ExternalTexture(usize),
             }
             let mut all_items: Vec<(i32, DrawItemOff)> = Vec::new();
+            for (i, backdrop_blur) in backdrop_blur_draws.iter().enumerate() {
+                all_items.push((backdrop_blur.z, DrawItemOff::BackdropBlur(i)));
+            }
             for (i, batch) in transparent_batches.iter().enumerate() {
                 all_items.push((batch.z, DrawItemOff::TransparentBatch(i)));
             }
@@ -4304,7 +4519,44 @@ impl PassManager {
             all_items.sort_by_key(|(z, _)| *z);
 
             for &(_, item) in all_items.iter() {
+                if let DrawItemOff::BackdropBlur(i) = item {
+                    self.draw_backdrop_blur_rect(
+                        encoder,
+                        allocator,
+                        &targets.color,
+                        width,
+                        height,
+                        backdrop_blur_draws[i],
+                        queue,
+                    );
+                    continue;
+                }
+
+                let depth_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: self.depth_view(),
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                });
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("unified-offscreen-transparent-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &targets.color.view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: depth_attachment,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+
                 match item {
+                    DrawItemOff::BackdropBlur(_) => unreachable!(),
                     DrawItemOff::TransparentBatch(i) => {
                         let batch = &transparent_batches[i];
                         if let Some(c) = batch.clip {
@@ -4403,9 +4655,6 @@ impl PassManager {
                 }
             }
         }
-
-        // Drop the pass to complete offscreen rendering
-        drop(pass);
 
         // Composite offscreen target to surface
         self.composite_to_surface(encoder, surface_view, &targets, Some(clear));

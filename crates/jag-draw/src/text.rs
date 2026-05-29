@@ -1438,6 +1438,14 @@ impl JagTextProvider {
 
     fn fallback_family_names_for_char(ch: char) -> &'static [&'static str] {
         match ch as u32 {
+            0x2190..=0x21ff | 0x25a0..=0x25ff | 0x2600..=0x26ff => &[
+                "Apple Symbols",
+                "Segoe UI Symbol",
+                "Arial Unicode MS",
+                "Noto Sans Symbols",
+                "Noto Sans Symbols 2",
+                "DejaVu Sans",
+            ],
             0x0900..=0x097f => &[
                 "Noto Sans Devanagari",
                 "Devanagari Sangam MN",
@@ -1538,6 +1546,28 @@ impl JagTextProvider {
         }
     }
 
+    fn prefers_symbol_fallback(grapheme: &str) -> bool {
+        grapheme.chars().any(|ch| {
+            matches!(
+                ch as u32,
+                0x2190..=0x21ff | 0x25a0..=0x25ff | 0x2600..=0x26ff
+            )
+        })
+    }
+
+    fn browser_symbol_advance_floor(text: &str, size: f32) -> Option<f32> {
+        let mut chars = text.chars();
+        let ch = chars.next()?;
+        if chars.next().is_some() {
+            return None;
+        }
+        matches!(
+            ch as u32,
+            0x2190..=0x21ff | 0x25a0..=0x25ff | 0x2600..=0x26ff
+        )
+        .then_some(size.max(1.0))
+    }
+
     fn resolve_fallback_face_for_char(
         &self,
         ch: char,
@@ -1604,7 +1634,15 @@ impl JagTextProvider {
             let face = if grapheme.chars().all(char::is_whitespace) {
                 current_face.clone()
             } else if Self::face_supports_grapheme(primary_face, grapheme) {
-                primary_face.clone()
+                if Self::prefers_symbol_fallback(grapheme) {
+                    Self::fallback_char_for_grapheme(primary_face, grapheme)
+                        .and_then(|ch| {
+                            self.resolve_fallback_face_for_char(ch, requested_weight, run.style)
+                        })
+                        .unwrap_or_else(|| primary_face.clone())
+                } else {
+                    primary_face.clone()
+                }
             } else if initialized
                 && current_key != Self::face_key(primary_face)
                 && Self::face_supports_grapheme(&current_face, grapheme)
@@ -1930,6 +1968,11 @@ impl TextProvider for JagTextProvider {
                 builder = builder.normalized_coords(&norm_coords);
             }
             let mut scaler = builder.build();
+            let symbol_advance_floor = Self::browser_symbol_advance_floor(text, size);
+            let shaped_advance = shaped.width;
+            let glyph_x_adjust = symbol_advance_floor
+                .map(|floor| ((floor - shaped_advance).max(0.0)) * 0.5)
+                .unwrap_or(0.0);
 
             for idx in 0..shaped.glyphs.len() {
                 let glyph_id = shaped.glyphs[idx];
@@ -1982,7 +2025,10 @@ impl TextProvider for JagTextProvider {
                                 data: img.data.clone(),
                             }),
                         };
-                        let ox = segment_x + glyph_pos.x_offset + img.placement.left as f32;
+                        let ox = segment_x
+                            + glyph_x_adjust
+                            + glyph_pos.x_offset
+                            + img.placement.left as f32;
                         let oy = glyph_pos.y_offset - img.placement.top as f32;
                         out.push(RasterizedGlyph {
                             offset: [ox, oy],
@@ -2023,7 +2069,10 @@ impl TextProvider for JagTextProvider {
                             }),
                         };
 
-                        let ox = segment_x + glyph_pos.x_offset + img.placement.left as f32;
+                        let ox = segment_x
+                            + glyph_x_adjust
+                            + glyph_pos.x_offset
+                            + img.placement.left as f32;
                         let oy = glyph_pos.y_offset - img.placement.top as f32;
                         out.push(RasterizedGlyph {
                             offset: [ox, oy],
@@ -2033,6 +2082,9 @@ impl TextProvider for JagTextProvider {
                 }
 
                 segment_advance += advance;
+            }
+            if let Some(floor) = symbol_advance_floor {
+                segment_advance = segment_advance.max(floor);
             }
             pen_x = segment_x + segment_advance;
         }
@@ -2133,7 +2185,9 @@ impl TextProvider for JagTextProvider {
                     &hb_vars,
                 )
             };
-            width += shaped.width;
+            width += Self::browser_symbol_advance_floor(text, size)
+                .map(|floor| shaped.width.max(floor))
+                .unwrap_or(shaped.width);
         }
         if std::env::var("JAG_TEXT_DEBUG_FAMILY").is_ok()
             && (run.text.contains("Z-Ordering")
@@ -2270,6 +2324,22 @@ mod tests {
         assert_eq!(mask.data[4], mask.data[5]);
         assert_eq!(mask.data[5], mask.data[6]);
         assert_eq!(&mask.data[8..12], &[255, 255, 255, 0]);
+    }
+
+    #[test]
+    fn standalone_browser_symbols_floor_advance_to_font_size() {
+        assert_eq!(
+            JagTextProvider::browser_symbol_advance_floor("▲", 10.0),
+            Some(10.0)
+        );
+        assert_eq!(
+            JagTextProvider::browser_symbol_advance_floor("A", 10.0),
+            None
+        );
+        assert_eq!(
+            JagTextProvider::browser_symbol_advance_floor("▲▲", 10.0),
+            None
+        );
     }
 
     #[test]

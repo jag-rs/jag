@@ -51,6 +51,7 @@ pub struct CachedFrameData {
         f32,
         Transform2D,
         Option<jag_draw::Rect>,
+        Option<jag_draw::RoundedRectClipGpu>,
     )>,
     /// Resolved image draws.
     pub image_draws: Vec<(
@@ -62,6 +63,8 @@ pub struct CachedFrameData {
         Option<jag_draw::Rect>,
         Option<jag_draw::RoundedRectClipGpu>,
     )>,
+    /// CSS backdrop-filter blur draws.
+    pub backdrop_blur_draws: Vec<jag_draw::BackdropBlurDraw>,
     /// External texture draws (e.g. Canvas3D, opacity group layers).
     pub external_texture_draws: Vec<jag_draw::ExtractedExternalTextureDraw>,
     /// Clear color used for this frame.
@@ -545,10 +548,11 @@ impl JagSurface {
                     draw.opacity,
                     Transform2D::identity(),
                     None, // no clip for opacity group internals
+                    None, // no rounded clip for opacity group internals
                 )
             })
             .collect();
-        group_svgs.sort_by_key(|(_, _, _, _, z, _, _, _)| *z);
+        group_svgs.sort_by_key(|(_, _, _, _, z, _, _, _, _)| *z);
 
         let mut group_images: Vec<(
             std::path::PathBuf,
@@ -618,6 +622,7 @@ impl JagSurface {
             &group_glyphs,
             &group_svgs,
             &group_images,
+            &[],
             &group_scene.external_texture_draws,
             wgpu::Color::TRANSPARENT,
             true,
@@ -722,6 +727,7 @@ impl JagSurface {
             glyph_draws: Vec::new(),
             svg_draws: Vec::new(),
             image_draws: Vec::new(),
+            backdrop_blur_draws: Vec::new(),
             raw_image_draws: Vec::new(),
             dpi_scale: self.dpi_scale,
             clip_stack: vec![None],
@@ -739,15 +745,17 @@ impl JagSurface {
         self.pass.set_logical_pixels(self.logical_pixels);
         self.pass.set_ui_scale(self.ui_scale);
 
-        // Determine the render target: prefer intermediate when SMAA or Vello-style resizing is on.
-        let use_intermediate = self.enable_smaa || self.use_intermediate;
-
         let text_provider = canvas.text_provider.clone();
 
         // Build final display list from painter
         let mut list = canvas.painter.finish();
         let width = canvas.viewport.width.max(1);
         let height = canvas.viewport.height.max(1);
+        let has_backdrop_blur = !canvas.backdrop_blur_draws.is_empty();
+
+        // Determine the render target: prefer intermediate when SMAA, Vello-style
+        // resizing, or framebuffer-sampling effects are in use.
+        let use_intermediate = self.enable_smaa || self.use_intermediate || has_backdrop_blur;
 
         if list
             .commands
@@ -817,7 +825,7 @@ impl JagSurface {
             .svg_draws
             .iter()
             .map(
-                |(path, origin, max_size, style, z, opacity, transform, clip)| {
+                |(path, origin, max_size, style, z, opacity, transform, clip, rounded_clip)| {
                     let resolved_path = crate::resolve_asset_path(path);
                     (
                         resolved_path,
@@ -828,11 +836,17 @@ impl JagSurface {
                         *opacity,
                         *transform,
                         *clip,
+                        rounded_clip
+                            .as_ref()
+                            .map(|rc| jag_draw::RoundedRectClipGpu {
+                                rect: [rc.rect.x, rc.rect.y, rc.rect.w, rc.rect.h],
+                                radii: rc.radii,
+                            }),
                     )
                 },
             )
             .collect();
-        svg_draws.sort_by_key(|(_, _, _, _, z, _, _, _)| *z);
+        svg_draws.sort_by_key(|(_, _, _, _, z, _, _, _, _)| *z);
 
         // Sort image draws by z-index and prepare simplified data (for unified pass)
         let mut image_draws = canvas.image_draws.clone();
@@ -1077,7 +1091,11 @@ impl JagSurface {
 
         // Unified solids + text/images/SVGs pass
         let preserve_surface = self.preserve_surface;
-        let direct = self.direct || !use_intermediate;
+        let direct = if has_backdrop_blur {
+            false
+        } else {
+            self.direct || !use_intermediate
+        };
         self.pass.render_unified(
             &mut encoder,
             &mut self.allocator,
@@ -1091,6 +1109,7 @@ impl JagSurface {
             &glyph_draws,
             &svg_draws,
             &prepared_images,
+            &canvas.backdrop_blur_draws,
             &unified_scene.external_texture_draws,
             clear_wgpu,
             direct,
@@ -1110,6 +1129,7 @@ impl JagSurface {
             glyph_draws,
             svg_draws,
             image_draws: prepared_images,
+            backdrop_blur_draws: canvas.backdrop_blur_draws.clone(),
             external_texture_draws: unified_scene.external_texture_draws,
             clear: clear_wgpu,
             direct,
@@ -1220,7 +1240,8 @@ impl JagSurface {
         self.pass.set_logical_pixels(self.logical_pixels);
         self.pass.set_ui_scale(self.ui_scale);
 
-        let use_intermediate = self.enable_smaa || self.use_intermediate;
+        let use_intermediate =
+            self.enable_smaa || self.use_intermediate || !cache.backdrop_blur_draws.is_empty();
         let width = cache.width;
         let height = cache.height;
         let clear = cache.clear;
@@ -1273,6 +1294,7 @@ impl JagSurface {
             &cache.glyph_draws,
             &cache.svg_draws,
             &cache.image_draws,
+            &cache.backdrop_blur_draws,
             &cache.external_texture_draws,
             clear,
             direct,
@@ -1424,7 +1446,7 @@ impl JagSurface {
             .svg_draws
             .iter()
             .map(
-                |(path, origin, max_size, style, z, opacity, transform, clip)| {
+                |(path, origin, max_size, style, z, opacity, transform, clip, rounded_clip)| {
                     let resolved_path = crate::resolve_asset_path(path);
                     (
                         resolved_path,
@@ -1435,11 +1457,17 @@ impl JagSurface {
                         *opacity,
                         *transform,
                         *clip,
+                        rounded_clip
+                            .as_ref()
+                            .map(|rc| jag_draw::RoundedRectClipGpu {
+                                rect: [rc.rect.x, rc.rect.y, rc.rect.w, rc.rect.h],
+                                radii: rc.radii,
+                            }),
                     )
                 },
             )
             .collect();
-        svg_draws.sort_by_key(|(_, _, _, _, z, _, _, _)| *z);
+        svg_draws.sort_by_key(|(_, _, _, _, z, _, _, _, _)| *z);
 
         // Sort and prepare image draws
         let mut image_draws = canvas.image_draws.clone();
@@ -1525,9 +1553,10 @@ impl JagSurface {
             &glyph_draws,
             &svg_draws,
             &prepared_images,
+            &canvas.backdrop_blur_draws,
             &unified_scene.external_texture_draws,
             clear_wgpu,
-            true, // direct rendering (no intermediate)
+            canvas.backdrop_blur_draws.is_empty(), // direct unless framebuffer sampling is needed
             &self.queue,
             false, // don't preserve surface
         );

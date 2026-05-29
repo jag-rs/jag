@@ -150,6 +150,15 @@ pub struct BoxShadowSpec {
     pub color: ColorLinPremul,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct BackdropBlurDraw {
+    pub rect: Rect,
+    pub radius: f32,
+    pub z: i32,
+    pub transform: Transform2D,
+    pub clip: Option<Rect>,
+}
+
 #[derive(Clone, Debug)]
 pub enum Shape {
     Rect(Rect),

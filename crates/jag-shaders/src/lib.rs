@@ -521,6 +521,73 @@ fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
 } 
 "#;
 
+/// Backdrop blur over the already-rendered framebuffer.
+pub const BACKDROP_BLUR_WGSL: &str = r#"
+struct ViewportUniform {
+    scale: vec2<f32>,
+    translate: vec2<f32>,
+    scroll_offset: vec2<f32>,
+    _pad: vec2<f32>,
+};
+
+@group(0) @binding(0) var<uniform> vp: ViewportUniform;
+
+struct Params {
+    texel: vec2<f32>,
+    viewport_size: vec2<f32>,
+    radius: f32,
+    logical: f32,
+    _pad: vec2<f32>,
+};
+
+@group(1) @binding(0) var src_tex: texture_2d<f32>;
+@group(1) @binding(1) var src_smp: sampler;
+@group(1) @binding(2) var<uniform> params: Params;
+
+struct VsOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) in_pos: vec2<f32>, @location(1) in_z_index: f32) -> VsOut {
+    var out: VsOut;
+    let scrolled = in_pos + vp.scroll_offset;
+    let ndc = vec2<f32>(
+        scrolled.x * vp.scale.x + vp.translate.x,
+        scrolled.y * vp.scale.y + vp.translate.y
+    );
+    let depth = (-clamp(in_z_index, -1000000.0, 1000000.0) / 1000000.0) * 0.5 + 0.5;
+    out.pos = vec4<f32>(ndc, depth, 1.0);
+    out.uv = vec2<f32>(
+        (scrolled.x * params.logical) / params.viewport_size.x,
+        (scrolled.y * params.logical) / params.viewport_size.y
+    );
+    return out;
+}
+
+fn weight_for(offset: vec2<f32>) -> f32 {
+    return exp(-0.5 * dot(offset, offset));
+}
+
+@fragment
+fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
+    let step_uv = max(params.radius, 1.0) * 0.38 * params.texel;
+    var acc: vec4<f32> = vec4<f32>(0.0);
+    var total: f32 = 0.0;
+    for (var y: i32 = -4; y <= 4; y = y + 1) {
+        for (var x: i32 = -4; x <= 4; x = x + 1) {
+            let ofs_cells = vec2<f32>(f32(x), f32(y));
+            let w = weight_for(ofs_cells * 0.42);
+            let uv = clamp(inp.uv + ofs_cells * step_uv, vec2<f32>(0.0), vec2<f32>(1.0));
+            acc = acc + textureSample(src_tex, src_smp, uv) * w;
+            total = total + w;
+        }
+    }
+    return acc / max(total, 0.0001);
+}
+"#;
+
 /// Text rendering shader: samples an RGB coverage mask (subpixel AA) and tints with a
 /// premultiplied linear text color. The output is premultiplied.
 ///

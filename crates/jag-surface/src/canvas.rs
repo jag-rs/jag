@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use jag_draw::{
-    Brush, ColorLinPremul, FontStyle, Painter, Path, RasterizedGlyph, Rect, RoundedRadii,
-    RoundedRect, Stroke, TextProvider, TextRun, Transform2D, Viewport, snap_to_device,
+    BackdropBlurDraw, Brush, ColorLinPremul, FontStyle, Painter, Path, RasterizedGlyph, Rect,
+    RoundedRadii, RoundedRect, Stroke, TextProvider, TextRun, Transform2D, Viewport,
+    snap_to_device,
 };
 
 /// Rounded-rect clip region in device pixels, passed to the image shader
@@ -48,7 +49,8 @@ pub struct Canvas {
         f32,
         Transform2D,
         Option<Rect>,
-    )>, // (path, origin, max_size, style, z, opacity, transform, device_clip)
+        Option<RoundedRectClip>,
+    )>, // (path, origin, max_size, style, z, opacity, transform, device_clip, rounded_clip)
     pub(crate) image_draws: Vec<(
         std::path::PathBuf,
         [f32; 2],
@@ -60,6 +62,7 @@ pub struct Canvas {
         Option<Rect>,
         Option<RoundedRectClip>,
     )>, // (path, origin, size, fit, z, opacity, transform, device_clip, rounded_clip)
+    pub(crate) backdrop_blur_draws: Vec<BackdropBlurDraw>,
     /// Raw pixel data draws: (pixels_rgba, src_width, src_height, origin, dst_size, z, transform)
     pub(crate) raw_image_draws: Vec<RawImageDraw>,
     pub(crate) dpi_scale: f32, // DPI scale factor for text rendering
@@ -1174,6 +1177,7 @@ impl Canvas {
             }
         }
         let device_clip = self.clip_stack.last().copied().flatten();
+        let rounded_clip = self.rounded_clip_stack.last().cloned().flatten();
         let transform = self.painter.current_transform();
         self.svg_draws.push((
             path.into(),
@@ -1184,6 +1188,7 @@ impl Canvas {
             self.current_opacity(),
             transform,
             device_clip,
+            rounded_clip,
         ));
     }
 
@@ -1209,6 +1214,7 @@ impl Canvas {
             }
         }
         let device_clip = self.clip_stack.last().copied().flatten();
+        let rounded_clip = self.rounded_clip_stack.last().cloned().flatten();
         let path_buf = path.into();
         let transform = self.painter.current_transform();
         self.svg_draws.push((
@@ -1220,6 +1226,7 @@ impl Canvas {
             self.current_opacity(),
             transform,
             device_clip,
+            rounded_clip,
         ));
     }
 
@@ -1260,6 +1267,28 @@ impl Canvas {
             device_clip,
             rounded_clip,
         ));
+    }
+
+    /// Queue a CSS backdrop blur over the current framebuffer contents.
+    ///
+    /// This is a post-process draw that must be interleaved by z-index with
+    /// transparent web paint, before the element's own translucent background.
+    pub fn backdrop_blur_rect(&mut self, rect: Rect, radius: f32, z: i32) {
+        if rect.w <= 0.0 || rect.h <= 0.0 || radius <= 0.0 || !radius.is_finite() {
+            return;
+        }
+        if let Some(clip) = self.clip_rect_local()
+            && intersect_rect(rect, clip).is_none()
+        {
+            return;
+        }
+        self.backdrop_blur_draws.push(BackdropBlurDraw {
+            rect,
+            radius,
+            z,
+            transform: self.painter.current_transform(),
+            clip: self.clip_stack.last().copied().flatten(),
+        });
     }
 
     /// Queue raw pixel data to be drawn at origin with the given size.
@@ -1821,7 +1850,7 @@ fn tint_glyph_mask_with_gradient(
 #[cfg(test)]
 mod side_channel_opacity_tests {
     use super::{Canvas, ImageFitMode, ScrimDraw};
-    use jag_draw::{ColorLinPremul, Painter, Rect, Viewport};
+    use jag_draw::{ColorLinPremul, Painter, Rect, RoundedRadii, RoundedRect, Viewport};
 
     fn test_canvas() -> Canvas {
         let viewport = Viewport {
@@ -1836,6 +1865,7 @@ mod side_channel_opacity_tests {
             glyph_draws: Vec::new(),
             svg_draws: Vec::new(),
             image_draws: Vec::new(),
+            backdrop_blur_draws: Vec::new(),
             raw_image_draws: Vec::new(),
             dpi_scale: 1.0,
             clip_stack: vec![None],
@@ -1926,6 +1956,36 @@ mod side_channel_opacity_tests {
 
         assert_eq!(canvas.svg_draws.len(), 1);
         assert_eq!(canvas.svg_draws[0].5, 0.75);
+    }
+
+    #[test]
+    fn svg_side_channel_captures_rounded_clip() {
+        let mut canvas = test_canvas();
+        canvas.push_clip_rounded_rect(RoundedRect {
+            rect: Rect {
+                x: 8.0,
+                y: 12.0,
+                w: 40.0,
+                h: 40.0,
+            },
+            radii: RoundedRadii {
+                tl: 20.0,
+                tr: 20.0,
+                br: 20.0,
+                bl: 20.0,
+            },
+        });
+
+        canvas.draw_svg("avatar.svg", [8.0, 12.0], [40.0, 40.0], 7);
+
+        let rounded_clip = canvas.svg_draws[0]
+            .8
+            .expect("SVG draw should carry the active rounded clip");
+        assert_eq!(rounded_clip.rect.x, 8.0);
+        assert_eq!(rounded_clip.rect.y, 12.0);
+        assert_eq!(rounded_clip.rect.w, 40.0);
+        assert_eq!(rounded_clip.rect.h, 40.0);
+        assert_eq!(rounded_clip.radii, [20.0, 20.0, 20.0, 20.0]);
     }
 }
 
