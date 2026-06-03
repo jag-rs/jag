@@ -36,6 +36,42 @@ fn transformed_quad_points(
     ]
 }
 
+fn clipped_scissor_rect(
+    clip: crate::scene::Rect,
+    target_width: u32,
+    target_height: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    if target_width == 0
+        || target_height == 0
+        || !clip.x.is_finite()
+        || !clip.y.is_finite()
+        || !clip.w.is_finite()
+        || !clip.h.is_finite()
+        || clip.w <= 0.0
+        || clip.h <= 0.0
+    {
+        return None;
+    }
+
+    let x0 = clip.x.max(0.0).floor().min(target_width as f32);
+    let y0 = clip.y.max(0.0).floor().min(target_height as f32);
+    let x1 = (clip.x + clip.w).ceil().clamp(0.0, target_width as f32);
+    let y1 = (clip.y + clip.h).ceil().clamp(0.0, target_height as f32);
+
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+
+    let x = x0 as u32;
+    let y = y0 as u32;
+    Some((
+        x,
+        y,
+        (x1 as u32).saturating_sub(x),
+        (y1 as u32).saturating_sub(y),
+    ))
+}
+
 #[cfg(test)]
 mod transform_tests {
     use super::*;
@@ -58,6 +94,48 @@ mod transform_tests {
             "expected point {expected:?}, got {actual:?}"
         );
     }
+}
+
+#[cfg(test)]
+mod scissor_tests {
+    use super::*;
+
+    #[test]
+    fn scissor_rejects_empty_clip_below_target() {
+        let clip = crate::scene::Rect {
+            x: 105.0,
+            y: 3700.0,
+            w: 868.0,
+            h: 0.0,
+        };
+
+        assert_eq!(clipped_scissor_rect(clip, 1080, 2282), None);
+    }
+
+    #[test]
+    fn scissor_clamps_intersecting_clip_to_target() {
+        let clip = crate::scene::Rect {
+            x: -10.4,
+            y: 20.2,
+            w: 30.8,
+            h: 40.4,
+        };
+
+        assert_eq!(clipped_scissor_rect(clip, 100, 100), Some((0, 20, 21, 41)));
+    }
+}
+
+fn set_scissor_for_clip(
+    pass: &mut wgpu::RenderPass<'_>,
+    clip: crate::scene::Rect,
+    width: u32,
+    height: u32,
+) -> bool {
+    let Some((x, y, w, h)) = clipped_scissor_rect(clip, width, height) else {
+        return false;
+    };
+    pass.set_scissor_rect(x, y, w, h);
+    true
 }
 
 fn u16_unorm_to_u8(v: u16) -> u8 {
@@ -1669,12 +1747,11 @@ impl PassManager {
             timestamp_writes: None,
         });
         if let Some(c) = draw.clip {
-            pass.set_scissor_rect(
-                c.x.max(0.0) as u32,
-                c.y.max(0.0) as u32,
-                (c.w.max(1.0) as u32).min(width.saturating_sub(c.x.max(0.0) as u32)),
-                (c.h.max(1.0) as u32).min(height.saturating_sub(c.y.max(0.0) as u32)),
-            );
+            if !set_scissor_for_clip(&mut pass, c, width, height) {
+                drop(pass);
+                allocator.release_texture(snapshot);
+                return;
+            }
         }
         self.backdrop_blur
             .record(&mut pass, &vp_bg, &blur_bg, &vbuf, &ibuf, idx.len() as u32);
@@ -3772,12 +3849,9 @@ impl PassManager {
                         continue;
                     }
                     if let Some(c) = batch.clip {
-                        pass.set_scissor_rect(
-                            c.x.max(0.0) as u32,
-                            c.y.max(0.0) as u32,
-                            (c.w.max(1.0) as u32).min(width.saturating_sub(c.x.max(0.0) as u32)),
-                            (c.h.max(1.0) as u32).min(height.saturating_sub(c.y.max(0.0) as u32)),
-                        );
+                        if !set_scissor_for_clip(&mut pass, c, width, height) {
+                            continue;
+                        }
                     }
                     self.solid_direct.record_index_range(
                         &mut pass,
@@ -3829,14 +3903,9 @@ impl PassManager {
                     DrawItem::TransparentBatch(i) => {
                         let batch = &transparent_batches[i];
                         if let Some(c) = batch.clip {
-                            pass.set_scissor_rect(
-                                c.x.max(0.0) as u32,
-                                c.y.max(0.0) as u32,
-                                (c.w.max(1.0) as u32)
-                                    .min(width.saturating_sub(c.x.max(0.0) as u32)),
-                                (c.h.max(1.0) as u32)
-                                    .min(height.saturating_sub(c.y.max(0.0) as u32)),
-                            );
+                            if !set_scissor_for_clip(&mut pass, c, width, height) {
+                                continue;
+                            }
                         }
                         self.transparent_solid_direct.record_index_range(
                             &mut pass,
@@ -3853,14 +3922,9 @@ impl PassManager {
                         let (_z, vbuf, ibuf, index_count, z_bg, _z_buf, clip) = &text_groups[i];
                         if *index_count > 0 {
                             if let Some(c) = clip {
-                                pass.set_scissor_rect(
-                                    c.x.max(0.0) as u32,
-                                    c.y.max(0.0) as u32,
-                                    (c.w.max(1.0) as u32)
-                                        .min(width.saturating_sub(c.x.max(0.0) as u32)),
-                                    (c.h.max(1.0) as u32)
-                                        .min(height.saturating_sub(c.y.max(0.0) as u32)),
-                                );
+                                if !set_scissor_for_clip(&mut pass, *c, width, height) {
+                                    continue;
+                                }
                             }
                             pass.set_pipeline(&self.text.pipeline);
                             pass.set_bind_group(0, &vp_bg_text, &[]);
@@ -3878,14 +3942,9 @@ impl PassManager {
                         let (vbuf, ibuf, vp_bg_img, z_bg_img, tex_bg, params_bg, _, _, clip) =
                             &image_resources[i];
                         if let Some(c) = clip {
-                            pass.set_scissor_rect(
-                                c.x.max(0.0) as u32,
-                                c.y.max(0.0) as u32,
-                                (c.w.max(1.0) as u32)
-                                    .min(width.saturating_sub(c.x.max(0.0) as u32)),
-                                (c.h.max(1.0) as u32)
-                                    .min(height.saturating_sub(c.y.max(0.0) as u32)),
-                            );
+                            if !set_scissor_for_clip(&mut pass, *c, width, height) {
+                                continue;
+                            }
                         }
                         self.image.record(
                             &mut pass, vp_bg_img, z_bg_img, tex_bg, params_bg, vbuf, ibuf, 6,
@@ -3898,14 +3957,9 @@ impl PassManager {
                         let (vbuf, ibuf, vp_bg_svg, z_bg_svg, tex_bg, params_bg, _, _, clip) =
                             &svg_resources[i];
                         if let Some(c) = clip {
-                            pass.set_scissor_rect(
-                                c.x.max(0.0) as u32,
-                                c.y.max(0.0) as u32,
-                                (c.w.max(1.0) as u32)
-                                    .min(width.saturating_sub(c.x.max(0.0) as u32)),
-                                (c.h.max(1.0) as u32)
-                                    .min(height.saturating_sub(c.y.max(0.0) as u32)),
-                            );
+                            if !set_scissor_for_clip(&mut pass, *c, width, height) {
+                                continue;
+                            }
                         }
                         self.image.record(
                             &mut pass, vp_bg_svg, z_bg_svg, tex_bg, params_bg, vbuf, ibuf, 6,
@@ -4464,12 +4518,9 @@ impl PassManager {
                     continue;
                 }
                 if let Some(c) = batch.clip {
-                    pass.set_scissor_rect(
-                        c.x.max(0.0) as u32,
-                        c.y.max(0.0) as u32,
-                        (c.w.max(1.0) as u32).min(width.saturating_sub(c.x.max(0.0) as u32)),
-                        (c.h.max(1.0) as u32).min(height.saturating_sub(c.y.max(0.0) as u32)),
-                    );
+                    if !set_scissor_for_clip(&mut pass, c, width, height) {
+                        continue;
+                    }
                 }
                 self.solid_offscreen.record_index_range(
                     &mut pass,
@@ -4560,14 +4611,9 @@ impl PassManager {
                     DrawItemOff::TransparentBatch(i) => {
                         let batch = &transparent_batches[i];
                         if let Some(c) = batch.clip {
-                            pass.set_scissor_rect(
-                                c.x.max(0.0) as u32,
-                                c.y.max(0.0) as u32,
-                                (c.w.max(1.0) as u32)
-                                    .min(width.saturating_sub(c.x.max(0.0) as u32)),
-                                (c.h.max(1.0) as u32)
-                                    .min(height.saturating_sub(c.y.max(0.0) as u32)),
-                            );
+                            if !set_scissor_for_clip(&mut pass, c, width, height) {
+                                continue;
+                            }
                         }
                         self.transparent_solid_offscreen.record_index_range(
                             &mut pass,
@@ -4584,14 +4630,9 @@ impl PassManager {
                         let (_z, vbuf, ibuf, index_count, z_bg, _z_buf, clip) = &text_groups_off[i];
                         if *index_count > 0 {
                             if let Some(c) = clip {
-                                pass.set_scissor_rect(
-                                    c.x.max(0.0) as u32,
-                                    c.y.max(0.0) as u32,
-                                    (c.w.max(1.0) as u32)
-                                        .min(width.saturating_sub(c.x.max(0.0) as u32)),
-                                    (c.h.max(1.0) as u32)
-                                        .min(height.saturating_sub(c.y.max(0.0) as u32)),
-                                );
+                                if !set_scissor_for_clip(&mut pass, *c, width, height) {
+                                    continue;
+                                }
                             }
                             pass.set_pipeline(&self.text_offscreen.pipeline);
                             pass.set_bind_group(0, &vp_bg_text_off, &[]);
@@ -4609,14 +4650,9 @@ impl PassManager {
                         let (vbuf, ibuf, vp_bg_img, z_bg_img, tex_bg, params_bg, _, _, clip) =
                             &image_resources_off[i];
                         if let Some(c) = clip {
-                            pass.set_scissor_rect(
-                                c.x.max(0.0) as u32,
-                                c.y.max(0.0) as u32,
-                                (c.w.max(1.0) as u32)
-                                    .min(width.saturating_sub(c.x.max(0.0) as u32)),
-                                (c.h.max(1.0) as u32)
-                                    .min(height.saturating_sub(c.y.max(0.0) as u32)),
-                            );
+                            if !set_scissor_for_clip(&mut pass, *c, width, height) {
+                                continue;
+                            }
                         }
                         self.image_offscreen.record(
                             &mut pass, vp_bg_img, z_bg_img, tex_bg, params_bg, vbuf, ibuf, 6,
@@ -4629,14 +4665,9 @@ impl PassManager {
                         let (vbuf, ibuf, vp_bg_svg, z_bg_svg, tex_bg, params_bg, _, _, clip) =
                             &svg_resources_off[i];
                         if let Some(c) = clip {
-                            pass.set_scissor_rect(
-                                c.x.max(0.0) as u32,
-                                c.y.max(0.0) as u32,
-                                (c.w.max(1.0) as u32)
-                                    .min(width.saturating_sub(c.x.max(0.0) as u32)),
-                                (c.h.max(1.0) as u32)
-                                    .min(height.saturating_sub(c.y.max(0.0) as u32)),
-                            );
+                            if !set_scissor_for_clip(&mut pass, *c, width, height) {
+                                continue;
+                            }
                         }
                         self.image_offscreen.record(
                             &mut pass, vp_bg_svg, z_bg_svg, tex_bg, params_bg, vbuf, ibuf, 6,
