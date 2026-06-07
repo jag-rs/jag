@@ -221,6 +221,7 @@ pub struct JagSurface {
     /// Cached frame data from the most recent `end_frame` call, enabling
     /// scroll-only frames to skip the IR walk and GPU upload.
     frame_cache: Option<CachedFrameData>,
+    pending_image_loads: bool,
 }
 
 impl JagSurface {
@@ -249,6 +250,7 @@ impl JagSurface {
             overlay: None,
             next_synthetic_external_texture_id: 0x7000_0000_0000_0000,
             frame_cache: None,
+            pending_image_loads: false,
         }
     }
 
@@ -272,6 +274,9 @@ impl JagSurface {
     }
     pub fn pass_manager(&mut self) -> &mut PassManager {
         &mut self.pass
+    }
+    pub fn has_pending_image_loads(&self) -> bool {
+        self.pending_image_loads
     }
     pub fn allocator_mut(&mut self) -> &mut RenderAllocator {
         &mut self.allocator
@@ -565,11 +570,7 @@ impl JagSurface {
         )> = Vec::new();
         for draw in &group_scene.image_draws {
             let resolved_path = crate::resolve_asset_path(&draw.path);
-            if self
-                .pass
-                .load_image_to_view(&resolved_path, &self.queue)
-                .is_some()
-            {
+            if self.pass.try_get_image_view(&resolved_path).is_some() {
                 group_images.push((
                     resolved_path,
                     draw.origin,
@@ -579,6 +580,8 @@ impl JagSurface {
                     None,
                     None,
                 ));
+            } else {
+                self.pending_image_loads |= self.pass.request_image_load(&resolved_path);
             }
         }
         group_images.sort_by_key(|(_, _, _, z, _, _, _)| *z);
@@ -744,6 +747,8 @@ impl JagSurface {
         self.pass.set_scale_factor(self.dpi_scale);
         self.pass.set_logical_pixels(self.logical_pixels);
         self.pass.set_ui_scale(self.ui_scale);
+        self.pending_image_loads = false;
+        self.pass.poll_image_loads(&self.queue);
 
         let text_provider = canvas.text_provider.clone();
 
@@ -852,13 +857,9 @@ impl JagSurface {
         let mut image_draws = canvas.image_draws.clone();
         image_draws.sort_by_key(|(_, _, _, _, z, _, _, _, _)| *z);
 
-        // Convert image draws to simplified format (path, origin, size, z, clip)
-        // Apply transforms and fit calculations here. We synchronously load images
-        // via PassManager so that they appear on the very first frame, without
-        // requiring a scroll/resize to trigger a second redraw.
-        //
-        // NOTE: Origins in `canvas.image_draws` are already in logical coordinates;
-        // they will be scaled by PassManager via logical_pixels/dpi.
+        // Convert image draws to simplified format. Cache misses start an
+        // asynchronous CPU decode and skip this frame instead of blocking tab
+        // switches or other interactive paints.
         let mut prepared_images: Vec<(
             std::path::PathBuf,
             [f32; 2],
@@ -874,12 +875,7 @@ impl JagSurface {
             // Resolve path to check app bundle resources
             let resolved_path = crate::resolve_asset_path(path);
 
-            // Synchronously load (or fetch from cache) to ensure the texture
-            // is available for this frame. This mirrors the demo-app unified
-            // path and avoids images only appearing after a later redraw.
-            if let Some((tex_view, img_w, img_h)) =
-                self.pass.load_image_to_view(&resolved_path, &self.queue)
-            {
+            if let Some((tex_view, img_w, img_h)) = self.pass.try_get_image_view(&resolved_path) {
                 drop(tex_view); // Only need dimensions here
                 let transformed_origin = apply_transform_to_point(*origin, *transform);
                 let (render_origin, render_size) = calculate_image_fit(
@@ -903,6 +899,8 @@ impl JagSurface {
                             radii: rc.radii,
                         }),
                 ));
+            } else {
+                self.pending_image_loads |= self.pass.request_image_load(&resolved_path);
             }
         }
 
@@ -1486,9 +1484,7 @@ impl JagSurface {
             image_draws.iter()
         {
             let resolved_path = crate::resolve_asset_path(path);
-            if let Some((tex_view, img_w, img_h)) =
-                self.pass.load_image_to_view(&resolved_path, &self.queue)
-            {
+            if let Some((tex_view, img_w, img_h)) = self.pass.try_get_image_view(&resolved_path) {
                 drop(tex_view);
                 let transformed_origin = apply_transform_to_point(*origin, *transform);
                 let (render_origin, render_size) = calculate_image_fit(
@@ -1512,6 +1508,8 @@ impl JagSurface {
                             radii: rc.radii,
                         }),
                 ));
+            } else {
+                self.pending_image_loads |= self.pass.request_image_load(&resolved_path);
             }
         }
 

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 
 /// Return embedded bytes for built-in raster images that ship with the
 /// Jag binary. Currently unused for application assets; all images are
@@ -28,9 +28,23 @@ enum CacheEntry {
     Failed,
 }
 
+enum DecodedImageResult {
+    Ready {
+        path: PathBuf,
+        rgba: Vec<u8>,
+        width: u32,
+        height: u32,
+    },
+    Failed {
+        path: PathBuf,
+    },
+}
+
 /// Simple raster image cache for PNG/JPEG/GIF/WebP with LRU eviction.
 pub struct ImageCache {
     device: Arc<wgpu::Device>,
+    decode_tx: mpsc::Sender<DecodedImageResult>,
+    decode_rx: mpsc::Receiver<DecodedImageResult>,
     // LRU state
     map: HashMap<CacheKey, CacheEntry>,
     lru: VecDeque<CacheKey>,
@@ -47,8 +61,11 @@ impl ImageCache {
         let max_bytes = 256 * 1024 * 1024;
         let limits = device.limits();
         let max_tex_size = limits.max_texture_dimension_2d;
+        let (decode_tx, decode_rx) = mpsc::channel();
         Self {
             device,
+            decode_tx,
+            decode_rx,
             map: HashMap::new(),
             lru: VecDeque::new(),
             current_tick: 0,
@@ -79,6 +96,12 @@ impl ImageCache {
 
     fn insert(&mut self, key: CacheKey, entry: CacheEntry) {
         self.current_tick = self.current_tick.wrapping_add(1);
+        if let Some(old) = self.map.remove(&key) {
+            if let CacheEntry::Ready { bytes, .. } = old {
+                self.total_bytes = self.total_bytes.saturating_sub(bytes);
+            }
+            self.lru.retain(|k| k != &key);
+        }
         if let CacheEntry::Ready { bytes, .. } = &entry {
             self.total_bytes += bytes;
         }
@@ -130,19 +153,63 @@ impl ImageCache {
     }
 
     /// Start loading an image if not already in cache.
-    /// Marks it as Loading immediately, actual load happens synchronously.
-    pub fn start_load(&mut self, path: &Path) {
+    /// Marks it as Loading immediately and decodes pixels on a background
+    /// thread. The render thread uploads completed decodes via
+    /// [`Self::poll_decoded`].
+    pub fn start_load(&mut self, path: &Path) -> bool {
         let key = CacheKey {
             path: path.to_path_buf(),
         };
 
-        // If already in cache (any state), don't restart
-        if self.map.contains_key(&key) {
-            return;
+        if let Some(entry) = self.map.get(&key) {
+            return matches!(entry, CacheEntry::Loading);
         }
 
-        // Mark as loading
-        self.map.insert(key, CacheEntry::Loading);
+        self.insert(key, CacheEntry::Loading);
+
+        let path = path.to_path_buf();
+        let max_tex_size = self.max_tex_size;
+        let tx = self.decode_tx.clone();
+        std::thread::spawn(move || {
+            let result = match decode_image_file(&path, max_tex_size) {
+                Some((rgba, width, height)) => DecodedImageResult::Ready {
+                    path,
+                    rgba,
+                    width,
+                    height,
+                },
+                None => DecodedImageResult::Failed { path },
+            };
+            let _ = tx.send(result);
+        });
+        true
+    }
+
+    /// Upload any completed background decodes to GPU textures.
+    pub fn poll_decoded(&mut self, queue: &wgpu::Queue) -> bool {
+        let mut changed = false;
+        while let Ok(result) = self.decode_rx.try_recv() {
+            changed = true;
+            match result {
+                DecodedImageResult::Ready {
+                    path,
+                    rgba,
+                    width,
+                    height,
+                } => {
+                    if self
+                        .store_decoded_rgba(&path, rgba, width, height, queue)
+                        .is_none()
+                    {
+                        self.insert(CacheKey { path }, CacheEntry::Failed);
+                    }
+                }
+                DecodedImageResult::Failed { path } => {
+                    self.insert(CacheKey { path }, CacheEntry::Failed);
+                }
+            }
+        }
+        changed
     }
 
     /// Load an image from disk and cache it as a GPU texture.
@@ -162,10 +229,7 @@ impl ImageCache {
                 CacheEntry::Ready {
                     tex, width, height, ..
                 } => Some((tex.clone(), *width, *height)),
-                CacheEntry::Loading => {
-                    // Still loading, proceed to load now
-                    None
-                }
+                CacheEntry::Loading => return None,
                 CacheEntry::Failed => return None,
             }
         } else {
@@ -197,6 +261,24 @@ impl ImageCache {
         if width > self.max_tex_size || height > self.max_tex_size {
             return None;
         }
+
+        self.store_decoded_rgba(path, rgba.into_raw(), width, height, queue)
+    }
+
+    fn store_decoded_rgba(
+        &mut self,
+        path: &Path,
+        rgba: Vec<u8>,
+        width: u32,
+        height: u32,
+        queue: &wgpu::Queue,
+    ) -> Option<(Arc<wgpu::Texture>, u32, u32)> {
+        if width == 0 || height == 0 || width > self.max_tex_size || height > self.max_tex_size {
+            return None;
+        }
+        let key = CacheKey {
+            path: path.to_path_buf(),
+        };
 
         // Create GPU texture
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -282,4 +364,18 @@ impl ImageCache {
 
         self.insert(key, entry);
     }
+}
+
+fn decode_image_file(path: &Path, max_tex_size: u32) -> Option<(Vec<u8>, u32, u32)> {
+    let img = if let Some(bytes) = builtin_image_bytes(path) {
+        image::load_from_memory(bytes).ok()?
+    } else {
+        image::open(path).ok()?
+    };
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    if width == 0 || height == 0 || width > max_tex_size || height > max_tex_size {
+        return None;
+    }
+    Some((rgba.into_raw(), width, height))
 }

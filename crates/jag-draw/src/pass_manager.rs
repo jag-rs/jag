@@ -730,8 +730,13 @@ impl PassManager {
     }
 
     /// Request an image to be loaded. Marks it as loading if not already in cache.
-    pub fn request_image_load(&mut self, path: &std::path::Path) {
-        self.image_cache.start_load(path);
+    pub fn request_image_load(&mut self, path: &std::path::Path) -> bool {
+        self.image_cache.start_load(path)
+    }
+
+    /// Upload any image decodes that completed on background threads.
+    pub fn poll_image_loads(&mut self, queue: &wgpu::Queue) -> bool {
+        self.image_cache.poll_decoded(queue)
     }
 
     /// Check if an image is ready in the cache.
