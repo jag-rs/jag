@@ -5,7 +5,8 @@ use super::PassManager;
 use crate::pipeline::{
     BackdropBlurRenderer, BackgroundRenderer, BasicSolidRenderer, Blitter, BlurRenderer,
     Compositor, OverlaySolidRenderer, ScrimSolidRenderer, ScrimStencilMaskRenderer,
-    ScrimStencilRenderer, ShadowCompositeRenderer, SmaaRenderer, TextRenderer,
+    ScrimStencilRenderer, ShadowCompositeRenderer, ShadowInstanceRenderer, SmaaRenderer,
+    TextRenderer,
 };
 use std::sync::Arc;
 
@@ -92,6 +93,9 @@ impl PassManager {
         let blur_r8 = BlurRenderer::new(device.clone(), wgpu::TextureFormat::R8Unorm);
         let backdrop_blur = BackdropBlurRenderer::new(device.clone(), offscreen_format);
         let shadow_comp = ShadowCompositeRenderer::new(device.clone(), target_format);
+        let shadow_offscreen =
+            ShadowInstanceRenderer::new(device.clone(), offscreen_format, msaa_count);
+        let shadow_direct = ShadowInstanceRenderer::new(device.clone(), target_format, msaa_count);
         let text = TextRenderer::new(device.clone(), target_format);
         let text_offscreen = TextRenderer::new(device.clone(), offscreen_format);
         let image = crate::pipeline::ImageRenderer::new(device.clone(), target_format);
@@ -185,6 +189,8 @@ impl PassManager {
             blur_r8,
             backdrop_blur,
             shadow_comp,
+            shadow_offscreen,
+            shadow_direct,
             text,
             text_offscreen,
             image,
@@ -195,6 +201,7 @@ impl PassManager {
             surface_format: target_format,
             vp_buffer,
             scroll_offset: [0.0, 0.0],
+            shadow_instances: Vec::new(),
             z_index_buffer,
             bg,
             bg_param_buffer,
@@ -378,6 +385,13 @@ impl PassManager {
     /// Get the current GPU-side scroll offset.
     pub fn scroll_offset(&self) -> [f32; 2] {
         self.scroll_offset
+    }
+
+    /// Set the analytic box-shadow instances for the next `render_unified`.
+    /// Empty disables the shadow pass; non-empty draws them after the opaque
+    /// solids and before the z-sorted transparent interleave.
+    pub fn set_shadow_instances(&mut self, instances: &[crate::ShadowInstance]) {
+        self.shadow_instances = instances.to_vec();
     }
 
     /// Toggle logical pixel mode.

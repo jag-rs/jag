@@ -258,6 +258,8 @@ impl JagSurface {
         // Opacity groups render in their own coordinate space with no scroll.
         let saved_scroll = self.pass.scroll_offset();
         self.pass.set_scroll_offset([0.0, 0.0]);
+        self.pass
+            .set_shadow_instances(&group_scene.shadow_instances);
         self.pass.render_unified(
             &mut encoder,
             &mut self.allocator,
@@ -279,6 +281,7 @@ impl JagSurface {
             false,
         );
         self.pass.set_scroll_offset(saved_scroll);
+        self.pass.set_shadow_instances(&[]);
         self.queue.submit(std::iter::once(encoder.finish()));
 
         let tex_id = self.allocate_synthetic_external_texture_id();

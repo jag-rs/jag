@@ -5,7 +5,8 @@ use std::sync::Arc;
 use crate::pipeline::{
     BackdropBlurRenderer, BackgroundRenderer, BasicSolidRenderer, Blitter, BlurRenderer,
     Compositor, OverlaySolidRenderer, ScrimSolidRenderer, ScrimStencilMaskRenderer,
-    ScrimStencilRenderer, ShadowCompositeRenderer, SmaaRenderer, TextRenderer,
+    ScrimStencilRenderer, ShadowCompositeRenderer, ShadowInstanceRenderer, SmaaRenderer,
+    TextRenderer,
 };
 
 /// Apply a 2D affine transform to a point
@@ -213,6 +214,9 @@ pub struct PassManager {
     pub blur_r8: BlurRenderer,
     pub backdrop_blur: BackdropBlurRenderer,
     pub shadow_comp: ShadowCompositeRenderer,
+    // Analytic box-shadow instance pipelines (offscreen + direct targets).
+    pub shadow_offscreen: ShadowInstanceRenderer,
+    pub shadow_direct: ShadowInstanceRenderer,
     pub text: TextRenderer,
     pub text_offscreen: TextRenderer,
     pub image: crate::pipeline::ImageRenderer,
@@ -226,6 +230,10 @@ pub struct PassManager {
     /// Set by the caller before `render_unified` to shift content without
     /// rebuilding geometry. Values are in logical pixels (negative = scrolled down/right).
     scroll_offset: [f32; 2],
+    /// Analytic box-shadow instances for the current frame. Set by the caller
+    /// via `set_shadow_instances` before `render_unified`; drawn after opaque
+    /// solids and before the transparent interleave. Empty = no shadow pass.
+    shadow_instances: Vec<crate::ShadowInstance>,
     // Z-index uniform buffer for dynamic depth control (Phase 2)
     z_index_buffer: wgpu::Buffer,
     bg: BackgroundRenderer,

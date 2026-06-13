@@ -7,6 +7,7 @@
 mod background_blur;
 mod composite;
 mod scrim_stencil;
+mod shadow;
 mod smaa;
 mod solid;
 mod text_image;
@@ -14,6 +15,7 @@ mod text_image;
 pub use background_blur::*;
 pub use composite::*;
 pub use scrim_stencil::*;
+pub use shadow::*;
 pub use smaa::*;
 pub use solid::*;
 pub use text_image::*;

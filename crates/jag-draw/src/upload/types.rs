@@ -92,4 +92,5 @@ pub struct UnifiedSceneData {
     pub image_draws: Vec<ExtractedImageDraw>,
     pub svg_draws: Vec<ExtractedSvgDraw>,
     pub external_texture_draws: Vec<ExtractedExternalTextureDraw>,
+    pub shadow_instances: Vec<crate::box_shadow::ShadowInstance>,
 }

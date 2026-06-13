@@ -65,6 +65,11 @@ impl JagSurface {
         self.pass
             .ensure_depth_texture(&mut self.allocator, width, height);
 
+        // Set the cached shadow instances before taking the immutable cache
+        // borrow (the setter needs `&mut self.pass`). Cloned out of the cache.
+        let cached_shadows = self.frame_cache.as_ref().unwrap().shadow_instances.clone();
+        self.pass.set_shadow_instances(&cached_shadows);
+
         // Re-borrow the cache after the mutable borrows above are done.
         let cache = self.frame_cache.as_ref().unwrap();
         self.pass.render_unified(
@@ -326,6 +331,8 @@ impl JagSurface {
             });
 
         // Render unified pass directly to the offscreen texture
+        self.pass
+            .set_shadow_instances(&unified_scene.shadow_instances);
         self.pass.render_unified(
             &mut encoder,
             &mut self.allocator,

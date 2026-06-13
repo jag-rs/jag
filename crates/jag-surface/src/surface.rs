@@ -62,6 +62,8 @@ pub struct CachedFrameData {
     pub backdrop_blur_draws: Vec<jag_draw::BackdropBlurDraw>,
     /// External texture draws (e.g. Canvas3D, opacity group layers).
     pub external_texture_draws: Vec<jag_draw::ExtractedExternalTextureDraw>,
+    /// Analytic box-shadow instances for this frame.
+    pub shadow_instances: Vec<jag_draw::ShadowInstance>,
     /// Clear color used for this frame.
     pub clear: wgpu::Color,
     /// Whether the frame was rendered directly (vs intermediate texture).

@@ -8,6 +8,7 @@
 use super::{PassManager, set_scissor_for_clip, transformed_quad_points};
 use crate::allocator::RenderAllocator;
 use crate::upload::GpuScene;
+use wgpu::util::DeviceExt;
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 impl PassManager {
@@ -167,6 +168,26 @@ impl PassManager {
 
         let _z_bg = self.create_z_bind_group(0.0, queue);
 
+        // Build the analytic box-shadow instance buffer + viewport bind group
+        // before the render pass so both outlive the pass borrow. Skipped
+        // entirely when there are no shadows.
+        let shadow_buf = (!self.shadow_instances.is_empty()).then(|| {
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("shadow-instances"),
+                    contents: bytemuck::cast_slice(&self.shadow_instances),
+                    usage: wgpu::BufferUsages::VERTEX,
+                })
+        });
+        let shadow_vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow-vp-bg-offscreen"),
+            layout: self.shadow_offscreen.viewport_bgl(),
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.vp_buffer.as_entire_binding(),
+            }],
+        });
+
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("unified-offscreen-pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -206,6 +227,18 @@ impl PassManager {
                     pass.set_scissor_rect(0, 0, width, height);
                 }
             }
+        }
+
+        // Analytic box shadows: drawn after the opaque solids (so they read the
+        // opaque depth) and before the transparent interleave. The instance
+        // buffer was created above and outlives this pass.
+        if let Some(buf) = shadow_buf.as_ref() {
+            self.shadow_offscreen.record(
+                &mut pass,
+                &shadow_vp_bg,
+                buf,
+                self.shadow_instances.len() as u32,
+            );
         }
 
         // Unified z-sorted rendering (offscreen path): interleave ALL draw types

@@ -394,6 +394,8 @@ impl JagSurface {
         } else {
             self.direct || !use_intermediate
         };
+        self.pass
+            .set_shadow_instances(&unified_scene.shadow_instances);
         self.pass.render_unified(
             &mut encoder,
             &mut self.allocator,
@@ -431,6 +433,7 @@ impl JagSurface {
                 image_draws: prepared_images,
                 backdrop_blur_draws: canvas.backdrop_blur_draws.clone(),
                 external_texture_draws: unified_scene.external_texture_draws,
+                shadow_instances: unified_scene.shadow_instances,
                 clear: clear_wgpu,
                 direct,
                 width,

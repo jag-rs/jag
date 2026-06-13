@@ -31,6 +31,7 @@ struct UnifiedBuilder {
     image_draws: Vec<ExtractedImageDraw>,
     svg_draws: Vec<ExtractedSvgDraw>,
     external_texture_draws: Vec<ExtractedExternalTextureDraw>,
+    shadow_instances: Vec<crate::box_shadow::ShadowInstance>,
     /// Clip stack: tracks nested PushClip/PopClip regions.
     /// Each entry is the intersection of all ancestor clips.
     clip_stack: Vec<Option<Rect>>,
@@ -63,6 +64,7 @@ impl UnifiedBuilder {
             image_draws: Vec::new(),
             svg_draws: Vec::new(),
             external_texture_draws: Vec::new(),
+            shadow_instances: Vec::new(),
             clip_stack: vec![None],
             solid_batch_start: 0,
             solid_batch_clip: None,
@@ -197,8 +199,20 @@ impl UnifiedBuilder {
             Command::DrawSvg { .. } => self.handle_svg(cmd),
             Command::DrawExternalTexture { .. } => self.handle_external_texture(cmd),
 
-            // BoxShadow commands are handled by PassManager as a separate pipeline.
-            Command::BoxShadow { .. } => {}
+            // Box shadows feed a dedicated analytic shadow pipeline. Each one
+            // becomes a GPU instance (outer shadows only — BoxShadowSpec has no
+            // inset field, so we push unconditionally).
+            Command::BoxShadow {
+                rrect,
+                spec,
+                z,
+                transform,
+            } => {
+                self.shadow_instances
+                    .push(crate::box_shadow::ShadowInstance::from_box_shadow(
+                        *rrect, *spec, *z, *transform,
+                    ));
+            }
             // Hit-only regions: intentionally not rendered.
             Command::HitRegionRect { .. } => {}
             Command::HitRegionRoundedRect { .. } => {}
@@ -303,6 +317,7 @@ impl UnifiedBuilder {
             image_draws: self.image_draws,
             svg_draws: self.svg_draws,
             external_texture_draws: self.external_texture_draws,
+            shadow_instances: self.shadow_instances,
         }
     }
 }
