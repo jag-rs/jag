@@ -4,6 +4,123 @@
 //! GPU shadow pass must close.
 
 use jag_draw::rounded_box_shadow_coverage as coverage;
+use jag_draw::{
+    BoxShadowSpec, ColorLinPremul, Rect, RoundedRadii, RoundedRect, ShadowInstance, Transform2D,
+};
+
+fn rrect(x: f32, y: f32, w: f32, h: f32, r: f32) -> RoundedRect {
+    RoundedRect {
+        rect: Rect { x, y, w, h },
+        radii: RoundedRadii {
+            tl: r,
+            tr: r,
+            br: r,
+            bl: r,
+        },
+    }
+}
+
+fn spec(offset: [f32; 2], spread: f32, blur: f32) -> BoxShadowSpec {
+    BoxShadowSpec {
+        offset,
+        spread,
+        blur_radius: blur,
+        color: ColorLinPremul {
+            r: 0.3,
+            g: 0.6,
+            b: 0.2,
+            a: 0.55,
+        },
+    }
+}
+
+#[test]
+fn shadow_instance_identity_transform_geometry() {
+    // 200x40 pill at (100,200), radius 20, offset (0,8), spread -10, blur 24.
+    let inst = ShadowInstance::from_box_shadow(
+        rrect(100.0, 200.0, 200.0, 40.0, 20.0),
+        spec([0.0, 8.0], -10.0, 24.0),
+        7,
+        Transform2D::identity(),
+    );
+    // Bounds = rect + offset, expanded by spread (-10 shrinks).
+    assert_eq!(inst.lower, [100.0 + 0.0 - -10.0, 200.0 + 8.0 - -10.0]); // [110, 218]
+    assert_eq!(
+        inst.upper,
+        [100.0 + 200.0 + 0.0 + -10.0, 200.0 + 40.0 + 8.0 + -10.0]
+    ); // [290, 238]
+    assert!(
+        (inst.params[0] - 12.0).abs() < 1e-4,
+        "sigma = blur/2 = 12, got {}",
+        inst.params[0]
+    );
+    // corner = (radius + spread).max(0) = 20 - 10 = 10.
+    assert!(
+        (inst.params[1] - 10.0).abs() < 1e-4,
+        "corner, got {}",
+        inst.params[1]
+    );
+    assert_eq!(inst.params[2], 7.0); // z
+    assert_eq!(inst.color, [0.3, 0.6, 0.2, 0.55]);
+}
+
+#[test]
+fn shadow_instance_translation_shifts_bounds_only() {
+    let base = ShadowInstance::from_box_shadow(
+        rrect(0.0, 0.0, 100.0, 40.0, 8.0),
+        spec([0.0, 0.0], 0.0, 16.0),
+        0,
+        Transform2D::identity(),
+    );
+    let moved = ShadowInstance::from_box_shadow(
+        rrect(0.0, 0.0, 100.0, 40.0, 8.0),
+        spec([0.0, 0.0], 0.0, 16.0),
+        0,
+        Transform2D::translate(50.0, 30.0),
+    );
+    assert_eq!(moved.lower, [base.lower[0] + 50.0, base.lower[1] + 30.0]);
+    assert_eq!(moved.upper, [base.upper[0] + 50.0, base.upper[1] + 30.0]);
+    // sigma and corner unchanged under pure translation.
+    assert!((moved.params[0] - base.params[0]).abs() < 1e-4);
+    assert!((moved.params[1] - base.params[1]).abs() < 1e-4);
+}
+
+#[test]
+fn shadow_instance_uniform_scale_scales_sigma_and_corner() {
+    let inst = ShadowInstance::from_box_shadow(
+        rrect(0.0, 0.0, 100.0, 40.0, 8.0),
+        spec([0.0, 0.0], 0.0, 16.0),
+        0,
+        Transform2D::scale(2.0, 2.0),
+    );
+    // sigma = (16/2) * 2 = 16; corner = 8 * 2 = 16.
+    assert!(
+        (inst.params[0] - 16.0).abs() < 1e-3,
+        "sigma, got {}",
+        inst.params[0]
+    );
+    assert!(
+        (inst.params[1] - 16.0).abs() < 1e-3,
+        "corner, got {}",
+        inst.params[1]
+    );
+    // Bounds scaled by 2.
+    assert_eq!(inst.upper, [200.0, 80.0]);
+}
+
+#[test]
+fn shadow_instance_sharp_box_has_zero_corner() {
+    let inst = ShadowInstance::from_box_shadow(
+        rrect(0.0, 0.0, 100.0, 40.0, 0.0),
+        spec([0.0, 0.0], 4.0, 8.0),
+        0,
+        Transform2D::identity(),
+    );
+    assert_eq!(
+        inst.params[1], 0.0,
+        "sharp box keeps zero corner even with spread"
+    );
+}
 
 /// Brute-force ground truth: convolve the sharp rounded-rect mask with a 2D
 /// Gaussian (std `sigma`) by dense sampling. Independent of the implementation

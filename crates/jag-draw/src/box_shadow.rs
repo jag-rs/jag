@@ -11,10 +11,96 @@
 //!
 //! CSS defines `blur-radius` as `2σ`, so callers pass `sigma = blur / 2`.
 //!
-//! This is the CPU twin of the GPU shadow shader (added in a later slice).
+//! This is the CPU twin of the GPU shadow shader (`SHADOW_INSTANCE_WGSL`).
 //! Keeping the two in lockstep — same sample count, same math — lets the
 //! profile be validated headlessly before any rasterization, and gives a
 //! reference for the GPU port. `Y_SAMPLES` here MUST match the shader's loop.
+
+use bytemuck::{Pod, Zeroable};
+
+use crate::scene::{BoxShadowSpec, RoundedRect, Transform2D};
+
+/// Per-shadow GPU instance consumed by `SHADOW_INSTANCE_WGSL`. One instance =
+/// one expanded quad; the fragment shader computes coverage analytically.
+///
+/// Layout must match the shader's vertex attributes (locations 0..3).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+pub struct ShadowInstance {
+    /// Shadow rect top-left in world (logical, post-transform) pixels.
+    pub lower: [f32; 2],
+    /// Shadow rect bottom-right in world pixels.
+    pub upper: [f32; 2],
+    /// `(sigma, corner_radius, z_index, _pad)`.
+    pub params: [f32; 4],
+    /// Premultiplied linear RGBA.
+    pub color: [f32; 4],
+}
+
+#[inline]
+fn apply_transform(t: Transform2D, p: [f32; 2]) -> [f32; 2] {
+    let [a, b, c, d, e, f] = t.m;
+    [a * p[0] + c * p[1] + e, b * p[0] + d * p[1] + f]
+}
+
+impl ShadowInstance {
+    /// Build an instance from a display-list `BoxShadow` (outer shadow).
+    ///
+    /// The blurred shape is the element rect, displaced by `offset` and expanded
+    /// by `spread` on every side. `BoxShadowSpec::blur_radius` is the CSS blur
+    /// radius (`2σ`), so `sigma = blur_radius / 2`.
+    ///
+    /// The transform is applied exactly for translation and uniform scale (the
+    /// common cases): bounds are transformed and re-normalized, and `sigma` /
+    /// `corner` scale by `√|det|`. Rotation, skew, and non-uniform scale fall
+    /// back to an axis-aligned approximation — tracked as a follow-up, not
+    /// silently treated as exact.
+    ///
+    /// `corner` uses the largest of the four border radii (exact for the common
+    /// uniform-radius and sharp cases; mixed radii are approximate — follow-up).
+    pub fn from_box_shadow(
+        rrect: RoundedRect,
+        spec: BoxShadowSpec,
+        z: i32,
+        transform: Transform2D,
+    ) -> Self {
+        let r = rrect.rect;
+        let spread = spec.spread;
+        let lo_local = [r.x + spec.offset[0] - spread, r.y + spec.offset[1] - spread];
+        let hi_local = [
+            r.x + r.w + spec.offset[0] + spread,
+            r.y + r.h + spec.offset[1] + spread,
+        ];
+        let a = apply_transform(transform, lo_local);
+        let b = apply_transform(transform, hi_local);
+        let lower = [a[0].min(b[0]), a[1].min(b[1])];
+        let upper = [a[0].max(b[0]), a[1].max(b[1])];
+
+        let [m0, m1, m2, m3, _, _] = transform.m;
+        let scale = (m0 * m3 - m1 * m2).abs().sqrt();
+
+        let sigma = (spec.blur_radius * 0.5) * scale;
+        let max_radius = rrect
+            .radii
+            .tl
+            .max(rrect.radii.tr)
+            .max(rrect.radii.br)
+            .max(rrect.radii.bl);
+        let corner = if max_radius > 0.0 {
+            (max_radius + spread).max(0.0) * scale
+        } else {
+            0.0
+        };
+
+        let c = spec.color;
+        Self {
+            lower,
+            upper,
+            params: [sigma, corner, z as f32, 0.0],
+            color: [c.r, c.g, c.b, c.a],
+        }
+    }
+}
 
 /// Number of Gaussian-weighted samples taken across the y axis to trace the
 /// corner curve. Evan Wallace reports four is visually sufficient; the GPU
