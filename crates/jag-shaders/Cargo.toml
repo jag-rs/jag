@@ -14,3 +14,6 @@ path = "src/lib.rs"
 
 [dependencies]
 bytemuck = { workspace = true }
+
+[dev-dependencies]
+naga = { version = "0.19", features = ["wgsl-in"] }
