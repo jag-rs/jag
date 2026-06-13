@@ -35,6 +35,16 @@ pub struct RenderAllocator {
     buffer_pool: HashMap<BufKey, Vec<wgpu::Buffer>>,
 }
 
+fn pooled_buffer_size(size: u64) -> u64 {
+    let size = size.max(4);
+    if size <= 1_048_576 {
+        size.next_power_of_two()
+    } else {
+        let alignment = 1_048_576;
+        size.div_ceil(alignment) * alignment
+    }
+}
+
 impl RenderAllocator {
     pub fn new(device: Arc<wgpu::Device>) -> Self {
         Self {
@@ -82,6 +92,10 @@ impl RenderAllocator {
     }
 
     pub fn allocate_buffer(&mut self, key: BufKey) -> OwnedBuffer {
+        let key = BufKey {
+            size: pooled_buffer_size(key.size),
+            usage: key.usage,
+        };
         let entry = self.buffer_pool.entry(key).or_default();
         let buffer = entry.pop().unwrap_or_else(|| {
             self.device.create_buffer(&wgpu::BufferDescriptor {

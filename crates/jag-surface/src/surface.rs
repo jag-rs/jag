@@ -221,6 +221,9 @@ pub struct JagSurface {
     /// Cached frame data from the most recent `end_frame` call, enabling
     /// scroll-only frames to skip the IR walk and GPU upload.
     frame_cache: Option<CachedFrameData>,
+    /// Whether `end_frame` should retain a full GPU copy of the frame for
+    /// scroll-only replay.
+    frame_cache_enabled: bool,
     pending_image_loads: bool,
 }
 
@@ -250,6 +253,7 @@ impl JagSurface {
             overlay: None,
             next_synthetic_external_texture_id: 0x7000_0000_0000_0000,
             frame_cache: None,
+            frame_cache_enabled: true,
             pending_image_loads: false,
         }
     }
@@ -343,6 +347,14 @@ impl JagSurface {
     /// Clear the frame cache (e.g., on resize or content change).
     pub fn clear_frame_cache(&mut self) {
         self.frame_cache = None;
+    }
+
+    /// Enable or disable retaining the completed frame for scroll-only replay.
+    pub fn set_frame_cache_enabled(&mut self, enabled: bool) {
+        self.frame_cache_enabled = enabled;
+        if !enabled {
+            self.clear_frame_cache();
+        }
     }
 
     /// Update the scroll position, generation, and hit index on the most recent
@@ -1115,29 +1127,36 @@ impl JagSurface {
             preserve_surface,
         );
 
-        // Cache the frame data for scroll-only fast path reuse.
-        // The GPU buffers inside `unified_scene` persist as long as this
-        // cache entry is alive, allowing `render_cached_frame` to re-render
-        // without rebuilding the display list or re-uploading geometry.
-        self.frame_cache = Some(CachedFrameData {
-            gpu_scene: unified_scene.gpu_scene,
-            solid_batches: unified_scene.solid_batches,
-            transparent_gpu_scene: unified_scene.transparent_gpu_scene,
-            transparent_batches: unified_scene.transparent_batches,
-            glyph_draws,
-            svg_draws,
-            image_draws: prepared_images,
-            backdrop_blur_draws: canvas.backdrop_blur_draws.clone(),
-            external_texture_draws: unified_scene.external_texture_draws,
-            clear: clear_wgpu,
-            direct,
-            width,
-            height,
-            scroll_at_build: (0.0, 0.0), // Set by caller via set_cache_scroll_at_build
-            generation_at_build: 0,      // Set by caller
-            viewport_size: (width, height),
-            hit_index: HitIndex::default(), // Set by caller
-        });
+        let mut reusable_gpu_scenes = None;
+        if self.frame_cache_enabled {
+            // Cache the frame data for scroll-only fast path reuse.
+            // The GPU buffers inside `unified_scene` persist as long as this
+            // cache entry is alive, allowing `render_cached_frame` to re-render
+            // without rebuilding the display list or re-uploading geometry.
+            self.frame_cache = Some(CachedFrameData {
+                gpu_scene: unified_scene.gpu_scene,
+                solid_batches: unified_scene.solid_batches,
+                transparent_gpu_scene: unified_scene.transparent_gpu_scene,
+                transparent_batches: unified_scene.transparent_batches,
+                glyph_draws,
+                svg_draws,
+                image_draws: prepared_images,
+                backdrop_blur_draws: canvas.backdrop_blur_draws.clone(),
+                external_texture_draws: unified_scene.external_texture_draws,
+                clear: clear_wgpu,
+                direct,
+                width,
+                height,
+                scroll_at_build: (0.0, 0.0), // Set by caller via set_cache_scroll_at_build
+                generation_at_build: 0,      // Set by caller
+                viewport_size: (width, height),
+                hit_index: HitIndex::default(), // Set by caller
+            });
+        } else {
+            self.frame_cache = None;
+            reusable_gpu_scenes =
+                Some((unified_scene.gpu_scene, unified_scene.transparent_gpu_scene));
+        }
 
         // Render scrims; support both simple rects and stencil cutouts.
         for scrim in &canvas.scrim_draws {
@@ -1216,6 +1235,13 @@ impl JagSurface {
         let cb = encoder.finish();
         self.queue.submit(std::iter::once(cb));
         frame.present();
+        if let Some((gpu_scene, transparent_gpu_scene)) = reusable_gpu_scenes {
+            let _ = self.device.poll(wgpu::Maintain::Wait);
+            self.allocator.release_buffer(gpu_scene.vertex);
+            self.allocator.release_buffer(gpu_scene.index);
+            self.allocator.release_buffer(transparent_gpu_scene.vertex);
+            self.allocator.release_buffer(transparent_gpu_scene.index);
+        }
         Ok(())
     }
 

@@ -256,6 +256,7 @@ pub struct PassManager {
     #[allow(dead_code)]
     text_mask_atlas_view: wgpu::TextureView,
     text_bind_group: wgpu::BindGroup,
+    text_atlas_upload: Vec<u8>,
     // Track atlas region used in previous frame for efficient clearing
     prev_atlas_max_x: u32,
     prev_atlas_max_y: u32,
@@ -481,6 +482,7 @@ impl PassManager {
             text_mask_atlas,
             text_mask_atlas_view,
             text_bind_group,
+            text_atlas_upload: Vec::new(),
             prev_atlas_max_x: 0,
             prev_atlas_max_y: 0,
             smaa_param_buffer,
@@ -3394,33 +3396,6 @@ impl PassManager {
 
             // Prepare text rendering data before render pass
             let mut text_groups = if !glyph_draws.is_empty() {
-                // Clear the atlas region used in the previous frame (efficient partial clear)
-                if self.prev_atlas_max_x > 0 && self.prev_atlas_max_y > 0 {
-                    let clear_width = self.prev_atlas_max_x.min(4096);
-                    let clear_height = self.prev_atlas_max_y.min(4096);
-                    let clear_size = (clear_width * clear_height * 4) as usize;
-                    let clear_data = vec![0u8; clear_size];
-                    queue.write_texture(
-                        wgpu::ImageCopyTexture {
-                            texture: &self.text_mask_atlas,
-                            mip_level: 0,
-                            origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
-                            aspect: wgpu::TextureAspect::All,
-                        },
-                        &clear_data,
-                        wgpu::ImageDataLayout {
-                            offset: 0,
-                            bytes_per_row: Some(clear_width * 4),
-                            rows_per_image: Some(clear_height),
-                        },
-                        wgpu::Extent3d {
-                            width: clear_width,
-                            height: clear_height,
-                            depth_or_array_layers: 1,
-                        },
-                    );
-                }
-
                 let mut atlas_cursor_x = 0u32;
                 let mut atlas_cursor_y = 0u32;
                 let mut next_row_height = 0u32;
@@ -4091,39 +4066,13 @@ impl PassManager {
 
         // Prepare text rendering data (same as direct path)
         let mut text_groups_off = if !glyph_draws.is_empty() {
-            // Clear the atlas region used in the previous frame (efficient partial clear)
-            // Note: Atlas is shared between direct and offscreen paths, so clear here too
-            if self.prev_atlas_max_x > 0 && self.prev_atlas_max_y > 0 {
-                let clear_width = self.prev_atlas_max_x.min(4096);
-                let clear_height = self.prev_atlas_max_y.min(4096);
-                let clear_size = (clear_width * clear_height * 4) as usize;
-                let clear_data = vec![0u8; clear_size];
-                queue.write_texture(
-                    wgpu::ImageCopyTexture {
-                        texture: &self.text_mask_atlas,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    &clear_data,
-                    wgpu::ImageDataLayout {
-                        offset: 0,
-                        bytes_per_row: Some(clear_width * 4),
-                        rows_per_image: Some(clear_height),
-                    },
-                    wgpu::Extent3d {
-                        width: clear_width,
-                        height: clear_height,
-                        depth_or_array_layers: 1,
-                    },
-                );
-            }
-
             let mut atlas_cursor_x = 0u32;
             let mut atlas_cursor_y = 0u32;
             let mut next_row_height = 0u32;
             let mut atlas_max_x = 0u32;
             let mut atlas_max_y = 0u32;
+            let atlas_width = 4096usize;
+            let atlas_row_stride = atlas_width * 4;
             let mut all_text_groups: Vec<(i32, Option<crate::Rect>, Vec<TextQuadVtx>)> = Vec::new();
 
             // Process each (z-index, clip) group
@@ -4147,29 +4096,29 @@ impl PassManager {
                     atlas_max_x = atlas_max_x.max(atlas_cursor_x + w);
                     atlas_max_y = atlas_max_y.max(atlas_cursor_y + h);
 
-                    queue.write_texture(
-                        wgpu::ImageCopyTexture {
-                            texture: &self.text_mask_atlas,
-                            mip_level: 0,
-                            origin: wgpu::Origin3d {
-                                x: atlas_cursor_x,
-                                y: atlas_cursor_y,
-                                z: 0,
-                            },
-                            aspect: wgpu::TextureAspect::All,
-                        },
-                        data.as_ref(),
-                        wgpu::ImageDataLayout {
-                            offset: 0,
-                            bytes_per_row: Some(w * 4),
-                            rows_per_image: Some(h),
-                        },
-                        wgpu::Extent3d {
-                            width: w,
-                            height: h,
-                            depth_or_array_layers: 1,
-                        },
-                    );
+                    let glyph_width_bytes = (w as usize) * 4;
+                    let dst_x_bytes = (atlas_cursor_x as usize) * 4;
+                    let dst_y = atlas_cursor_y as usize;
+                    let rows = h as usize;
+                    let required_len = (dst_y + rows)
+                        .saturating_mul(atlas_row_stride)
+                        .min(atlas_row_stride * atlas_width);
+                    if self.text_atlas_upload.len() < required_len {
+                        self.text_atlas_upload.resize(required_len, 0);
+                    }
+                    let glyph_data = data.as_ref();
+                    for row in 0..rows {
+                        let src_start = row * glyph_width_bytes;
+                        let dst_start = (dst_y + row) * atlas_row_stride + dst_x_bytes;
+                        let dst_end = dst_start + glyph_width_bytes;
+                        if dst_end <= self.text_atlas_upload.len()
+                            && src_start + glyph_width_bytes <= glyph_data.len()
+                        {
+                            self.text_atlas_upload[dst_start..dst_end].copy_from_slice(
+                                &glyph_data[src_start..src_start + glyph_width_bytes],
+                            );
+                        }
+                    }
 
                     let u0 = atlas_cursor_x as f32 / 4096.0;
                     let v0 = atlas_cursor_y as f32 / 4096.0;
@@ -4211,6 +4160,32 @@ impl PassManager {
                 // Store vertices for this (z-index, clip) group
                 if !vertices.is_empty() {
                     all_text_groups.push((*z_index, tg.clip, vertices));
+                }
+            }
+
+            if atlas_max_y > 0 {
+                let upload_height = atlas_max_y.min(4096);
+                let upload_len = (upload_height as usize) * atlas_row_stride;
+                if self.text_atlas_upload.len() >= upload_len {
+                    queue.write_texture(
+                        wgpu::ImageCopyTexture {
+                            texture: &self.text_mask_atlas,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        &self.text_atlas_upload[..upload_len],
+                        wgpu::ImageDataLayout {
+                            offset: 0,
+                            bytes_per_row: Some((atlas_row_stride) as u32),
+                            rows_per_image: Some(upload_height),
+                        },
+                        wgpu::Extent3d {
+                            width: 4096,
+                            height: upload_height,
+                            depth_or_array_layers: 1,
+                        },
+                    );
                 }
             }
 
