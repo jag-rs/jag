@@ -417,7 +417,7 @@ fn push_rounded_rect_linear_gradient(
     let dy = end[1] - start[1];
     let denom = (dx * dx + dy * dy).max(1e-6);
 
-    tessellate_path_fill_with_color_fn(vertices, indices, &path, z, t, |p| {
+    tessellate_path_fill_with_color_fn(vertices, indices, &path, z, t, None, |p| {
         let proj = ((p[0] - start[0]) * dx + (p[1] - start[1]) * dy) / denom;
         sample_gradient_stops(&packed, proj)
     });
@@ -551,6 +551,118 @@ fn push_rounded_rect_conic_gradient(
     });
 }
 
+/// Clip a polygon against one axis-aligned bound on `axis` (0 = x, 1 = y):
+/// `keep_ge` keeps points whose coord is `>= v`, else `<= v`. Sutherland–
+/// Hodgman, interpolating the crossing on the other axis.
+fn clip_poly_axis(poly: &[[f32; 2]], axis: usize, v: f32, keep_ge: bool) -> Vec<[f32; 2]> {
+    if poly.is_empty() {
+        return Vec::new();
+    }
+    let inside = |p: &[f32; 2]| if keep_ge { p[axis] >= v } else { p[axis] <= v };
+    let other = axis ^ 1;
+    let intersect = |a: &[f32; 2], b: &[f32; 2]| {
+        let denom = b[axis] - a[axis];
+        let s = if denom.abs() < 1e-6 {
+            0.0
+        } else {
+            (v - a[axis]) / denom
+        };
+        let mut p = [0.0f32; 2];
+        p[axis] = v;
+        p[other] = a[other] + s * (b[other] - a[other]);
+        p
+    };
+    let mut out = Vec::with_capacity(poly.len() + 1);
+    let n = poly.len();
+    for i in 0..n {
+        let cur = poly[i];
+        let prev = poly[(i + n - 1) % n];
+        let (cin, pin) = (inside(&cur), inside(&prev));
+        if cin {
+            if !pin {
+                out.push(intersect(&prev, &cur));
+            }
+            out.push(cur);
+        } else if pin {
+            out.push(intersect(&prev, &cur));
+        }
+    }
+    out
+}
+
+/// Clip a triangle to an axis-aligned rect, returning the convex polygon
+/// (3–7 verts) in the same local space, or empty if fully outside.
+fn clip_triangle_to_rect(tri: [[f32; 2]; 3], r: Rect) -> Vec<[f32; 2]> {
+    let mut poly = tri.to_vec();
+    poly = clip_poly_axis(&poly, 0, r.x, true);
+    poly = clip_poly_axis(&poly, 0, r.x + r.w, false);
+    poly = clip_poly_axis(&poly, 1, r.y, true);
+    poly = clip_poly_axis(&poly, 1, r.y + r.h, false);
+    poly
+}
+
+/// Append local-space tessellated geometry, transformed by `t`, optionally
+/// clipping each triangle to `clip` (a rect in the same local space). Colors
+/// come from `color_at(local_point)`, so clipped/interpolated vertices get the
+/// correct (e.g. gradient) color.
+fn append_tessellated<F>(
+    out_v: &mut Vec<Vertex>,
+    out_i: &mut Vec<u16>,
+    geom_v: &[[f32; 2]],
+    geom_i: &[u16],
+    z: f32,
+    t: Transform2D,
+    clip: Option<Rect>,
+    mut color_at: F,
+) where
+    F: FnMut([f32; 2]) -> [f32; 4],
+{
+    match clip {
+        None => {
+            if out_v.len() + geom_v.len() > u16::MAX as usize {
+                return;
+            }
+            let base = out_v.len() as u16;
+            for p in geom_v {
+                out_v.push(Vertex {
+                    pos: apply_transform(*p, t),
+                    color: color_at(*p),
+                    z_index: z,
+                });
+            }
+            out_i.extend(geom_i.iter().map(|i| base + *i));
+        }
+        Some(r) => {
+            for tri in geom_i.chunks_exact(3) {
+                let poly = clip_triangle_to_rect(
+                    [
+                        geom_v[tri[0] as usize],
+                        geom_v[tri[1] as usize],
+                        geom_v[tri[2] as usize],
+                    ],
+                    r,
+                );
+                if poly.len() < 3 || out_v.len() + poly.len() > u16::MAX as usize {
+                    continue;
+                }
+                let base = out_v.len() as u16;
+                for p in &poly {
+                    out_v.push(Vertex {
+                        pos: apply_transform(*p, t),
+                        color: color_at(*p),
+                        z_index: z,
+                    });
+                }
+                for k in 1..(poly.len() as u16 - 1) {
+                    out_i.push(base);
+                    out_i.push(base + k);
+                    out_i.push(base + k + 1);
+                }
+            }
+        }
+    }
+}
+
 fn tessellate_path_fill(
     vertices: &mut Vec<Vertex>,
     indices: &mut Vec<u16>,
@@ -558,8 +670,9 @@ fn tessellate_path_fill(
     color: [f32; 4],
     z: f32,
     t: Transform2D,
+    clip: Option<Rect>,
 ) {
-    tessellate_path_fill_with_color_fn(vertices, indices, path, z, t, |_| color);
+    tessellate_path_fill_with_color_fn(vertices, indices, path, z, t, clip, |_| color);
 }
 
 fn tessellate_path_fill_with_color_fn<F>(
@@ -568,28 +681,24 @@ fn tessellate_path_fill_with_color_fn<F>(
     path: &Path,
     z: f32,
     t: Transform2D,
-    mut color_at: F,
+    clip: Option<Rect>,
+    color_at: F,
 ) where
     F: FnMut([f32; 2]) -> [f32; 4],
 {
     let Some(geom) = tessellate_path_fill_geometry(path) else {
         return;
     };
-
-    // Transform and append
-    if vertices.len() > u16::MAX as usize {
-        return;
-    }
-    let base = vertices.len() as u16;
-    for p in &geom.vertices {
-        let tp = apply_transform(*p, t);
-        vertices.push(Vertex {
-            pos: tp,
-            color: color_at(*p),
-            z_index: z,
-        });
-    }
-    indices.extend(geom.indices.iter().map(|i| base + *i));
+    append_tessellated(
+        vertices,
+        indices,
+        &geom.vertices,
+        &geom.indices,
+        z,
+        t,
+        clip,
+        color_at,
+    );
 }
 
 fn tessellate_path_fill_subdivided_with_color_fn<F>(
@@ -774,6 +883,7 @@ fn tessellate_path_stroke(
     color: [f32; 4],
     z: f32,
     t: Transform2D,
+    clip: Option<Rect>,
 ) {
     use lyon_geom::point;
     use lyon_path::Path as LyonPath;
@@ -847,16 +957,16 @@ fn tessellate_path_stroke(
     if result.is_err() {
         return;
     }
-    let base = vertices.len() as u16;
-    for p in &geom.vertices {
-        let tp = apply_transform(*p, t);
-        vertices.push(Vertex {
-            pos: tp,
-            color,
-            z_index: z,
-        });
-    }
-    indices.extend(geom.indices.iter().map(|i| base + *i));
+    append_tessellated(
+        vertices,
+        indices,
+        &geom.vertices,
+        &geom.indices,
+        z,
+        t,
+        clip,
+        |_| color,
+    );
 }
 
 /// Build a Path representing a rounded rectangle using cubic Beziers (kappa approximation).
@@ -969,7 +1079,7 @@ fn push_rounded_rect(
 ) {
     // Delegate to lyon's robust tessellator via our generic path fill
     let path = rounded_rect_to_path(rrect);
-    tessellate_path_fill(vertices, indices, &path, color, z, t);
+    tessellate_path_fill(vertices, indices, &path, color, z, t, None);
 }
 
 fn push_rect_stroke(
@@ -1087,7 +1197,16 @@ fn push_rounded_rect_stroke(
         return;
     }
     let path = rounded_rect_to_path(rrect);
-    tessellate_path_stroke(vertices, indices, &path, Stroke { width: w }, color, z, t);
+    tessellate_path_stroke(
+        vertices,
+        indices,
+        &path,
+        Stroke { width: w },
+        color,
+        z,
+        t,
+        None,
+    );
 }
 
 pub fn upload_display_list(
@@ -1358,7 +1477,7 @@ pub fn upload_display_list(
                 color,
                 transform,
                 z,
-                ..
+                clip,
             } => {
                 let col = [color.r, color.g, color.b, color.a];
                 tessellate_path_fill(
@@ -1368,6 +1487,7 @@ pub fn upload_display_list(
                     col,
                     *z as f32,
                     *transform,
+                    *clip,
                 );
             }
             Command::StrokePath {
@@ -1376,7 +1496,7 @@ pub fn upload_display_list(
                 color,
                 transform,
                 z,
-                ..
+                clip,
             } => {
                 let col = [color.r, color.g, color.b, color.a];
                 tessellate_path_stroke(
@@ -1387,6 +1507,7 @@ pub fn upload_display_list(
                     col,
                     *z as f32,
                     *transform,
+                    *clip,
                 );
             }
             // BoxShadow commands are handled by PassManager as a separate pipeline.
@@ -2194,7 +2315,7 @@ pub fn upload_display_list_unified(
                 color,
                 transform,
                 z,
-                ..
+                clip,
             } => {
                 let final_transform = *transform;
                 let opa = current_opacity(&opacity_stack);
@@ -2208,6 +2329,7 @@ pub fn upload_display_list_unified(
                         col,
                         *z as f32,
                         final_transform,
+                        *clip,
                     );
                     record_transparent_batch(
                         &mut transparent_batches,
@@ -2224,6 +2346,7 @@ pub fn upload_display_list_unified(
                         col,
                         *z as f32,
                         final_transform,
+                        *clip,
                     );
                 }
             }
@@ -2233,7 +2356,7 @@ pub fn upload_display_list_unified(
                 color,
                 transform,
                 z,
-                ..
+                clip,
             } => {
                 let final_transform = *transform;
                 let opa = current_opacity(&opacity_stack);
@@ -2248,6 +2371,7 @@ pub fn upload_display_list_unified(
                         col,
                         *z as f32,
                         final_transform,
+                        *clip,
                     );
                     record_transparent_batch(
                         &mut transparent_batches,
@@ -2265,6 +2389,7 @@ pub fn upload_display_list_unified(
                         col,
                         *z as f32,
                         final_transform,
+                        *clip,
                     );
                 }
             }
@@ -2442,4 +2567,41 @@ pub fn upload_display_list_unified(
         svg_draws,
         external_texture_draws,
     })
+}
+
+#[cfg(test)]
+mod path_clip_tests {
+    use super::{clip_triangle_to_rect, Rect};
+
+    fn rect() -> Rect {
+        Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+        }
+    }
+
+    #[test]
+    fn fully_inside_triangle_is_unchanged() {
+        let poly = clip_triangle_to_rect([[1.0, 1.0], [8.0, 1.0], [4.0, 8.0]], rect());
+        assert_eq!(poly.len(), 3);
+    }
+
+    #[test]
+    fn fully_outside_triangle_is_dropped() {
+        let poly = clip_triangle_to_rect([[20.0, 20.0], [30.0, 20.0], [25.0, 30.0]], rect());
+        assert!(poly.is_empty());
+    }
+
+    #[test]
+    fn straddling_triangle_is_clipped_within_bounds() {
+        // Triangle pokes out the top and sides; result must stay inside the rect.
+        let poly = clip_triangle_to_rect([[-5.0, -5.0], [15.0, -5.0], [5.0, 8.0]], rect());
+        assert!(poly.len() >= 3);
+        for p in &poly {
+            assert!(p[0] >= -0.01 && p[0] <= 10.01, "x out of clip: {}", p[0]);
+            assert!(p[1] >= -0.01 && p[1] <= 10.01, "y out of clip: {}", p[1]);
+        }
+    }
 }

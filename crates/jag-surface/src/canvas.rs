@@ -300,10 +300,11 @@ impl Canvas {
 
     /// Stroke a path with uniform width and solid color.
     ///
-    /// Paths that are not fully contained within the active clip are rejected
-    /// because arbitrary path geometry cannot be CPU-clipped to a rectangle.
+    /// The tessellated stroke triangles are clipped to the active clip rect (in
+    /// local space); a fully-outside path is skipped.
     pub fn stroke_path(&mut self, path: Path, width: f32, color: ColorLinPremul, z: i32) {
-        if let Some(clip) = self.clip_rect_local() {
+        let clip = self.clip_rect_local();
+        if let Some(clip) = clip {
             if let Some(bounds) = path_bounds(&path) {
                 let expanded = Rect {
                     x: bounds.x - width,
@@ -311,30 +312,30 @@ impl Canvas {
                     w: bounds.w + width * 2.0,
                     h: bounds.h + width * 2.0,
                 };
-                // Skip only when the path is fully outside the clip.
-                // Paths can't be CPU-clipped to a rect, so partially-visible
-                // paths are drawn in full; the push_clip_rect zero-area fix
-                // handles the viewport-overflow case.
                 if intersect_rect(expanded, clip).is_none() {
                     return;
                 }
             }
         }
-        self.painter.stroke_path(path, Stroke { width }, color, z);
+        self.painter
+            .stroke_path_clipped(path, Stroke { width }, color, z, clip);
     }
 
     /// Fill a path with a solid color.
     ///
-    /// Paths that are fully outside the active clip are rejected.
+    /// The tessellated triangles are clipped to the active clip rect (in local
+    /// space) so a path straddling the clip is cut at the edge; a fully-outside
+    /// path is skipped.
     pub fn fill_path(&mut self, path: Path, color: ColorLinPremul, z: i32) {
-        if let Some(clip) = self.clip_rect_local() {
+        let clip = self.clip_rect_local();
+        if let Some(clip) = clip {
             if let Some(bounds) = path_bounds(&path) {
                 if intersect_rect(bounds, clip).is_none() {
                     return;
                 }
             }
         }
-        self.painter.fill_path(path, color, z);
+        self.painter.fill_path_clipped(path, color, z, clip);
     }
 
     /// Draw an ellipse (y-down coordinates).

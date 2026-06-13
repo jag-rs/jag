@@ -59,6 +59,12 @@ pub enum Command {
         color: ColorLinPremul,
         z: i32,
         transform: Transform2D,
+        /// Axis-aligned clip in the path's local (pre-transform) space. When
+        /// set, the tessellated triangles are clipped to this rect so a path
+        /// straddling a clip boundary is cut at the edge instead of drawn whole
+        /// (arbitrary paths have no per-draw GPU scissor in the batched solid
+        /// pass). `None` = unclipped.
+        clip: Option<Rect>,
     },
     /// Stroked path (width only; round join/cap for now)
     StrokePath {
@@ -67,6 +73,8 @@ pub enum Command {
         color: ColorLinPremul,
         z: i32,
         transform: Transform2D,
+        /// See [`Command::FillPath`]'s `clip`.
+        clip: Option<Rect>,
     },
     /// Box shadow for a rounded rectangle. This is handled by a dedicated pass in PassManager,
     /// not by the generic solid fill pipeline.

@@ -252,17 +252,42 @@ impl Painter {
 
     /// Fill a path with a solid color. For now we only support solid color fills for paths.
     pub fn fill_path(&mut self, path: Path, color: ColorLinPremul, z: i32) {
+        self.fill_path_clipped(path, color, z, None);
+    }
+
+    /// Fill a path, clipping its tessellated triangles to `clip` (a rect in the
+    /// path's local/pre-transform space) when set.
+    pub fn fill_path_clipped(
+        &mut self,
+        path: Path,
+        color: ColorLinPremul,
+        z: i32,
+        clip: Option<Rect>,
+    ) {
         let t = self.current_transform();
         self.list.commands.push(Command::FillPath {
             path,
             color,
             z,
             transform: t,
+            clip,
         });
     }
 
     /// Stroke a path with uniform width and a solid color.
     pub fn stroke_path(&mut self, path: Path, stroke: Stroke, color: ColorLinPremul, z: i32) {
+        self.stroke_path_clipped(path, stroke, color, z, None);
+    }
+
+    /// Stroke a path, clipping its tessellated triangles to `clip` (local space).
+    pub fn stroke_path_clipped(
+        &mut self,
+        path: Path,
+        stroke: Stroke,
+        color: ColorLinPremul,
+        z: i32,
+        clip: Option<Rect>,
+    ) {
         let t = self.current_transform();
         self.list.commands.push(Command::StrokePath {
             path,
@@ -270,6 +295,7 @@ impl Painter {
             color,
             z,
             transform: t,
+            clip,
         });
     }
 
