@@ -57,10 +57,19 @@ impl JagSurface {
         let width = canvas.viewport.width.max(1);
         let height = canvas.viewport.height.max(1);
         let has_backdrop_blur = !canvas.backdrop_blur_draws.is_empty();
+        // Box shadows composite in sRGB (gamma) space, which only the offscreen
+        // path implements (it can snapshot the destination). Force intermediate
+        // so the gamma composite always runs; the direct path keeps its linear
+        // fallback for the rare shadow-inside-opacity-group case.
+        let has_box_shadow = list
+            .commands
+            .iter()
+            .any(|cmd| matches!(cmd, Command::BoxShadow { .. }));
 
         // Determine the render target: prefer intermediate when SMAA, Vello-style
         // resizing, or framebuffer-sampling effects are in use.
-        let use_intermediate = self.enable_smaa || self.use_intermediate || has_backdrop_blur;
+        let use_intermediate =
+            self.enable_smaa || self.use_intermediate || has_backdrop_blur || has_box_shadow;
 
         if list
             .commands

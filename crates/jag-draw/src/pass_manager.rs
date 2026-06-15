@@ -5,8 +5,8 @@ use std::sync::Arc;
 use crate::pipeline::{
     BackdropBlurRenderer, BackgroundRenderer, BasicSolidRenderer, Blitter, BlurRenderer,
     Compositor, OverlaySolidRenderer, ScrimSolidRenderer, ScrimStencilMaskRenderer,
-    ScrimStencilRenderer, ShadowCompositeRenderer, ShadowInstanceRenderer, SmaaRenderer,
-    TextRenderer,
+    ScrimStencilRenderer, ShadowCompositeInstanceRenderer, ShadowCompositeRenderer,
+    ShadowInstanceRenderer, SmaaRenderer, TextRenderer,
 };
 
 /// Apply a 2D affine transform to a point
@@ -217,6 +217,9 @@ pub struct PassManager {
     // Analytic box-shadow instance pipelines (offscreen + direct targets).
     pub shadow_offscreen: ShadowInstanceRenderer,
     pub shadow_direct: ShadowInstanceRenderer,
+    // sRGB-composite box-shadow pipeline for the offscreen path: reads a
+    // destination snapshot and composites in gamma space to match Chrome.
+    pub shadow_composite: ShadowCompositeInstanceRenderer,
     pub text: TextRenderer,
     pub text_offscreen: TextRenderer,
     pub image: crate::pipeline::ImageRenderer,

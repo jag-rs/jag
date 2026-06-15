@@ -26,8 +26,12 @@ impl JagSurface {
         self.pass.set_logical_pixels(self.logical_pixels);
         self.pass.set_ui_scale(self.ui_scale);
 
-        let use_intermediate =
-            self.enable_smaa || self.use_intermediate || !cache.backdrop_blur_draws.is_empty();
+        // Box shadows composite in sRGB (gamma) space, which only the
+        // offscreen path implements; force intermediate when shadows exist.
+        let use_intermediate = self.enable_smaa
+            || self.use_intermediate
+            || !cache.backdrop_blur_draws.is_empty()
+            || !cache.shadow_instances.is_empty();
         let width = cache.width;
         let height = cache.height;
         let clear = cache.clear;

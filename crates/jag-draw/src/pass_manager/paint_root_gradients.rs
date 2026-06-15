@@ -195,20 +195,20 @@ impl PassManager {
         // macOS-specific DPI correction: Only adjust for centered fullscreen radials.
         // When center ~ [0.5,0.5], divide center and radius by scale factor to correct
         // for retina scaling differences in UV sampling. No-op elsewhere.
-        let mut adj_center = center_uv;
-        let mut adj_radius = radius;
         #[cfg(target_os = "macos")]
-        {
+        let (adj_center, adj_radius) = {
+            let mut adj_center = center_uv;
+            let mut adj_radius = radius;
             let sf = self.scale_factor.max(1.0);
             // Within ~1e-3 of exact center counts as centered
             if (adj_center[0] - 0.5).abs() < 1e-3 && (adj_center[1] - 0.5).abs() < 1e-3 {
                 adj_center = [adj_center[0] / sf, adj_center[1] / sf];
                 adj_radius = adj_radius / sf;
-                if debug_flag {
-                    // debug logging removed
-                }
             }
-        }
+            (adj_center, adj_radius)
+        };
+        #[cfg(not(target_os = "macos"))]
+        let (adj_center, adj_radius) = (center_uv, radius);
         let params = BgParams {
             start_end: [0.0, 0.0, 1.0, 1.0],
             center_radius_stop: [adj_center[0], adj_center[1], adj_radius, count as f32],

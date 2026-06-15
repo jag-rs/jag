@@ -134,6 +134,31 @@ pub struct RoundedRectClipGpu {
     pub radii: [f32; 4],
 }
 
+/// Clip region for a filled/stroked path's tessellated triangles, in the path's
+/// local (pre-transform) space. `radii` are per-corner `(tl, tr, br, bl)`; all
+/// zero means a sharp axis-aligned rect clip. Used to cut a path straddling a
+/// CSS `overflow:hidden` boundary (rounded for `border-radius`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PathClip {
+    pub rect: Rect,
+    pub radii: [f32; 4],
+}
+
+impl PathClip {
+    /// A sharp (un-rounded) rect clip.
+    pub fn rect(rect: Rect) -> Self {
+        Self {
+            rect,
+            radii: [0.0; 4],
+        }
+    }
+
+    /// True when any corner has a non-zero radius.
+    pub fn is_rounded(&self) -> bool {
+        self.radii.iter().any(|r| *r > 0.0)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ClipRect(pub Rect);
 

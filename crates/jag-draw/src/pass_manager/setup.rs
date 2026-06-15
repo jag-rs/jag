@@ -5,8 +5,8 @@ use super::PassManager;
 use crate::pipeline::{
     BackdropBlurRenderer, BackgroundRenderer, BasicSolidRenderer, Blitter, BlurRenderer,
     Compositor, OverlaySolidRenderer, ScrimSolidRenderer, ScrimStencilMaskRenderer,
-    ScrimStencilRenderer, ShadowCompositeRenderer, ShadowInstanceRenderer, SmaaRenderer,
-    TextRenderer,
+    ScrimStencilRenderer, ShadowCompositeInstanceRenderer, ShadowCompositeRenderer,
+    ShadowInstanceRenderer, SmaaRenderer, TextRenderer,
 };
 use std::sync::Arc;
 
@@ -96,6 +96,8 @@ impl PassManager {
         let shadow_offscreen =
             ShadowInstanceRenderer::new(device.clone(), offscreen_format, msaa_count);
         let shadow_direct = ShadowInstanceRenderer::new(device.clone(), target_format, msaa_count);
+        let shadow_composite =
+            ShadowCompositeInstanceRenderer::new(device.clone(), offscreen_format, msaa_count);
         let text = TextRenderer::new(device.clone(), target_format);
         let text_offscreen = TextRenderer::new(device.clone(), offscreen_format);
         let image = crate::pipeline::ImageRenderer::new(device.clone(), target_format);
@@ -191,6 +193,7 @@ impl PassManager {
             shadow_comp,
             shadow_offscreen,
             shadow_direct,
+            shadow_composite,
             text,
             text_offscreen,
             image,

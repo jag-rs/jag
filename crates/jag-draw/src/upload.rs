@@ -4,6 +4,7 @@
 
 mod display_list;
 mod gradients;
+mod path_clip;
 mod shapes;
 mod tessellate;
 mod types;
@@ -20,7 +21,7 @@ pub use unified::upload_display_list_unified;
 
 #[cfg(test)]
 mod path_clip_tests {
-    use super::tessellate::clip_triangle_to_rect;
+    use super::path_clip::{clip_triangle_to_rect, clip_triangle_to_rounded};
     use crate::scene::Rect;
 
     fn rect() -> Rect {
@@ -53,5 +54,45 @@ mod path_clip_tests {
             assert!(p[0] >= -0.01 && p[0] <= 10.01, "x out of clip: {}", p[0]);
             assert!(p[1] >= -0.01 && p[1] <= 10.01, "y out of clip: {}", p[1]);
         }
+    }
+
+    // Signed distance to a rounded rect (negative = inside), matching the GPU SDF.
+    fn rrect_sdf(p: [f32; 2], r: Rect, rad: f32) -> f32 {
+        let cx = r.x + r.w * 0.5;
+        let cy = r.y + r.h * 0.5;
+        let qx = (p[0] - cx).abs() - (r.w * 0.5 - rad);
+        let qy = (p[1] - cy).abs() - (r.h * 0.5 - rad);
+        let ox = qx.max(0.0);
+        let oy = qy.max(0.0);
+        qx.max(qy).min(0.0) + (ox * ox + oy * oy).sqrt() - rad
+    }
+
+    #[test]
+    fn rounded_clip_cuts_the_corner() {
+        // A triangle filling the top-left corner of a rounded rect: the sharp
+        // corner (0,0) lies outside the radius-4 arc, so the clipped polygon must
+        // stay inside the rounded boundary and must NOT include the rect corner.
+        let r = rect();
+        let radii = [4.0; 4];
+        let poly = clip_triangle_to_rounded([[0.0, 0.0], [5.0, 0.0], [0.0, 5.0]], r, radii);
+        assert!(poly.len() >= 3, "expected a non-empty clipped polygon");
+        for p in &poly {
+            assert!(
+                rrect_sdf(*p, r, radii[0]) <= 0.2,
+                "vertex {p:?} is outside the rounded rect (sdf {})",
+                rrect_sdf(*p, r, radii[0])
+            );
+            assert!(
+                p[0] > 0.05 || p[1] > 0.05,
+                "vertex {p:?} sits at the cut-off sharp corner"
+            );
+        }
+    }
+
+    #[test]
+    fn rounded_clip_leaves_interior_triangle_whole() {
+        // Fully inside the inner (un-rounded) region → unchanged 3-vertex triangle.
+        let poly = clip_triangle_to_rounded([[5.0, 5.0], [6.0, 5.0], [5.0, 6.0]], rect(), [4.0; 4]);
+        assert_eq!(poly.len(), 3);
     }
 }

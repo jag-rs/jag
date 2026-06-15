@@ -1,62 +1,13 @@
-use crate::scene::{FillRule, Path, PathCmd, Rect, RoundedRect, Stroke, Transform2D};
+use crate::scene::{FillRule, Path, PathClip, PathCmd, RoundedRect, Stroke, Transform2D};
 
+use super::path_clip::{clip_triangle_to_rect, clip_triangle_to_rounded};
 use super::types::Vertex;
 use super::verts::apply_transform;
 
-/// Clip a polygon against one axis-aligned bound on `axis` (0 = x, 1 = y):
-/// `keep_ge` keeps points whose coord is `>= v`, else `<= v`. Sutherland–
-/// Hodgman, interpolating the crossing on the other axis.
-fn clip_poly_axis(poly: &[[f32; 2]], axis: usize, v: f32, keep_ge: bool) -> Vec<[f32; 2]> {
-    if poly.is_empty() {
-        return Vec::new();
-    }
-    let inside = |p: &[f32; 2]| if keep_ge { p[axis] >= v } else { p[axis] <= v };
-    let other = axis ^ 1;
-    let intersect = |a: &[f32; 2], b: &[f32; 2]| {
-        let denom = b[axis] - a[axis];
-        let s = if denom.abs() < 1e-6 {
-            0.0
-        } else {
-            (v - a[axis]) / denom
-        };
-        let mut p = [0.0f32; 2];
-        p[axis] = v;
-        p[other] = a[other] + s * (b[other] - a[other]);
-        p
-    };
-    let mut out = Vec::with_capacity(poly.len() + 1);
-    let n = poly.len();
-    for i in 0..n {
-        let cur = poly[i];
-        let prev = poly[(i + n - 1) % n];
-        let (cin, pin) = (inside(&cur), inside(&prev));
-        if cin {
-            if !pin {
-                out.push(intersect(&prev, &cur));
-            }
-            out.push(cur);
-        } else if pin {
-            out.push(intersect(&prev, &cur));
-        }
-    }
-    out
-}
-
-/// Clip a triangle to an axis-aligned rect, returning the convex polygon
-/// (3–7 verts) in the same local space, or empty if fully outside.
-pub(crate) fn clip_triangle_to_rect(tri: [[f32; 2]; 3], r: Rect) -> Vec<[f32; 2]> {
-    let mut poly = tri.to_vec();
-    poly = clip_poly_axis(&poly, 0, r.x, true);
-    poly = clip_poly_axis(&poly, 0, r.x + r.w, false);
-    poly = clip_poly_axis(&poly, 1, r.y, true);
-    poly = clip_poly_axis(&poly, 1, r.y + r.h, false);
-    poly
-}
-
 /// Append local-space tessellated geometry, transformed by `t`, optionally
-/// clipping each triangle to `clip` (a rect in the same local space). Colors
-/// come from `color_at(local_point)`, so clipped/interpolated vertices get the
-/// correct (e.g. gradient) color.
+/// clipping each triangle to `clip` (a rect or rounded rect in the same local
+/// space). Colors come from `color_at(local_point)`, so clipped/interpolated
+/// vertices get the correct (e.g. gradient) color.
 fn append_tessellated<F>(
     out_v: &mut Vec<Vertex>,
     out_i: &mut Vec<u16>,
@@ -64,7 +15,7 @@ fn append_tessellated<F>(
     geom_i: &[u16],
     z: f32,
     t: Transform2D,
-    clip: Option<Rect>,
+    clip: Option<PathClip>,
     mut color_at: F,
 ) where
     F: FnMut([f32; 2]) -> [f32; 4],
@@ -84,16 +35,19 @@ fn append_tessellated<F>(
             }
             out_i.extend(geom_i.iter().map(|i| base + *i));
         }
-        Some(r) => {
+        Some(pc) => {
+            let rounded = pc.is_rounded();
             for tri in geom_i.chunks_exact(3) {
-                let poly = clip_triangle_to_rect(
-                    [
-                        geom_v[tri[0] as usize],
-                        geom_v[tri[1] as usize],
-                        geom_v[tri[2] as usize],
-                    ],
-                    r,
-                );
+                let tri3 = [
+                    geom_v[tri[0] as usize],
+                    geom_v[tri[1] as usize],
+                    geom_v[tri[2] as usize],
+                ];
+                let poly = if rounded {
+                    clip_triangle_to_rounded(tri3, pc.rect, pc.radii)
+                } else {
+                    clip_triangle_to_rect(tri3, pc.rect)
+                };
                 if poly.len() < 3 || out_v.len() + poly.len() > u16::MAX as usize {
                     continue;
                 }
@@ -122,7 +76,7 @@ pub(crate) fn tessellate_path_fill(
     color: [f32; 4],
     z: f32,
     t: Transform2D,
-    clip: Option<Rect>,
+    clip: Option<PathClip>,
 ) {
     tessellate_path_fill_with_color_fn(vertices, indices, path, z, t, clip, |_| color);
 }
@@ -133,7 +87,7 @@ pub(crate) fn tessellate_path_fill_with_color_fn<F>(
     path: &Path,
     z: f32,
     t: Transform2D,
-    clip: Option<Rect>,
+    clip: Option<PathClip>,
     color_at: F,
 ) where
     F: FnMut([f32; 2]) -> [f32; 4],
@@ -335,7 +289,7 @@ pub(crate) fn tessellate_path_stroke(
     color: [f32; 4],
     z: f32,
     t: Transform2D,
-    clip: Option<Rect>,
+    clip: Option<PathClip>,
 ) {
     use lyon_geom::point;
     use lyon_path::Path as LyonPath;

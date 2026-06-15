@@ -168,26 +168,6 @@ impl PassManager {
 
         let _z_bg = self.create_z_bind_group(0.0, queue);
 
-        // Build the analytic box-shadow instance buffer + viewport bind group
-        // before the render pass so both outlive the pass borrow. Skipped
-        // entirely when there are no shadows.
-        let shadow_buf = (!self.shadow_instances.is_empty()).then(|| {
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("shadow-instances"),
-                    contents: bytemuck::cast_slice(&self.shadow_instances),
-                    usage: wgpu::BufferUsages::VERTEX,
-                })
-        });
-        let shadow_vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow-vp-bg-offscreen"),
-            layout: self.shadow_offscreen.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self.vp_buffer.as_entire_binding(),
-            }],
-        });
-
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("unified-offscreen-pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -229,21 +209,112 @@ impl PassManager {
             }
         }
 
-        // Analytic box shadows: drawn after the opaque solids (so they read the
-        // opaque depth) and before the transparent interleave. The instance
-        // buffer was created above and outlives this pass.
-        if let Some(buf) = shadow_buf.as_ref() {
-            self.shadow_offscreen.record(
-                &mut pass,
-                &shadow_vp_bg,
-                buf,
-                self.shadow_instances.len() as u32,
+        // Shadows are no longer drawn inside the opaque-solids pass; the sRGB
+        // gamma composite needs a snapshot of the rendered destination, which
+        // can only be captured after this pass is dropped (see below).
+        drop(pass);
+
+        // Analytic box shadows, composited in sRGB (gamma) space to match
+        // Chrome. GPU fixed-function blend only works in the offscreen's stored
+        // LINEAR space, so instead we snapshot the destination, do the sRGB
+        // "over" in-shader (`SHADOW_INSTANCE_COMPOSITE_WGSL`), and write the
+        // result with REPLACE blend. This runs after the opaque solids (so the
+        // snapshot and depth test see them) and before the transparent
+        // interleave. Skipped entirely when there are no shadows.
+        //
+        // Limitation: all overlapping shadows read the same pre-shadow
+        // snapshot, so they do not accumulate against each other. Accepted.
+        if !self.shadow_instances.is_empty() {
+            let shadow_buf = self
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("shadow-instances"),
+                    contents: bytemuck::cast_slice(&self.shadow_instances),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+            let shadow_vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("shadow-composite-vp-bg-offscreen"),
+                layout: self.shadow_composite.viewport_bgl(),
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.vp_buffer.as_entire_binding(),
+                }],
+            });
+
+            // Snapshot of the offscreen scene target (pre-shadow). Same size +
+            // format as the scene target; only needs sampling + copy-dst.
+            let snapshot = allocator.allocate_texture(crate::allocator::TexKey {
+                width: width.max(1),
+                height: height.max(1),
+                format: self.offscreen_format,
+                usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+            });
+            encoder.copy_texture_to_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &targets.color.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::ImageCopyTexture {
+                    texture: &snapshot.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: width.max(1),
+                    height: height.max(1),
+                    depth_or_array_layers: 1,
+                },
             );
+            let shadow_dst_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("shadow-composite-dst-bg"),
+                layout: self.shadow_composite.dst_bgl(),
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&snapshot.view),
+                }],
+            });
+
+            {
+                let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("unified-offscreen-shadow-composite-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &targets.color.view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: self.depth_view(),
+                        // Depth is read-only here (pipeline depth_write=false);
+                        // load + store keeps the opaque depth intact for the
+                        // transparent interleave that follows.
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+                self.shadow_composite.record(
+                    &mut shadow_pass,
+                    &shadow_vp_bg,
+                    &shadow_dst_bg,
+                    &shadow_buf,
+                    self.shadow_instances.len() as u32,
+                );
+            }
+            allocator.release_texture(snapshot);
         }
 
         // Unified z-sorted rendering (offscreen path): interleave ALL draw types
         // by z-index for correct depth ordering across element types.
-        drop(pass);
         {
             #[derive(Clone, Copy)]
             enum DrawItemOff {

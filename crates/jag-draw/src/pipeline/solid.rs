@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use crate::upload::GpuScene;
+use std::sync::Arc;
 
 pub struct BasicSolidRenderer {
     pipeline: wgpu::RenderPipeline,

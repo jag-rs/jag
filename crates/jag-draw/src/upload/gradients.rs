@@ -285,11 +285,25 @@ pub(crate) fn push_rounded_rect_linear_gradient(
     let dx = end[0] - start[0];
     let dy = end[1] - start[1];
     let denom = (dx * dx + dy * dy).max(1e-6);
-
-    tessellate_path_fill_with_color_fn(vertices, indices, &path, z, t, None, |p| {
+    let color_at = |p: [f32; 2]| {
         let proj = ((p[0] - start[0]) * dx + (p[1] - start[1]) * dy) / denom;
         sample_gradient_stops(&packed, proj)
-    });
+    };
+
+    // The path-fill triangulation samples gradient color only at its (coarse)
+    // vertices and interpolates linearly across triangles. A 2-3 stop gradient
+    // is smooth enough for that, but a many-stop gradient (e.g. CSS
+    // `background-repeat` tiling of a gradient into a border ring) has sharp
+    // transitions the coarse rounded-corner triangulation cannot follow,
+    // producing diagonal seams. Subdivide so color is sampled densely enough to
+    // track the stops. Gated on stop count to keep smooth gradients cheap.
+    if packed.len() > 3 {
+        tessellate_path_fill_subdivided_with_color_fn(
+            vertices, indices, &path, z, t, 1.5, color_at,
+        );
+    } else {
+        tessellate_path_fill_with_color_fn(vertices, indices, &path, z, t, None, color_at);
+    }
 }
 
 pub(crate) fn push_rounded_rect_radial_gradient(
