@@ -1,7 +1,7 @@
 use crate::display_list::Command;
 use crate::scene::Brush;
 
-use super::super::shapes::{push_rect_stroke, push_rounded_rect_stroke};
+use super::super::shapes::{push_rect_stroke, push_rounded_rect_stroke_aa};
 use super::super::tessellate::{tessellate_path_fill, tessellate_path_stroke};
 use super::UnifiedBuilder;
 
@@ -22,7 +22,8 @@ impl UnifiedBuilder {
         let opa = self.current_opacity();
         if let Brush::Solid(col) = brush {
             let color = Self::premul_opa([col.r, col.g, col.b, col.a], opa);
-            if Self::is_transparent(color[3]) {
+            let has_edge_fade = stroke.width <= 1.5;
+            if Self::is_transparent(color[3]) || has_edge_fade {
                 let index_start = self.transparent_indices.len();
                 push_rect_stroke(
                     &mut self.transparent_vertices,
@@ -66,31 +67,19 @@ impl UnifiedBuilder {
         let opa = self.current_opacity();
         if let Brush::Solid(col) = brush {
             let color = Self::premul_opa([col.r, col.g, col.b, col.a], opa);
-            if Self::is_transparent(color[3]) {
-                let index_start = self.transparent_indices.len();
-                push_rounded_rect_stroke(
-                    &mut self.transparent_vertices,
-                    &mut self.transparent_indices,
-                    *rrect,
-                    *stroke,
-                    color,
-                    *z as f32,
-                    final_transform,
-                );
-                let index_end = self.transparent_indices.len();
-                let clip = self.current_clip();
-                self.record_transparent_batch(*z, index_start, index_end, clip);
-            } else {
-                push_rounded_rect_stroke(
-                    &mut self.vertices,
-                    &mut self.indices,
-                    *rrect,
-                    *stroke,
-                    color,
-                    *z as f32,
-                    final_transform,
-                );
-            }
+            let index_start = self.transparent_indices.len();
+            push_rounded_rect_stroke_aa(
+                &mut self.transparent_vertices,
+                &mut self.transparent_indices,
+                *rrect,
+                *stroke,
+                color,
+                *z as f32,
+                final_transform,
+            );
+            let index_end = self.transparent_indices.len();
+            let clip = self.current_clip();
+            self.record_transparent_batch(*z, index_start, index_end, clip);
         }
     }
 
