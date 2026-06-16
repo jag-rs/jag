@@ -20,6 +20,66 @@ pub use types::{
 pub use unified::upload_display_list_unified;
 
 #[cfg(test)]
+mod shape_aa_tests {
+    use super::shapes::{push_rounded_rect_aa, push_rounded_rect_stroke_aa};
+    use crate::scene::{Rect, RoundedRadii, RoundedRect, Stroke, Transform2D};
+
+    fn sample_rrect() -> RoundedRect {
+        RoundedRect {
+            rect: Rect {
+                x: 10.0,
+                y: 20.0,
+                w: 80.0,
+                h: 40.0,
+            },
+            radii: RoundedRadii {
+                tl: 8.0,
+                tr: 8.0,
+                br: 8.0,
+                bl: 8.0,
+            },
+        }
+    }
+
+    #[test]
+    fn rounded_rect_aa_emits_transparent_edge_vertices() {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        push_rounded_rect_aa(
+            &mut vertices,
+            &mut indices,
+            sample_rrect(),
+            [0.2, 0.4, 0.6, 1.0],
+            3.0,
+            Transform2D::identity(),
+        );
+
+        assert!(!indices.is_empty());
+        assert!(vertices.iter().any(|v| v.color[3] == 1.0));
+        assert!(vertices.iter().any(|v| v.color[3] == 0.0));
+    }
+
+    #[test]
+    fn rounded_stroke_aa_emits_inner_and_outer_fringes() {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        push_rounded_rect_stroke_aa(
+            &mut vertices,
+            &mut indices,
+            sample_rrect(),
+            Stroke { width: 1.0 },
+            [0.2, 0.4, 0.6, 1.0],
+            3.0,
+            Transform2D::identity(),
+        );
+
+        assert!(!indices.is_empty());
+        assert!(vertices.iter().any(|v| v.color[3] == 1.0));
+        assert!(vertices.iter().any(|v| v.color[3] == 0.0));
+    }
+}
+
+#[cfg(test)]
 mod path_clip_tests {
     use super::path_clip::{clip_triangle_to_rect, clip_triangle_to_rounded};
     use crate::scene::Rect;
