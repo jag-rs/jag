@@ -667,6 +667,11 @@ fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
         // Fully transparent mask pixel: discard so we don't write depth for empty texels.
         discard;
     }
+    // `discard` above terminates the invocation, but the DirectX shader compiler
+    // (FXC) rejects a fragment entry point unless every control path returns a
+    // value (error X3507). Metal/Vulkan accept the discard-only path; Windows
+    // does not. This trailing return is unreachable but keeps FXC happy.
+    return vec4<f32>(0.0, 0.0, 0.0, 0.0);
 }
 "#;
 
