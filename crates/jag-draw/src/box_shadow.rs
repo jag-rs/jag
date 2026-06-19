@@ -18,7 +18,10 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::scene::{BoxShadowSpec, RoundedRect, Transform2D};
+use crate::scene::{BoxShadowSpec, Rect, RoundedRect, Transform2D};
+
+const UNCLIPPED_MIN: [f32; 2] = [-1.0e9, -1.0e9];
+const UNCLIPPED_MAX: [f32; 2] = [1.0e9, 1.0e9];
 
 /// Per-shadow GPU instance consumed by `SHADOW_INSTANCE_WGSL`. One instance =
 /// one expanded quad; the fragment shader computes coverage analytically.
@@ -35,12 +38,37 @@ pub struct ShadowInstance {
     pub params: [f32; 4],
     /// Premultiplied linear RGBA.
     pub color: [f32; 4],
+    /// Clip rect top-left in world pixels. Very large when unclipped.
+    pub clip_min: [f32; 2],
+    /// Clip rect bottom-right in world pixels. Very large when unclipped.
+    pub clip_max: [f32; 2],
 }
 
 #[inline]
 fn apply_transform(t: Transform2D, p: [f32; 2]) -> [f32; 2] {
     let [a, b, c, d, e, f] = t.m;
     [a * p[0] + c * p[1] + e, b * p[0] + d * p[1] + f]
+}
+
+fn transform_rect_bounds(t: Transform2D, rect: Rect) -> ([f32; 2], [f32; 2]) {
+    let x0 = rect.x;
+    let y0 = rect.y;
+    let x1 = rect.x + rect.w;
+    let y1 = rect.y + rect.h;
+    let p0 = apply_transform(t, [x0, y0]);
+    let p1 = apply_transform(t, [x1, y0]);
+    let p2 = apply_transform(t, [x0, y1]);
+    let p3 = apply_transform(t, [x1, y1]);
+    (
+        [
+            p0[0].min(p1[0]).min(p2[0]).min(p3[0]),
+            p0[1].min(p1[1]).min(p2[1]).min(p3[1]),
+        ],
+        [
+            p0[0].max(p1[0]).max(p2[0]).max(p3[0]),
+            p0[1].max(p1[1]).max(p2[1]).max(p3[1]),
+        ],
+    )
 }
 
 impl ShadowInstance {
@@ -63,6 +91,7 @@ impl ShadowInstance {
         spec: BoxShadowSpec,
         z: i32,
         transform: Transform2D,
+        clip: Option<Rect>,
     ) -> Self {
         let r = rrect.rect;
         let spread = spec.spread;
@@ -93,11 +122,16 @@ impl ShadowInstance {
         };
 
         let c = spec.color;
+        let (clip_min, clip_max) = clip
+            .map(|clip| transform_rect_bounds(transform, clip))
+            .unwrap_or((UNCLIPPED_MIN, UNCLIPPED_MAX));
         Self {
             lower,
             upper,
             params: [sigma, corner, z as f32, 0.0],
             color: [c.r, c.g, c.b, c.a],
+            clip_min,
+            clip_max,
         }
     }
 }

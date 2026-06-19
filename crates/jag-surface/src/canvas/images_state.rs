@@ -398,7 +398,7 @@ impl Canvas {
     /// rotation/skew (where axis-aligned clipping would be incorrect).
     /// For axis-aligned transforms (translation + scale), the device-space clip
     /// is inverse-transformed back to the local coordinate space.
-    pub(super) fn clip_rect_local(&self) -> Option<Rect> {
+    pub(crate) fn clip_rect_local(&self) -> Option<Rect> {
         let clip_device = match self.clip_stack.last() {
             Some(Some(r)) => *r,
             _ => return None,

@@ -42,6 +42,7 @@ fn shadow_instance_identity_transform_geometry() {
         spec([0.0, 8.0], -10.0, 24.0),
         7,
         Transform2D::identity(),
+        None,
     );
     // Bounds = rect + offset, expanded by spread (-10 shrinks).
     assert_eq!(inst.lower, [100.0 + 0.0 - -10.0, 200.0 + 8.0 - -10.0]); // [110, 218]
@@ -71,12 +72,14 @@ fn shadow_instance_translation_shifts_bounds_only() {
         spec([0.0, 0.0], 0.0, 16.0),
         0,
         Transform2D::identity(),
+        None,
     );
     let moved = ShadowInstance::from_box_shadow(
         rrect(0.0, 0.0, 100.0, 40.0, 8.0),
         spec([0.0, 0.0], 0.0, 16.0),
         0,
         Transform2D::translate(50.0, 30.0),
+        None,
     );
     assert_eq!(moved.lower, [base.lower[0] + 50.0, base.lower[1] + 30.0]);
     assert_eq!(moved.upper, [base.upper[0] + 50.0, base.upper[1] + 30.0]);
@@ -92,6 +95,7 @@ fn shadow_instance_uniform_scale_scales_sigma_and_corner() {
         spec([0.0, 0.0], 0.0, 16.0),
         0,
         Transform2D::scale(2.0, 2.0),
+        None,
     );
     // sigma = (16/2) * 2 = 16; corner = 8 * 2 = 16.
     assert!(
@@ -115,11 +119,31 @@ fn shadow_instance_sharp_box_has_zero_corner() {
         spec([0.0, 0.0], 4.0, 8.0),
         0,
         Transform2D::identity(),
+        None,
     );
     assert_eq!(
         inst.params[1], 0.0,
         "sharp box keeps zero corner even with spread"
     );
+}
+
+#[test]
+fn shadow_instance_transforms_clip_bounds() {
+    let inst = ShadowInstance::from_box_shadow(
+        rrect(0.0, 0.0, 100.0, 40.0, 8.0),
+        spec([0.0, 0.0], 0.0, 16.0),
+        0,
+        Transform2D::translate(50.0, -30.0),
+        Some(Rect {
+            x: 10.0,
+            y: 20.0,
+            w: 70.0,
+            h: 25.0,
+        }),
+    );
+
+    assert_eq!(inst.clip_min, [60.0, -10.0]);
+    assert_eq!(inst.clip_max, [130.0, 15.0]);
 }
 
 /// Brute-force ground truth: convolve the sharp rounded-rect mask with a 2D

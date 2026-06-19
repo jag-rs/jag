@@ -17,6 +17,7 @@ impl Canvas {
         spec: jag_draw::BoxShadowSpec,
         z: i32,
     ) {
-        self.painter.box_shadow(rrect, spec, z);
+        self.painter
+            .box_shadow_clipped(rrect, spec, z, self.clip_rect_local());
     }
 }

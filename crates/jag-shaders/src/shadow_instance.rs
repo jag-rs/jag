@@ -34,6 +34,8 @@ struct VsOut {
     @location(2) @interpolate(flat) upper: vec2<f32>,
     @location(3) @interpolate(flat) params: vec4<f32>,
     @location(4) @interpolate(flat) color: vec4<f32>,
+    @location(5) @interpolate(flat) clip_min: vec2<f32>,
+    @location(6) @interpolate(flat) clip_max: vec2<f32>,
 };
 
 @vertex
@@ -43,6 +45,8 @@ fn vs_main(
     @location(1) upper: vec2<f32>,
     @location(2) params: vec4<f32>,
     @location(3) color: vec4<f32>,
+    @location(4) clip_min: vec2<f32>,
+    @location(5) clip_max: vec2<f32>,
 ) -> VsOut {
     let sigma = params.x;
     // The Gaussian tail is negligible past 3σ; pad a little for the AA edge.
@@ -66,6 +70,8 @@ fn vs_main(
     out.upper = upper;
     out.params = params;
     out.color = color;
+    out.clip_min = clip_min;
+    out.clip_max = clip_max;
     return out;
 }
 
@@ -133,6 +139,10 @@ fn coverage(lower: vec2<f32>, upper: vec2<f32>, point: vec2<f32>, sigma: f32, co
 
 @fragment
 fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
+    if (inp.world.x < inp.clip_min.x || inp.world.x > inp.clip_max.x ||
+        inp.world.y < inp.clip_min.y || inp.world.y > inp.clip_max.y) {
+        discard;
+    }
     let cov = coverage(inp.lower, inp.upper, inp.world, inp.params.x, inp.params.y);
     // color is premultiplied linear; scaling by coverage keeps it premultiplied.
     return inp.color * cov;
@@ -174,6 +184,8 @@ struct VsOut {
     @location(2) @interpolate(flat) upper: vec2<f32>,
     @location(3) @interpolate(flat) params: vec4<f32>,
     @location(4) @interpolate(flat) color: vec4<f32>,
+    @location(5) @interpolate(flat) clip_min: vec2<f32>,
+    @location(6) @interpolate(flat) clip_max: vec2<f32>,
 };
 
 @vertex
@@ -183,6 +195,8 @@ fn vs_main(
     @location(1) upper: vec2<f32>,
     @location(2) params: vec4<f32>,
     @location(3) color: vec4<f32>,
+    @location(4) clip_min: vec2<f32>,
+    @location(5) clip_max: vec2<f32>,
 ) -> VsOut {
     let sigma = params.x;
     // The Gaussian tail is negligible past 3σ; pad a little for the AA edge.
@@ -206,6 +220,8 @@ fn vs_main(
     out.upper = upper;
     out.params = params;
     out.color = color;
+    out.clip_min = clip_min;
+    out.clip_max = clip_max;
     return out;
 }
 
@@ -284,6 +300,10 @@ fn srgb_to_lin(c: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
+    if (inp.world.x < inp.clip_min.x || inp.world.x > inp.clip_max.x ||
+        inp.world.y < inp.clip_min.y || inp.world.y > inp.clip_max.y) {
+        discard;
+    }
     let cov = coverage(inp.lower, inp.upper, inp.world, inp.params.x, inp.params.y);
     let color_a = inp.color.a;                       // shadow's own alpha
     // instance color is premultiplied LINEAR; recover straight linear then sRGB

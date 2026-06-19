@@ -6,7 +6,7 @@
 //! The unified builder's GPU-side extraction (`upload_display_list_unified`)
 //! needs a `wgpu::Device`/`Queue`, so it is exercised by the device-level
 //! checks rather than here. This test mirrors the exact transformation the
-//! `Command::BoxShadow { rrect, spec, z, transform } =>` arm performs, so a
+//! `Command::BoxShadow { rrect, spec, z, transform, clip } =>` arm performs, so a
 //! regression in either the Painter command or that arm's mapping is caught
 //! without a GPU.
 
@@ -82,6 +82,7 @@ fn box_shadow_command_fields_map_to_expected_instance() {
         spec,
         z,
         transform,
+        clip,
     }) = list
         .commands
         .iter()
@@ -91,15 +92,22 @@ fn box_shadow_command_fields_map_to_expected_instance() {
     };
 
     // This is exactly what the unified builder's BoxShadow arm pushes.
-    let from_command = ShadowInstance::from_box_shadow(*rrect, *spec, *z, *transform);
+    let from_command = ShadowInstance::from_box_shadow(*rrect, *spec, *z, *transform, *clip);
     // Reference: same call from the original inputs.
-    let reference =
-        ShadowInstance::from_box_shadow(sample_rrect(), sample_spec(), 5, Transform2D::identity());
+    let reference = ShadowInstance::from_box_shadow(
+        sample_rrect(),
+        sample_spec(),
+        5,
+        Transform2D::identity(),
+        None,
+    );
 
     assert_eq!(from_command.lower, reference.lower);
     assert_eq!(from_command.upper, reference.upper);
     assert_eq!(from_command.params, reference.params);
     assert_eq!(from_command.color, reference.color);
+    assert_eq!(from_command.clip_min, reference.clip_min);
+    assert_eq!(from_command.clip_max, reference.clip_max);
 
     // Spot-check the derived geometry so the mapping is pinned, not just equal
     // to itself: bounds = rect + offset, expanded by spread; sigma = blur/2.

@@ -12,7 +12,7 @@
 //! blend. The caller must therefore copy the offscreen into a snapshot texture
 //! and bind it before recording this pass.
 //!
-//! The vertex stage, viewport uniform, instance layout (stride 48), and depth
+//! The vertex stage, viewport uniform, instance layout (stride 64), and depth
 //! state (Depth32Float, no depth write, LessEqual) are identical to the linear
 //! renderer; only the fragment and the added dst binding differ.
 
@@ -80,10 +80,10 @@ impl ShadowCompositeInstanceRenderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                // Per-instance attributes: stride 48, stepped per instance. The
+                // Per-instance attributes: stride 64, stepped per instance. The
                 // quad's 6 vertices come from `@builtin(vertex_index)`.
                 buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: 48,
+                    array_stride: 64,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &[
                         wgpu::VertexAttribute {
@@ -105,6 +105,16 @@ impl ShadowCompositeInstanceRenderer {
                             offset: 32,
                             shader_location: 3,
                             format: wgpu::VertexFormat::Float32x4,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 48,
+                            shader_location: 4,
+                            format: wgpu::VertexFormat::Float32x2,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 56,
+                            shader_location: 5,
+                            format: wgpu::VertexFormat::Float32x2,
                         },
                     ],
                 }],

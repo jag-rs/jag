@@ -144,7 +144,8 @@ mod side_channel_opacity_tests {
 mod fill_rect_rounded_clip_tests {
     use super::super::Canvas;
     use jag_draw::{
-        Brush, ColorLinPremul, Command, Painter, Rect, RoundedRadii, RoundedRect, Viewport,
+        BoxShadowSpec, Brush, ColorLinPremul, Command, Painter, Rect, RoundedRadii, RoundedRect,
+        Transform2D, Viewport,
     };
 
     fn test_canvas() -> Canvas {
@@ -230,6 +231,61 @@ mod fill_rect_rounded_clip_tests {
         let cmds = &canvas.display_list().commands;
         assert!(cmds.iter().any(|c| matches!(c, Command::DrawRect { .. })));
         assert!(!cmds.iter().any(|c| matches!(c, Command::FillPath { .. })));
+    }
+
+    #[test]
+    fn clipped_box_shadow_carries_local_clip_under_transform() {
+        let mut canvas = test_canvas();
+        canvas.push_transform(Transform2D::translate(0.0, -120.0));
+        canvas.push_clip_rect(Rect {
+            x: 0.0,
+            y: 120.0,
+            w: 180.0,
+            h: 90.0,
+        });
+
+        canvas.box_shadow(
+            RoundedRect {
+                rect: Rect {
+                    x: 16.0,
+                    y: 130.0,
+                    w: 120.0,
+                    h: 60.0,
+                },
+                radii: RoundedRadii {
+                    tl: 6.0,
+                    tr: 6.0,
+                    br: 6.0,
+                    bl: 6.0,
+                },
+            },
+            BoxShadowSpec {
+                offset: [0.0, 4.0],
+                spread: 0.0,
+                blur_radius: 16.0,
+                color: ColorLinPremul {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.24,
+                },
+            },
+            5,
+        );
+
+        let clip = canvas
+            .display_list()
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                Command::BoxShadow { clip, .. } => *clip,
+                _ => None,
+            })
+            .expect("box shadow should carry the active clip");
+        assert_eq!(clip.x, 0.0);
+        assert_eq!(clip.y, 120.0);
+        assert_eq!(clip.w, 180.0);
+        assert_eq!(clip.h, 90.0);
     }
 }
 

@@ -83,6 +83,7 @@ pub enum Command {
         spec: BoxShadowSpec,
         z: i32,
         transform: Transform2D,
+        clip: Option<Rect>,
     },
     /// Hit-only regions that do not render. Useful for scene-surface hits or custom zones.
     HitRegionRect {

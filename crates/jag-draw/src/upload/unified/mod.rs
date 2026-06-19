@@ -207,10 +207,11 @@ impl UnifiedBuilder {
                 spec,
                 z,
                 transform,
+                clip,
             } => {
                 self.shadow_instances
                     .push(crate::box_shadow::ShadowInstance::from_box_shadow(
-                        *rrect, *spec, *z, *transform,
+                        *rrect, *spec, *z, *transform, *clip,
                     ));
             }
             // Hit-only regions: intentionally not rendered.

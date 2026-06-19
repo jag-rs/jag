@@ -241,12 +241,23 @@ impl Painter {
     }
 
     pub fn box_shadow(&mut self, rrect: RoundedRect, spec: BoxShadowSpec, z: i32) {
+        self.box_shadow_clipped(rrect, spec, z, None);
+    }
+
+    pub fn box_shadow_clipped(
+        &mut self,
+        rrect: RoundedRect,
+        spec: BoxShadowSpec,
+        z: i32,
+        clip: Option<Rect>,
+    ) {
         let t = self.current_transform();
         self.list.commands.push(Command::BoxShadow {
             rrect,
             spec,
             z,
             transform: t,
+            clip,
         });
     }
 
