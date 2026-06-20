@@ -143,6 +143,8 @@ mod pass_manager;
 mod pipeline;
 mod scene;
 mod svg;
+mod svg_fontdb;
+mod svg_geometry;
 mod text;
 mod text_layout;
 mod upload;
@@ -161,6 +163,8 @@ pub use pipeline::Blitter;
 pub use pipeline::*;
 pub use scene::*;
 pub use svg::*;
+pub use svg_fontdb::register_svg_fallback_font;
+pub use svg_geometry::*;
 pub use text::*;
 
 /// Backward-compat alias for code that still references the old name.

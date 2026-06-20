@@ -166,7 +166,8 @@ impl Painter {
         let path_ref = std::path::Path::new(&path_buf);
 
         // Check if SVG can be rendered as vector geometry
-        let needs_raster = crate::svg::svg_requires_rasterization(path_ref).unwrap_or(true);
+        let needs_raster =
+            crate::svg_geometry::svg_requires_rasterization(path_ref).unwrap_or(true);
 
         if needs_raster {
             // Complex SVG: defer to rasterization pipeline
@@ -181,7 +182,9 @@ impl Painter {
         } else {
             // Simple SVG: render as vector geometry immediately
             // Calculate scale to fit within max_size
-            if let Some((intrinsic_w, intrinsic_h)) = crate::svg::svg_intrinsic_size(path_ref) {
+            if let Some((intrinsic_w, intrinsic_h)) =
+                crate::svg_geometry::svg_intrinsic_size(path_ref)
+            {
                 let w = intrinsic_w.max(1) as f32;
                 let h = intrinsic_h.max(1) as f32;
                 let scale_x = max_size[0] / w;
@@ -197,7 +200,7 @@ impl Painter {
 
                 self.push_transform(combined);
                 // Import SVG geometry directly into the display list
-                let _stats = crate::svg::import_svg_geometry_to_painter(self, path_ref);
+                let _stats = crate::svg_geometry::import_svg_geometry_to_painter(self, path_ref);
                 self.pop_transform();
             }
         }
