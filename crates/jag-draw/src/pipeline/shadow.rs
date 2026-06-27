@@ -57,11 +57,11 @@ impl ShadowInstanceRenderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                // Per-instance attributes: stride 64, stepped per instance. The
+                // Per-instance attributes: stride 80, stepped per instance. The
                 // quad's 6 vertices come from `@builtin(vertex_index)`, so there
                 // is no per-vertex buffer.
                 buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: 64,
+                    array_stride: 80,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &[
                         wgpu::VertexAttribute {
@@ -93,6 +93,11 @@ impl ShadowInstanceRenderer {
                             offset: 56,
                             shader_location: 5,
                             format: wgpu::VertexFormat::Float32x2,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 64,
+                            shader_location: 6,
+                            format: wgpu::VertexFormat::Float32x4,
                         },
                     ],
                 }],

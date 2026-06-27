@@ -18,6 +18,9 @@
 ///   loc 1: `upper` (xy)   shadow rect bottom-right
 ///   loc 2: `params` (xyzw) = (sigma, corner_radius, z_index, _pad)
 ///   loc 3: `color`  (rgba) premultiplied linear shadow color
+///   loc 4: `clip_min` (xy) clip rect top-left
+///   loc 5: `clip_max` (xy) clip rect bottom-right
+///   loc 6: `clip_radii` (tl, tr, br, bl) clip corner radii
 pub const SHADOW_INSTANCE_WGSL: &str = r#"
 struct ViewportUniform {
     scale: vec2<f32>,
@@ -36,6 +39,7 @@ struct VsOut {
     @location(4) @interpolate(flat) color: vec4<f32>,
     @location(5) @interpolate(flat) clip_min: vec2<f32>,
     @location(6) @interpolate(flat) clip_max: vec2<f32>,
+    @location(7) @interpolate(flat) clip_radii: vec4<f32>,
 };
 
 @vertex
@@ -47,6 +51,7 @@ fn vs_main(
     @location(3) color: vec4<f32>,
     @location(4) clip_min: vec2<f32>,
     @location(5) clip_max: vec2<f32>,
+    @location(6) clip_radii: vec4<f32>,
 ) -> VsOut {
     let sigma = params.x;
     // The Gaussian tail is negligible past 3σ; pad a little for the AA edge.
@@ -72,6 +77,7 @@ fn vs_main(
     out.color = color;
     out.clip_min = clip_min;
     out.clip_max = clip_max;
+    out.clip_radii = clip_radii;
     return out;
 }
 
@@ -137,10 +143,50 @@ fn coverage(lower: vec2<f32>, upper: vec2<f32>, point: vec2<f32>, sigma: f32, co
     return clamp(value, 0.0, 1.0);
 }
 
+fn outside_rounded_clip(point: vec2<f32>, clip_min: vec2<f32>, clip_max: vec2<f32>, radii_in: vec4<f32>) -> bool {
+    if (point.x < clip_min.x || point.x > clip_max.x ||
+        point.y < clip_min.y || point.y > clip_max.y) {
+        return true;
+    }
+
+    let size = max(clip_max - clip_min, vec2<f32>(0.0));
+    let max_r = min(size.x, size.y) * 0.5;
+    let radii = clamp(radii_in, vec4<f32>(0.0), vec4<f32>(max_r));
+
+    let tl = radii.x;
+    if (tl > 0.0 && point.x < clip_min.x + tl && point.y < clip_min.y + tl) {
+        let center = vec2<f32>(clip_min.x + tl, clip_min.y + tl);
+        let delta = point - center;
+        return dot(delta, delta) > tl * tl;
+    }
+
+    let tr = radii.y;
+    if (tr > 0.0 && point.x > clip_max.x - tr && point.y < clip_min.y + tr) {
+        let center = vec2<f32>(clip_max.x - tr, clip_min.y + tr);
+        let delta = point - center;
+        return dot(delta, delta) > tr * tr;
+    }
+
+    let br = radii.z;
+    if (br > 0.0 && point.x > clip_max.x - br && point.y > clip_max.y - br) {
+        let center = vec2<f32>(clip_max.x - br, clip_max.y - br);
+        let delta = point - center;
+        return dot(delta, delta) > br * br;
+    }
+
+    let bl = radii.w;
+    if (bl > 0.0 && point.x < clip_min.x + bl && point.y > clip_max.y - bl) {
+        let center = vec2<f32>(clip_min.x + bl, clip_max.y - bl);
+        let delta = point - center;
+        return dot(delta, delta) > bl * bl;
+    }
+
+    return false;
+}
+
 @fragment
 fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
-    if (inp.world.x < inp.clip_min.x || inp.world.x > inp.clip_max.x ||
-        inp.world.y < inp.clip_min.y || inp.world.y > inp.clip_max.y) {
+    if (outside_rounded_clip(inp.world, inp.clip_min, inp.clip_max, inp.clip_radii)) {
         discard;
     }
     let cov = coverage(inp.lower, inp.upper, inp.world, inp.params.x, inp.params.y);
@@ -186,6 +232,7 @@ struct VsOut {
     @location(4) @interpolate(flat) color: vec4<f32>,
     @location(5) @interpolate(flat) clip_min: vec2<f32>,
     @location(6) @interpolate(flat) clip_max: vec2<f32>,
+    @location(7) @interpolate(flat) clip_radii: vec4<f32>,
 };
 
 @vertex
@@ -197,6 +244,7 @@ fn vs_main(
     @location(3) color: vec4<f32>,
     @location(4) clip_min: vec2<f32>,
     @location(5) clip_max: vec2<f32>,
+    @location(6) clip_radii: vec4<f32>,
 ) -> VsOut {
     let sigma = params.x;
     // The Gaussian tail is negligible past 3σ; pad a little for the AA edge.
@@ -222,6 +270,7 @@ fn vs_main(
     out.color = color;
     out.clip_min = clip_min;
     out.clip_max = clip_max;
+    out.clip_radii = clip_radii;
     return out;
 }
 
@@ -287,6 +336,47 @@ fn coverage(lower: vec2<f32>, upper: vec2<f32>, point: vec2<f32>, sigma: f32, co
     return clamp(value, 0.0, 1.0);
 }
 
+fn outside_rounded_clip(point: vec2<f32>, clip_min: vec2<f32>, clip_max: vec2<f32>, radii_in: vec4<f32>) -> bool {
+    if (point.x < clip_min.x || point.x > clip_max.x ||
+        point.y < clip_min.y || point.y > clip_max.y) {
+        return true;
+    }
+
+    let size = max(clip_max - clip_min, vec2<f32>(0.0));
+    let max_r = min(size.x, size.y) * 0.5;
+    let radii = clamp(radii_in, vec4<f32>(0.0), vec4<f32>(max_r));
+
+    let tl = radii.x;
+    if (tl > 0.0 && point.x < clip_min.x + tl && point.y < clip_min.y + tl) {
+        let center = vec2<f32>(clip_min.x + tl, clip_min.y + tl);
+        let delta = point - center;
+        return dot(delta, delta) > tl * tl;
+    }
+
+    let tr = radii.y;
+    if (tr > 0.0 && point.x > clip_max.x - tr && point.y < clip_min.y + tr) {
+        let center = vec2<f32>(clip_max.x - tr, clip_min.y + tr);
+        let delta = point - center;
+        return dot(delta, delta) > tr * tr;
+    }
+
+    let br = radii.z;
+    if (br > 0.0 && point.x > clip_max.x - br && point.y > clip_max.y - br) {
+        let center = vec2<f32>(clip_max.x - br, clip_max.y - br);
+        let delta = point - center;
+        return dot(delta, delta) > br * br;
+    }
+
+    let bl = radii.w;
+    if (bl > 0.0 && point.x < clip_min.x + bl && point.y > clip_max.y - bl) {
+        let center = vec2<f32>(clip_min.x + bl, clip_max.y - bl);
+        let delta = point - center;
+        return dot(delta, delta) > bl * bl;
+    }
+
+    return false;
+}
+
 fn lin_to_srgb(c: vec3<f32>) -> vec3<f32> {
     let lo = c * 12.92;
     let hi = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0/2.4)) - 0.055;
@@ -300,8 +390,7 @@ fn srgb_to_lin(c: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
-    if (inp.world.x < inp.clip_min.x || inp.world.x > inp.clip_max.x ||
-        inp.world.y < inp.clip_min.y || inp.world.y > inp.clip_max.y) {
+    if (outside_rounded_clip(inp.world, inp.clip_min, inp.clip_max, inp.clip_radii)) {
         discard;
     }
     let cov = coverage(inp.lower, inp.upper, inp.world, inp.params.x, inp.params.y);

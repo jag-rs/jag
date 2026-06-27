@@ -5,7 +5,8 @@
 
 use jag_draw::rounded_box_shadow_coverage as coverage;
 use jag_draw::{
-    BoxShadowSpec, ColorLinPremul, Rect, RoundedRadii, RoundedRect, ShadowInstance, Transform2D,
+    BoxShadowSpec, ColorLinPremul, PathClip, Rect, RoundedRadii, RoundedRect, ShadowInstance,
+    Transform2D,
 };
 
 fn rrect(x: f32, y: f32, w: f32, h: f32, r: f32) -> RoundedRect {
@@ -144,6 +145,30 @@ fn shadow_instance_transforms_clip_bounds() {
 
     assert_eq!(inst.clip_min, [60.0, -10.0]);
     assert_eq!(inst.clip_max, [130.0, 15.0]);
+    assert_eq!(inst.clip_radii, [0.0; 4]);
+}
+
+#[test]
+fn shadow_instance_transforms_rounded_clip_radii() {
+    let inst = ShadowInstance::from_box_shadow_with_clip(
+        rrect(0.0, 0.0, 100.0, 40.0, 8.0),
+        spec([0.0, 0.0], 0.0, 16.0),
+        0,
+        Transform2D::scale(2.0, 2.0),
+        Some(PathClip {
+            rect: Rect {
+                x: 10.0,
+                y: 20.0,
+                w: 70.0,
+                h: 25.0,
+            },
+            radii: [2.0, 4.0, 6.0, 8.0],
+        }),
+    );
+
+    assert_eq!(inst.clip_min, [20.0, 40.0]);
+    assert_eq!(inst.clip_max, [160.0, 90.0]);
+    assert_eq!(inst.clip_radii, [4.0, 8.0, 12.0, 16.0]);
 }
 
 /// Brute-force ground truth: convolve the sharp rounded-rect mask with a 2D

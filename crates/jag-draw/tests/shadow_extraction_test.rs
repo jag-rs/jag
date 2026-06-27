@@ -1,7 +1,7 @@
 //! Validates the box-shadow extraction wiring added for the analytic shadow
 //! GPU pass: `Painter::box_shadow` must emit a `Command::BoxShadow`, and the
-//! command's fields must feed `ShadowInstance::from_box_shadow` to produce the
-//! instance the unified builder pushes onto `shadow_instances`.
+//! command's fields must feed `ShadowInstance::from_box_shadow_with_clip` to
+//! produce the instance the unified builder pushes onto `shadow_instances`.
 //!
 //! The unified builder's GPU-side extraction (`upload_display_list_unified`)
 //! needs a `wgpu::Device`/`Queue`, so it is exercised by the device-level
@@ -92,7 +92,8 @@ fn box_shadow_command_fields_map_to_expected_instance() {
     };
 
     // This is exactly what the unified builder's BoxShadow arm pushes.
-    let from_command = ShadowInstance::from_box_shadow(*rrect, *spec, *z, *transform, *clip);
+    let from_command =
+        ShadowInstance::from_box_shadow_with_clip(*rrect, *spec, *z, *transform, *clip);
     // Reference: same call from the original inputs.
     let reference = ShadowInstance::from_box_shadow(
         sample_rrect(),
@@ -108,6 +109,7 @@ fn box_shadow_command_fields_map_to_expected_instance() {
     assert_eq!(from_command.color, reference.color);
     assert_eq!(from_command.clip_min, reference.clip_min);
     assert_eq!(from_command.clip_max, reference.clip_max);
+    assert_eq!(from_command.clip_radii, reference.clip_radii);
 
     // Spot-check the derived geometry so the mapping is pinned, not just equal
     // to itself: bounds = rect + offset, expanded by spread; sigma = blur/2.

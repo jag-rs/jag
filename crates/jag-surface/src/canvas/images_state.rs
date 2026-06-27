@@ -456,7 +456,7 @@ impl Canvas {
     /// is no clip (or a rotated/skewed transform `clip_rect_local` can't invert).
     /// Lets filled/stroked SVG paths honor `border-radius` `overflow:hidden`
     /// corners, not just the bounding rect.
-    pub(super) fn rounded_clip_local(&self) -> Option<PathClip> {
+    pub(crate) fn rounded_clip_local(&self) -> Option<PathClip> {
         let rect = self.clip_rect_local()?;
         // The nearest active rounded clip. Descendants (e.g. an SVG element's own
         // default `overflow` rect clip) push `None` entries on top of an ancestor

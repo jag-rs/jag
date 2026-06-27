@@ -18,6 +18,6 @@ impl Canvas {
         z: i32,
     ) {
         self.painter
-            .box_shadow_clipped(rrect, spec, z, self.clip_rect_local());
+            .box_shadow_clipped(rrect, spec, z, self.rounded_clip_local());
     }
 }

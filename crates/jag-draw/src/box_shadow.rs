@@ -18,7 +18,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::scene::{BoxShadowSpec, Rect, RoundedRect, Transform2D};
+use crate::scene::{BoxShadowSpec, PathClip, Rect, RoundedRect, Transform2D};
 
 const UNCLIPPED_MIN: [f32; 2] = [-1.0e9, -1.0e9];
 const UNCLIPPED_MAX: [f32; 2] = [1.0e9, 1.0e9];
@@ -26,7 +26,7 @@ const UNCLIPPED_MAX: [f32; 2] = [1.0e9, 1.0e9];
 /// Per-shadow GPU instance consumed by `SHADOW_INSTANCE_WGSL`. One instance =
 /// one expanded quad; the fragment shader computes coverage analytically.
 ///
-/// Layout must match the shader's vertex attributes (locations 0..3).
+/// Layout must match the shader's vertex attributes (locations 0..6).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct ShadowInstance {
@@ -42,6 +42,8 @@ pub struct ShadowInstance {
     pub clip_min: [f32; 2],
     /// Clip rect bottom-right in world pixels. Very large when unclipped.
     pub clip_max: [f32; 2],
+    /// Clip corner radii `(tl, tr, br, bl)` in world pixels.
+    pub clip_radii: [f32; 4],
 }
 
 #[inline]
@@ -93,6 +95,16 @@ impl ShadowInstance {
         transform: Transform2D,
         clip: Option<Rect>,
     ) -> Self {
+        Self::from_box_shadow_with_clip(rrect, spec, z, transform, clip.map(PathClip::rect))
+    }
+
+    pub fn from_box_shadow_with_clip(
+        rrect: RoundedRect,
+        spec: BoxShadowSpec,
+        z: i32,
+        transform: Transform2D,
+        clip: Option<PathClip>,
+    ) -> Self {
         let r = rrect.rect;
         let spread = spec.spread;
         let lo_local = [r.x + spec.offset[0] - spread, r.y + spec.offset[1] - spread];
@@ -122,9 +134,13 @@ impl ShadowInstance {
         };
 
         let c = spec.color;
-        let (clip_min, clip_max) = clip
-            .map(|clip| transform_rect_bounds(transform, clip))
-            .unwrap_or((UNCLIPPED_MIN, UNCLIPPED_MAX));
+        let (clip_min, clip_max, clip_radii) = clip
+            .map(|clip| {
+                let (min, max) = transform_rect_bounds(transform, clip.rect);
+                let radii = clip.radii.map(|radius| (radius * scale).max(0.0));
+                (min, max, radii)
+            })
+            .unwrap_or((UNCLIPPED_MIN, UNCLIPPED_MAX, [0.0; 4]));
         Self {
             lower,
             upper,
@@ -132,6 +148,7 @@ impl ShadowInstance {
             color: [c.r, c.g, c.b, c.a],
             clip_min,
             clip_max,
+            clip_radii,
         }
     }
 }

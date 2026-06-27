@@ -252,7 +252,7 @@ impl Painter {
         rrect: RoundedRect,
         spec: BoxShadowSpec,
         z: i32,
-        clip: Option<Rect>,
+        clip: Option<PathClip>,
     ) {
         let t = self.current_transform();
         self.list.commands.push(Command::BoxShadow {

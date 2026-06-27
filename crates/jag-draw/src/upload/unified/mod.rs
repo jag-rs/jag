@@ -209,10 +209,11 @@ impl UnifiedBuilder {
                 transform,
                 clip,
             } => {
-                self.shadow_instances
-                    .push(crate::box_shadow::ShadowInstance::from_box_shadow(
+                self.shadow_instances.push(
+                    crate::box_shadow::ShadowInstance::from_box_shadow_with_clip(
                         *rrect, *spec, *z, *transform, *clip,
-                    ));
+                    ),
+                );
             }
             // Hit-only regions: intentionally not rendered.
             Command::HitRegionRect { .. } => {}

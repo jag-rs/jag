@@ -282,10 +282,75 @@ mod fill_rect_rounded_clip_tests {
                 _ => None,
             })
             .expect("box shadow should carry the active clip");
-        assert_eq!(clip.x, 0.0);
-        assert_eq!(clip.y, 120.0);
-        assert_eq!(clip.w, 180.0);
-        assert_eq!(clip.h, 90.0);
+        assert_eq!(clip.rect.x, 0.0);
+        assert_eq!(clip.rect.y, 120.0);
+        assert_eq!(clip.rect.w, 180.0);
+        assert_eq!(clip.rect.h, 90.0);
+        assert_eq!(clip.radii, [0.0; 4]);
+    }
+
+    #[test]
+    fn clipped_box_shadow_carries_rounded_clip_radii_under_scroll_transform() {
+        let mut canvas = test_canvas();
+        canvas.push_clip_rounded_rect(RoundedRect {
+            rect: Rect {
+                x: 0.0,
+                y: 24.0,
+                w: 180.0,
+                h: 120.0,
+            },
+            radii: RoundedRadii {
+                tl: 8.0,
+                tr: 10.0,
+                br: 12.0,
+                bl: 14.0,
+            },
+        });
+        canvas.push_transform(Transform2D::translate(0.0, -48.0));
+
+        canvas.box_shadow(
+            RoundedRect {
+                rect: Rect {
+                    x: 12.0,
+                    y: 88.0,
+                    w: 120.0,
+                    h: 48.0,
+                },
+                radii: RoundedRadii {
+                    tl: 6.0,
+                    tr: 6.0,
+                    br: 6.0,
+                    bl: 6.0,
+                },
+            },
+            BoxShadowSpec {
+                offset: [0.0, 8.0],
+                spread: 0.0,
+                blur_radius: 24.0,
+                color: ColorLinPremul {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.24,
+                },
+            },
+            7,
+        );
+
+        let clip = canvas
+            .display_list()
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                Command::BoxShadow { clip, .. } => *clip,
+                _ => None,
+            })
+            .expect("box shadow should carry the active rounded clip");
+        assert_eq!(clip.rect.x, 0.0);
+        assert_eq!(clip.rect.y, 72.0);
+        assert_eq!(clip.rect.w, 180.0);
+        assert_eq!(clip.rect.h, 120.0);
+        assert_eq!(clip.radii, [8.0, 10.0, 12.0, 14.0]);
     }
 }
 
