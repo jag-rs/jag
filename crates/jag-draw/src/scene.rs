@@ -167,6 +167,12 @@ pub struct Stroke {
     pub width: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FilterEffect {
+    /// CSS `blur()` standard deviation in logical pixels.
+    Blur(f32),
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct BoxShadowSpec {
     pub offset: [f32; 2],

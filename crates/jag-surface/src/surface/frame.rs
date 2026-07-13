@@ -71,13 +71,17 @@ impl JagSurface {
         let use_intermediate =
             self.enable_smaa || self.use_intermediate || has_backdrop_blur || has_box_shadow;
 
-        if list
-            .commands
-            .iter()
-            .any(|cmd| matches!(cmd, Command::PushOpacity(_) | Command::PopOpacity))
-        {
+        if list.commands.iter().any(|cmd| {
+            matches!(
+                cmd,
+                Command::PushOpacity(_)
+                    | Command::PopOpacity
+                    | Command::PushFilter(_)
+                    | Command::PopFilter
+            )
+        }) {
             let flattened =
-                self.flatten_opacity_groups(&list.commands, list.viewport, text_provider.as_ref())?;
+                self.flatten_effect_groups(&list.commands, list.viewport, text_provider.as_ref())?;
             list.commands = flattened;
         }
 

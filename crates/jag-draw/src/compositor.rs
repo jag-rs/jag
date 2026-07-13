@@ -3,12 +3,13 @@ use std::ops::Range;
 use anyhow::{Result, bail};
 
 use crate::display_list::{Command, DisplayList};
-use crate::scene::{Path, PathCmd, Rect, Transform2D};
+use crate::scene::{FilterEffect, Path, PathCmd, Rect, Transform2D};
 
 /// An effect applied once when an isolated surface is composited into its parent.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SurfaceEffect {
     Opacity(f32),
+    Blur(f32),
 }
 
 /// A display-list range that must be rendered into an isolated intermediate surface.
@@ -32,6 +33,7 @@ pub struct CompositorPlan {
 struct OpenSurface {
     id: usize,
     start: usize,
+    effect: SurfaceEffect,
     bounds: Option<Rect>,
 }
 
@@ -44,12 +46,17 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
 
     for (index, command) in list.commands.iter().enumerate() {
         match command {
-            Command::PushOpacity(alpha) => {
+            Command::PushOpacity(alpha) | Command::PushFilter(FilterEffect::Blur(alpha)) => {
+                let effect = match command {
+                    Command::PushOpacity(_) => SurfaceEffect::Opacity(alpha.clamp(0.0, 1.0)),
+                    Command::PushFilter(_) => SurfaceEffect::Blur(alpha.max(0.0)),
+                    _ => unreachable!(),
+                };
                 let id = plan.surfaces.len();
                 plan.surfaces.push(CompositorSurface {
                     parent: open.last().map(|surface| surface.id),
                     commands: index + 1..index + 1,
-                    effect: SurfaceEffect::Opacity(alpha.clamp(0.0, 1.0)),
+                    effect,
                     inherited_clip: *clips.last().unwrap(),
                     inherited_transform: *transforms.last().unwrap(),
                     bounds: None,
@@ -57,18 +64,34 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
                 open.push(OpenSurface {
                     id,
                     start: index + 1,
+                    effect,
                     bounds: None,
                 });
             }
-            Command::PopOpacity => {
-                let Some(surface) = open.pop() else {
-                    bail!("PopOpacity at command {index} has no matching PushOpacity");
+            Command::PopOpacity | Command::PopFilter => {
+                let Some(surface) = open.last() else {
+                    bail!("effect pop at command {index} has no matching push");
+                };
+                let matches = matches!(
+                    (command, surface.effect),
+                    (Command::PopOpacity, SurfaceEffect::Opacity(_))
+                        | (Command::PopFilter, SurfaceEffect::Blur(_))
+                );
+                if !matches {
+                    bail!("mismatched effect pop at command {index}");
+                }
+                let surface = open.pop().unwrap();
+                let bounds = match surface.effect {
+                    SurfaceEffect::Blur(radius) => {
+                        surface.bounds.map(|bounds| outset(bounds, radius * 6.0))
+                    }
+                    SurfaceEffect::Opacity(_) => surface.bounds,
                 };
                 let completed = &mut plan.surfaces[surface.id];
                 completed.commands = surface.start..index;
-                completed.bounds = surface.bounds;
+                completed.bounds = bounds;
                 if let Some(parent) = open.last_mut() {
-                    parent.bounds = union(parent.bounds, surface.bounds);
+                    parent.bounds = union(parent.bounds, bounds);
                 }
             }
             Command::PushClip(clip) => {
@@ -104,7 +127,7 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
 
     if let Some(surface) = open.last() {
         bail!(
-            "PushOpacity before command {} has no matching PopOpacity",
+            "effect push before command {} has no matching pop",
             surface.start
         );
     }
@@ -429,7 +452,30 @@ mod tests {
             build_compositor_plan(&list)
                 .unwrap_err()
                 .to_string()
-                .contains("no matching PopOpacity")
+                .contains("no matching pop")
+        );
+    }
+
+    #[test]
+    fn blur_surfaces_expand_for_kernel_support() {
+        let list = DisplayList {
+            commands: vec![
+                Command::PushFilter(FilterEffect::Blur(2.0)),
+                rect(10.0, 10.0, 4.0, 4.0),
+                Command::PopFilter,
+            ],
+            ..Default::default()
+        };
+        let surface = &build_compositor_plan(&list).unwrap().surfaces[0];
+        assert_eq!(surface.effect, SurfaceEffect::Blur(2.0));
+        assert_eq!(
+            surface.bounds,
+            Some(Rect {
+                x: -2.0,
+                y: -2.0,
+                w: 28.0,
+                h: 28.0,
+            })
         );
     }
 }

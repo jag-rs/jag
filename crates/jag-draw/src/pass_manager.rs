@@ -212,6 +212,7 @@ pub struct PassManager {
     // Shadow/blur pipelines and helpers
     pub mask_renderer: BasicSolidRenderer,
     pub blur_r8: BlurRenderer,
+    pub blur_rgba: BlurRenderer,
     pub backdrop_blur: BackdropBlurRenderer,
     pub shadow_comp: ShadowCompositeRenderer,
     // Analytic box-shadow instance pipelines (offscreen + direct targets).
@@ -290,6 +291,7 @@ pub(crate) struct ImageQuadVtx {
 
 mod box_shadow;
 mod draw_shapes;
+mod filter;
 mod paint_root;
 mod paint_root_gradients;
 mod quad_prep;

@@ -140,6 +140,9 @@ pub enum Command {
     /// intermediate layer, then blended back once with this opacity.
     PushOpacity(f32),
     PopOpacity,
+    /// Isolate descendants and apply the filter once to their rendered surface.
+    PushFilter(FilterEffect),
+    PopFilter,
     /// Blit an externally-rendered texture (e.g., 3D viewport) into the scene.
     DrawExternalTexture {
         rect: Rect,

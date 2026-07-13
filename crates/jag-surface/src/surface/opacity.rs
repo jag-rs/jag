@@ -54,7 +54,7 @@ impl JagSurface {
         id
     }
 
-    fn opacity_group_z(commands: &[Command]) -> Option<i32> {
+    fn effect_group_z(commands: &[Command]) -> Option<i32> {
         commands.iter().filter_map(Command::z_index).min()
     }
 
@@ -186,10 +186,11 @@ impl JagSurface {
         }
     }
 
-    fn render_opacity_group_layer(
+    fn render_effect_group_layer(
         &mut self,
         geometry: LayerGeometry,
         mut commands: Vec<Command>,
+        effect: jag_draw::SurfaceEffect,
         text_provider: Option<&Arc<dyn jag_draw::TextProvider + Send + Sync>>,
     ) -> Result<ExternalTextureId> {
         translate_clips(&mut commands, geometry.origin);
@@ -255,7 +256,7 @@ impl JagSurface {
         let width = geometry.pixel_size[0];
         let height = geometry.pixel_size[1];
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("opacity-group-layer"),
+            label: Some("effect-group-layer"),
             size: wgpu::Extent3d {
                 width,
                 height,
@@ -273,7 +274,7 @@ impl JagSurface {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("opacity-group-encoder"),
+                label: Some("effect-group-encoder"),
             });
         // Shift world coordinates into this bounded layer's local pixel-aligned origin.
         let saved_scroll = self.pass.scroll_offset();
@@ -303,6 +304,13 @@ impl JagSurface {
         );
         self.pass.set_scroll_offset(saved_scroll);
         self.pass.set_shadow_instances(&[]);
+        let layer_view = match effect {
+            jag_draw::SurfaceEffect::Opacity(_) => layer_view,
+            jag_draw::SurfaceEffect::Blur(radius) => {
+                self.pass
+                    .blur_surface(&mut encoder, &layer_view, width, height, radius)
+            }
+        };
         self.queue.submit(std::iter::once(encoder.finish()));
 
         let tex_id = self.allocate_synthetic_external_texture_id();
@@ -310,7 +318,7 @@ impl JagSurface {
         Ok(tex_id)
     }
 
-    pub(super) fn flatten_opacity_groups(
+    pub(super) fn flatten_effect_groups(
         &mut self,
         commands: &[Command],
         viewport: Viewport,
@@ -324,7 +332,7 @@ impl JagSurface {
         let mut i = 0usize;
         while i < commands.len() {
             match commands[i] {
-                Command::PushOpacity(_) => {
+                Command::PushOpacity(_) | Command::PushFilter(_) => {
                     let surface = plan
                         .surfaces
                         .iter()
@@ -336,7 +344,7 @@ impl JagSurface {
                         raw_group.push(Command::PopClip);
                     }
                     let flattened_group =
-                        self.flatten_opacity_groups(&raw_group, viewport, text_provider)?;
+                        self.flatten_effect_groups(&raw_group, viewport, text_provider)?;
 
                     // Preserve hit-only regions outside the composited layer.
                     for cmd in flattened_group.iter() {
@@ -348,9 +356,12 @@ impl JagSurface {
                         }
                     }
 
-                    let jag_draw::SurfaceEffect::Opacity(layer_opacity) = surface.effect;
+                    let layer_opacity = match surface.effect {
+                        jag_draw::SurfaceEffect::Opacity(opacity) => opacity,
+                        jag_draw::SurfaceEffect::Blur(_) => 1.0,
+                    };
                     if layer_opacity > 0.0
-                        && let Some(z) = Self::opacity_group_z(&flattened_group)
+                        && let Some(z) = Self::effect_group_z(&flattened_group)
                         && let Some(bounds) = surface.bounds
                     {
                         // DrawExternalTexture coordinates are interpreted in logical units
@@ -361,9 +372,10 @@ impl JagSurface {
                             self.ui_scale,
                         );
                         if let Some(geometry) = layer_geometry(bounds, viewport, logical_scale) {
-                            let tex_id = self.render_opacity_group_layer(
+                            let tex_id = self.render_effect_group_layer(
                                 geometry,
                                 flattened_group,
+                                surface.effect,
                                 text_provider,
                             )?;
                             out.push(Command::DrawExternalTexture {
@@ -383,7 +395,7 @@ impl JagSurface {
                     }
                     i = surface.commands.end + 1;
                 }
-                Command::PopOpacity => {
+                Command::PopOpacity | Command::PopFilter => {
                     // Ignore unmatched pops.
                     i += 1;
                 }

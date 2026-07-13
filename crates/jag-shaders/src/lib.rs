@@ -418,8 +418,7 @@ fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
 } 
 "#;
 
-/// Separable Gaussian blur for single-channel mask (R channel). Output is written to the target
-/// format; when using `R8Unorm`, only the R component is used.
+/// Separable Gaussian blur for RGBA or single-channel targets.
 pub const SHADOW_BLUR_WGSL: &str = r#"
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -464,18 +463,17 @@ fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
     // Use a slightly wider kernel to better match CSS box-shadow tails
     // and avoid a "band" look at modest blur values.
     let r = i32(clamp(ceil(6.0 * sigma), 1.0, 64.0));
-    var acc: f32 = 0.0;
+    var acc: vec4<f32> = vec4<f32>(0.0);
     var norm: f32 = 0.0;
     for (var i: i32 = -r; i <= r; i = i + 1) {
         let fi = f32(i);
         let w = gauss(fi, sigma);
         let ofs = params.dir * params.texel * fi;
-        let c = textureSample(in_tex, in_smp, inp.uv + ofs).r;
+        let c = textureSample(in_tex, in_smp, inp.uv + ofs);
         acc = acc + c * w;
         norm = norm + w;
     }
-    let v = acc / max(1e-6, norm);
-    return vec4<f32>(v, v, v, v);
+    return acc / max(1e-6, norm);
 }
 "#;
 

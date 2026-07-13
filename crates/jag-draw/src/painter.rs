@@ -7,6 +7,7 @@ pub struct Painter {
     transform_stack: Vec<Transform2D>,
     clip_depth: usize,
     opacity_depth: usize,
+    filter_depth: usize,
 }
 
 impl Painter {
@@ -19,6 +20,7 @@ impl Painter {
             transform_stack: vec![Transform2D::identity()],
             clip_depth: 0,
             opacity_depth: 0,
+            filter_depth: 0,
         }
     }
 
@@ -64,6 +66,18 @@ impl Painter {
 
     pub fn has_active_opacity(&self) -> bool {
         self.opacity_depth > 0
+    }
+
+    pub fn push_filter(&mut self, effect: FilterEffect) {
+        self.filter_depth += 1;
+        self.list.commands.push(Command::PushFilter(effect));
+    }
+
+    pub fn pop_filter(&mut self) {
+        if self.filter_depth > 0 {
+            self.filter_depth -= 1;
+            self.list.commands.push(Command::PopFilter);
+        }
     }
 
     /// Return the current number of commands in the display list.

@@ -91,6 +91,7 @@ impl PassManager {
         let mask_renderer =
             BasicSolidRenderer::new(device.clone(), wgpu::TextureFormat::R8Unorm, 1);
         let blur_r8 = BlurRenderer::new(device.clone(), wgpu::TextureFormat::R8Unorm);
+        let blur_rgba = BlurRenderer::new(device.clone(), target_format);
         let backdrop_blur = BackdropBlurRenderer::new(device.clone(), offscreen_format);
         let shadow_comp = ShadowCompositeRenderer::new(device.clone(), target_format);
         let shadow_offscreen =
@@ -189,6 +190,7 @@ impl PassManager {
             scrim_stencil,
             mask_renderer,
             blur_r8,
+            blur_rgba,
             backdrop_blur,
             shadow_comp,
             shadow_offscreen,

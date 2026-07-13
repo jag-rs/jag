@@ -330,6 +330,14 @@ impl Canvas {
         self.painter.pop_opacity();
     }
 
+    pub fn push_filter(&mut self, effect: jag_draw::FilterEffect) {
+        self.painter.push_filter(effect);
+    }
+
+    pub fn pop_filter(&mut self) {
+        self.painter.pop_filter();
+    }
+
     /// Add a hit-only region (invisible, used for interaction detection)
     pub fn hit_region_rect(&mut self, id: u32, rect: Rect, z: i32) {
         self.painter.hit_region_rect(id, rect, z);

@@ -242,6 +242,8 @@ impl UnifiedBuilder {
                     self.opacity_stack.pop();
                 }
             }
+            // Effect groups are flattened to external textures by jag-surface.
+            Command::PushFilter(_) | Command::PopFilter => {}
         }
     }
 
