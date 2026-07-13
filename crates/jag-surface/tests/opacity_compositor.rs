@@ -126,7 +126,7 @@ fn blur_filter_spreads_surface_alpha_beyond_descendant_ink() {
 }
 
 #[test]
-fn color_matrix_filter_transforms_the_owned_surface() {
+fn color_matrix_filter_uses_srgb_and_preserves_alpha() {
     let instance = wgpu::Instance::default();
     let Some(adapter) =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -150,9 +150,9 @@ fn color_matrix_filter_transforms_the_owned_surface() {
     canvas.clear(ColorLinPremul::default());
     canvas.push_filter(FilterEffect::ColorMatrix(ColorMatrix {
         rows: [
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0],
+            [0.5, 0.0, 0.0, 0.0],
+            [0.0, 0.5, 0.0, 0.0],
+            [0.0, 0.0, 0.5, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ],
         bias: [0.0; 4],
@@ -163,9 +163,9 @@ fn color_matrix_filter_transforms_the_owned_surface() {
         8.0,
         8.0,
         Brush::Solid(ColorLinPremul {
-            r: 1.0,
-            g: 0.0,
-            b: 0.0,
+            r: 0.25,
+            g: 0.25,
+            b: 0.25,
             a: 1.0,
         }),
         1,
@@ -175,12 +175,10 @@ fn color_matrix_filter_transforms_the_owned_surface() {
     let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
     let transformed = pixel(&pixels, width, 6, 6);
     assert!(
-        transformed[0] < 5,
-        "red channel should be removed: {transformed:?}"
-    );
-    assert!(
-        transformed[2] > 250,
-        "blue channel should receive red: {transformed:?}"
+        transformed[..3]
+            .iter()
+            .all(|channel| (65..=72).contains(channel)),
+        "sRGB brightness should produce channels near 69: {transformed:?}"
     );
     assert!(
         transformed[3] > 250,

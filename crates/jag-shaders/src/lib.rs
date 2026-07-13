@@ -495,14 +495,23 @@ struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
     var uvs = array<vec2<f32>, 3>(vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
     return VsOut(vec4(positions[index], 0.0, 1.0), uvs[index]);
 }
+
+fn linear_to_srgb(value: vec3<f32>) -> vec3<f32> {
+    return select(12.92 * value, 1.055 * pow(value, vec3(1.0 / 2.4)) - 0.055, value > vec3(0.0031308));
+}
+
+fn srgb_to_linear(value: vec3<f32>) -> vec3<f32> {
+    return select(value / 12.92, pow((value + 0.055) / 1.055, vec3(2.4)), value > vec3(0.04045));
+}
+
 @fragment fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
     let premul = textureSample(source, source_sampler, input.uv);
-    let straight = vec4(premul.rgb / max(premul.a, 0.00001), premul.a);
+    let straight = vec4(linear_to_srgb(premul.rgb / max(premul.a, 0.00001)), premul.a);
     let filtered = clamp(vec4(
         dot(params.row0, straight), dot(params.row1, straight),
         dot(params.row2, straight), dot(params.row3, straight)
     ) + params.bias, vec4(0.0), vec4(1.0));
-    return vec4(filtered.rgb * filtered.a, filtered.a);
+    return vec4(srgb_to_linear(filtered.rgb) * filtered.a, filtered.a);
 }
 "#;
 
