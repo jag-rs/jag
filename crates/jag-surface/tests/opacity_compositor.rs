@@ -234,3 +234,79 @@ fn drop_shadow_keeps_source_above_shifted_tinted_alpha() {
         "shifted shadow missing: {shadow:?}"
     );
 }
+
+#[test]
+fn backdrop_filter_snapshots_before_later_transparent_content() {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+    else {
+        return;
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .unwrap();
+    let mut surface = JagSurface::new(
+        Arc::new(device),
+        Arc::new(queue),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    surface.set_frame_cache_enabled(false);
+    let mut canvas = surface.begin_frame(24, 16);
+    canvas.clear(ColorLinPremul::default());
+    canvas.fill_rect(
+        0.0,
+        0.0,
+        24.0,
+        16.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255, 0, 0, 255])),
+        1,
+    );
+    canvas.backdrop_filter_rect(
+        jag_draw::Rect {
+            x: 4.0,
+            y: 2.0,
+            w: 16.0,
+            h: 12.0,
+        },
+        vec![
+            FilterEffect::ColorMatrix(ColorMatrix {
+                rows: [
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+                bias: [0.0; 4],
+            }),
+            FilterEffect::ColorMatrix(ColorMatrix {
+                rows: [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+                bias: [0.25, 0.0, 0.0, 0.0],
+            }),
+        ],
+        2,
+    );
+    canvas.fill_rect(
+        12.0,
+        2.0,
+        8.0,
+        12.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([0, 255, 0, 254])),
+        3,
+    );
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    let filtered = pixel(&pixels, width, 8, 8);
+    let later = pixel(&pixels, width, 16, 8);
+    assert!(filtered[2] > 250, "channel swap missing: {filtered:?}");
+    assert!(
+        (60..=68).contains(&filtered[0]),
+        "chain order wrong: {filtered:?}"
+    );
+    assert!(later[1] > 250, "later content was filtered: {later:?}");
+}

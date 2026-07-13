@@ -124,7 +124,20 @@ impl Canvas {
     /// This is a post-process draw that must be interleaved by z-index with
     /// transparent web paint, before the element's own translucent background.
     pub fn backdrop_blur_rect(&mut self, rect: Rect, radius: f32, z: i32) {
-        if rect.w <= 0.0 || rect.h <= 0.0 || radius <= 0.0 || !radius.is_finite() {
+        if radius <= 0.0 || !radius.is_finite() {
+            return;
+        }
+        self.backdrop_filter_rect(rect, vec![jag_draw::FilterEffect::Blur(radius)], z);
+    }
+
+    /// Queue an authored-order CSS backdrop-filter chain.
+    pub fn backdrop_filter_rect(
+        &mut self,
+        rect: Rect,
+        effects: Vec<jag_draw::FilterEffect>,
+        z: i32,
+    ) {
+        if rect.w <= 0.0 || rect.h <= 0.0 || effects.is_empty() {
             return;
         }
         if let Some(clip) = self.clip_rect_local()
@@ -134,7 +147,7 @@ impl Canvas {
         }
         self.backdrop_blur_draws.push(BackdropBlurDraw {
             rect,
-            radius,
+            effects,
             z,
             transform: self.painter.current_transform(),
             clip: self.clip_stack.last().copied().flatten(),

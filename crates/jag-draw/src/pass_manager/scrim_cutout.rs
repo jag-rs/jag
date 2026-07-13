@@ -314,10 +314,10 @@ impl PassManager {
         target: &crate::OwnedTexture,
         width: u32,
         height: u32,
-        draw: crate::BackdropBlurDraw,
+        draw: &crate::BackdropBlurDraw,
         queue: &wgpu::Queue,
     ) {
-        if draw.rect.w <= 0.0 || draw.rect.h <= 0.0 || draw.radius <= 0.0 {
+        if draw.rect.w <= 0.0 || draw.rect.h <= 0.0 || draw.effects.is_empty() {
             return;
         }
 
@@ -347,6 +347,25 @@ impl PassManager {
             },
         );
 
+        let mut filtered_views = Vec::with_capacity(draw.effects.len());
+        for effect in &draw.effects {
+            let input = filtered_views.last().unwrap_or(&snapshot.view);
+            let output = match *effect {
+                crate::FilterEffect::Blur(radius) if radius > 0.0 => {
+                    self.blur_surface(encoder, input, width, height, radius)
+                }
+                crate::FilterEffect::Blur(_) => continue,
+                crate::FilterEffect::ColorMatrix(matrix) => {
+                    self.color_filter_surface(encoder, input, width, height, matrix)
+                }
+                crate::FilterEffect::DropShadow(shadow) => {
+                    self.drop_shadow_surface(encoder, input, width, height, shadow)
+                }
+            };
+            filtered_views.push(output);
+        }
+        let filtered = filtered_views.last().unwrap_or(&snapshot.view);
+
         let logical =
             crate::dpi::logical_multiplier(self.logical_pixels, self.scale_factor, self.ui_scale);
         #[repr(C)]
@@ -361,7 +380,7 @@ impl PassManager {
         let params = Params {
             texel: [1.0 / width.max(1) as f32, 1.0 / height.max(1) as f32],
             viewport_size: [width.max(1) as f32, height.max(1) as f32],
-            radius: draw.radius.max(0.0),
+            radius: 0.0,
             logical,
             pad: [0.0, 0.0],
         };
@@ -416,7 +435,7 @@ impl PassManager {
                 resource: self.vp_buffer.as_entire_binding(),
             }],
         });
-        let blur_bg = self.backdrop_blur.bind_group(&self.device, &snapshot.view);
+        let blur_bg = self.backdrop_blur.bind_group(&self.device, filtered);
 
         let depth_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
             view: self.depth_view(),

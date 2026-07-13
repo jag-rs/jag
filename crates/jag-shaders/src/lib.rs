@@ -642,6 +642,9 @@ fn weight_for(offset: vec2<f32>) -> f32 {
 
 @fragment
 fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
+    if (params.radius <= 0.0) {
+        return textureSample(src_tex, src_smp, inp.uv);
+    }
     let step_uv = max(params.radius, 1.0) * 0.38 * params.texel;
     var acc: vec4<f32> = vec4<f32>(0.0);
     var total: f32 = 0.0;

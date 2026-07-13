@@ -354,7 +354,7 @@ impl PassManager {
                         &targets.color,
                         width,
                         height,
-                        backdrop_blur_draws[i],
+                        &backdrop_blur_draws[i],
                         queue,
                     );
                     continue;

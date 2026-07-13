@@ -198,10 +198,10 @@ pub struct BoxShadowSpec {
     pub color: ColorLinPremul,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct BackdropBlurDraw {
     pub rect: Rect,
-    pub radius: f32,
+    pub effects: Vec<FilterEffect>,
     pub z: i32,
     pub transform: Transform2D,
     pub clip: Option<Rect>,
