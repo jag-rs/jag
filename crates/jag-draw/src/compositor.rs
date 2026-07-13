@@ -20,7 +20,7 @@ pub struct CompositorSurface {
     /// State inherited from scopes that began before this surface.
     pub inherited_clip: Option<Rect>,
     pub inherited_transform: Transform2D,
-    /// Conservative device-space ink bounds after transforms and active clips.
+    /// Conservative world-space ink bounds after transforms and active clips.
     pub bounds: Option<Rect>,
 }
 
@@ -368,7 +368,7 @@ mod tests {
     }
 
     #[test]
-    fn transformed_ink_is_clipped_in_device_space() {
+    fn transformed_ink_is_clipped_in_world_space() {
         let list = DisplayList {
             commands: vec![
                 Command::PushTransform(Transform2D::translate(10.0, 0.0)),

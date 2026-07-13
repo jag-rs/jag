@@ -6,6 +6,46 @@ use jag_draw::{Command, DisplayList, ExternalTextureId, Rect, Transform2D, Viewp
 
 use super::JagSurface;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LayerGeometry {
+    origin: [f32; 2],
+    logical_size: [f32; 2],
+    pixel_size: [u32; 2],
+}
+
+fn layer_geometry(bounds: Rect, viewport: Viewport, scale: f32) -> Option<LayerGeometry> {
+    if !scale.is_finite() || scale <= 0.0 || !bounds.x.is_finite() || !bounds.y.is_finite() {
+        return None;
+    }
+    let x0 = (bounds.x * scale).floor().clamp(0.0, viewport.width as f32) as u32;
+    let y0 = (bounds.y * scale)
+        .floor()
+        .clamp(0.0, viewport.height as f32) as u32;
+    let x1 = ((bounds.x + bounds.w) * scale)
+        .ceil()
+        .clamp(0.0, viewport.width as f32) as u32;
+    let y1 = ((bounds.y + bounds.h) * scale)
+        .ceil()
+        .clamp(0.0, viewport.height as f32) as u32;
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    Some(LayerGeometry {
+        origin: [x0 as f32 / scale, y0 as f32 / scale],
+        logical_size: [(x1 - x0) as f32 / scale, (y1 - y0) as f32 / scale],
+        pixel_size: [x1 - x0, y1 - y0],
+    })
+}
+
+fn translate_clips(commands: &mut [Command], origin: [f32; 2]) {
+    for command in commands {
+        if let Command::PushClip(clip) = command {
+            clip.0.x -= origin[0];
+            clip.0.y -= origin[1];
+        }
+    }
+}
+
 impl JagSurface {
     fn allocate_synthetic_external_texture_id(&mut self) -> ExternalTextureId {
         let id = ExternalTextureId(self.next_synthetic_external_texture_id);
@@ -16,32 +56,6 @@ impl JagSurface {
 
     fn opacity_group_z(commands: &[Command]) -> Option<i32> {
         commands.iter().filter_map(Command::z_index).min()
-    }
-
-    fn collect_opacity_group(commands: &[Command], start_idx: usize) -> (Vec<Command>, usize) {
-        let mut depth = 1usize;
-        let mut i = start_idx;
-        let mut group = Vec::new();
-
-        while i < commands.len() {
-            match &commands[i] {
-                Command::PushOpacity(_) => {
-                    depth += 1;
-                    group.push(commands[i].clone());
-                }
-                Command::PopOpacity => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        return (group, i + 1);
-                    }
-                    group.push(Command::PopOpacity);
-                }
-                _ => group.push(commands[i].clone()),
-            }
-            i += 1;
-        }
-
-        (group, i)
     }
 
     fn build_glyph_draws_from_text_draws(
@@ -174,12 +188,18 @@ impl JagSurface {
 
     fn render_opacity_group_layer(
         &mut self,
-        viewport: Viewport,
-        commands: Vec<Command>,
+        geometry: LayerGeometry,
+        mut commands: Vec<Command>,
         text_provider: Option<&Arc<dyn jag_draw::TextProvider + Send + Sync>>,
     ) -> Result<ExternalTextureId> {
-        let mut group_list = DisplayList { viewport, commands };
-        group_list.sort_by_z();
+        translate_clips(&mut commands, geometry.origin);
+        let group_list = DisplayList {
+            viewport: Viewport {
+                width: geometry.pixel_size[0],
+                height: geometry.pixel_size[1],
+            },
+            commands,
+        };
 
         let group_scene =
             jag_draw::upload_display_list_unified(&mut self.allocator, &self.queue, &group_list)?;
@@ -232,8 +252,8 @@ impl JagSurface {
         }
         group_images.sort_by_key(|(_, _, _, z, _, _, _)| *z);
 
-        let width = viewport.width.max(1);
-        let height = viewport.height.max(1);
+        let width = geometry.pixel_size[0];
+        let height = geometry.pixel_size[1];
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("opacity-group-layer"),
             size: wgpu::Extent3d {
@@ -255,9 +275,10 @@ impl JagSurface {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("opacity-group-encoder"),
             });
-        // Opacity groups render in their own coordinate space with no scroll.
+        // Shift world coordinates into this bounded layer's local pixel-aligned origin.
         let saved_scroll = self.pass.scroll_offset();
-        self.pass.set_scroll_offset([0.0, 0.0]);
+        self.pass
+            .set_scroll_offset([-geometry.origin[0], -geometry.origin[1]]);
         self.pass
             .set_shadow_instances(&group_scene.shadow_instances);
         self.pass.render_unified(
@@ -295,12 +316,25 @@ impl JagSurface {
         viewport: Viewport,
         text_provider: Option<&Arc<dyn jag_draw::TextProvider + Send + Sync>>,
     ) -> Result<Vec<Command>> {
+        let plan = jag_draw::build_compositor_plan(&DisplayList {
+            viewport,
+            commands: commands.to_vec(),
+        })?;
         let mut out: Vec<Command> = Vec::new();
         let mut i = 0usize;
         while i < commands.len() {
-            match &commands[i] {
-                Command::PushOpacity(opacity) => {
-                    let (raw_group, next_i) = Self::collect_opacity_group(commands, i + 1);
+            match commands[i] {
+                Command::PushOpacity(_) => {
+                    let surface = plan
+                        .surfaces
+                        .iter()
+                        .find(|surface| surface.parent.is_none() && surface.commands.start == i + 1)
+                        .expect("validated compositor plan must own each root opacity scope");
+                    let mut raw_group = commands[surface.commands.clone()].to_vec();
+                    if let Some(clip) = surface.inherited_clip {
+                        raw_group.insert(0, Command::PushClip(jag_draw::ClipRect(clip)));
+                        raw_group.push(Command::PopClip);
+                    }
                     let flattened_group =
                         self.flatten_opacity_groups(&raw_group, viewport, text_provider)?;
 
@@ -314,9 +348,10 @@ impl JagSurface {
                         }
                     }
 
-                    let layer_opacity = opacity.clamp(0.0, 1.0);
+                    let jag_draw::SurfaceEffect::Opacity(layer_opacity) = surface.effect;
                     if layer_opacity > 0.0
                         && let Some(z) = Self::opacity_group_z(&flattened_group)
+                        && let Some(bounds) = surface.bounds
                     {
                         // DrawExternalTexture coordinates are interpreted in logical units
                         // by PassManager when logical pixel mode is enabled.
@@ -325,28 +360,28 @@ impl JagSurface {
                             self.dpi_scale,
                             self.ui_scale,
                         );
-                        let logical_w = (viewport.width as f32) / logical_scale;
-                        let logical_h = (viewport.height as f32) / logical_scale;
-                        let tex_id = self.render_opacity_group_layer(
-                            viewport,
-                            flattened_group,
-                            text_provider,
-                        )?;
-                        out.push(Command::DrawExternalTexture {
-                            rect: Rect {
-                                x: 0.0,
-                                y: 0.0,
-                                w: logical_w,
-                                h: logical_h,
-                            },
-                            texture_id: tex_id,
-                            z,
-                            transform: Transform2D::identity(),
-                            opacity: layer_opacity,
-                            premultiplied: true,
-                        });
+                        if let Some(geometry) = layer_geometry(bounds, viewport, logical_scale) {
+                            let tex_id = self.render_opacity_group_layer(
+                                geometry,
+                                flattened_group,
+                                text_provider,
+                            )?;
+                            out.push(Command::DrawExternalTexture {
+                                rect: Rect {
+                                    x: geometry.origin[0],
+                                    y: geometry.origin[1],
+                                    w: geometry.logical_size[0],
+                                    h: geometry.logical_size[1],
+                                },
+                                texture_id: tex_id,
+                                z,
+                                transform: Transform2D::identity(),
+                                opacity: layer_opacity,
+                                premultiplied: true,
+                            });
+                        }
                     }
-                    i = next_i;
+                    i = surface.commands.end + 1;
                 }
                 Command::PopOpacity => {
                     // Ignore unmatched pops.
@@ -359,5 +394,75 @@ impl JagSurface {
             }
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn layer_bounds_align_outward_to_device_pixels() {
+        let geometry = layer_geometry(
+            Rect {
+                x: 10.25,
+                y: 20.75,
+                w: 5.5,
+                h: 4.5,
+            },
+            Viewport {
+                width: 200,
+                height: 200,
+            },
+            2.0,
+        )
+        .unwrap();
+        assert_eq!(geometry.origin, [10.0, 20.5]);
+        assert_eq!(geometry.logical_size, [6.0, 5.0]);
+        assert_eq!(geometry.pixel_size, [12, 10]);
+    }
+
+    #[test]
+    fn layer_bounds_are_clamped_to_the_viewport() {
+        let geometry = layer_geometry(
+            Rect {
+                x: -5.0,
+                y: 8.0,
+                w: 20.0,
+                h: 10.0,
+            },
+            Viewport {
+                width: 10,
+                height: 12,
+            },
+            1.0,
+        )
+        .unwrap();
+        assert_eq!(geometry.origin, [0.0, 8.0]);
+        assert_eq!(geometry.logical_size, [10.0, 4.0]);
+        assert_eq!(geometry.pixel_size, [10, 4]);
+    }
+
+    #[test]
+    fn inherited_clips_are_translated_into_layer_space() {
+        let mut commands = vec![Command::PushClip(jag_draw::ClipRect(Rect {
+            x: 12.0,
+            y: 18.0,
+            w: 5.0,
+            h: 6.0,
+        }))];
+        translate_clips(&mut commands, [10.0, 15.0]);
+        let Command::PushClip(clip) = &commands[0] else {
+            unreachable!()
+        };
+        assert_eq!(
+            clip.0,
+            Rect {
+                x: 2.0,
+                y: 3.0,
+                w: 5.0,
+                h: 6.0
+            }
+        );
     }
 }

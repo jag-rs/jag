@@ -16,3 +16,6 @@ path = "src/lib.rs"
 anyhow = { workspace = true }
 image = { workspace = true }
 jag-draw = { path = "../jag-draw", version = "0.1.1" }
+
+[dev-dependencies]
+pollster = { workspace = true }
