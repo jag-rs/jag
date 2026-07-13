@@ -5,6 +5,7 @@
 //! exactly as before.
 
 mod background_blur;
+mod color_filter;
 mod composite;
 mod scrim_stencil;
 mod shadow;
@@ -14,6 +15,7 @@ mod solid;
 mod text_image;
 
 pub use background_blur::*;
+pub use color_filter::*;
 pub use composite::*;
 pub use scrim_stencil::*;
 pub use shadow::*;

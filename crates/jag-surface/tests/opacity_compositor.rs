@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use jag_draw::{Brush, ColorLinPremul, FilterEffect, wgpu};
+use jag_draw::{Brush, ColorLinPremul, ColorMatrix, FilterEffect, wgpu};
 use jag_surface::JagSurface;
 
 fn pixel(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
@@ -123,4 +123,67 @@ fn blur_filter_spreads_surface_alpha_beyond_descendant_ink() {
         "blur should spread alpha beyond source ink, got {halo}"
     );
     assert!(center > halo, "center {center} should exceed halo {halo}");
+}
+
+#[test]
+fn color_matrix_filter_transforms_the_owned_surface() {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+    else {
+        return;
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .unwrap();
+    let mut surface = JagSurface::new(
+        Arc::new(device),
+        Arc::new(queue),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    surface.set_frame_cache_enabled(false);
+    let mut canvas = surface.begin_frame(12, 12);
+    canvas.clear(ColorLinPremul::default());
+    canvas.push_filter(FilterEffect::ColorMatrix(ColorMatrix {
+        rows: [
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        bias: [0.0; 4],
+    }));
+    canvas.fill_rect(
+        2.0,
+        2.0,
+        8.0,
+        8.0,
+        Brush::Solid(ColorLinPremul {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        }),
+        1,
+    );
+    canvas.pop_filter();
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    let transformed = pixel(&pixels, width, 6, 6);
+    assert!(
+        transformed[0] < 5,
+        "red channel should be removed: {transformed:?}"
+    );
+    assert!(
+        transformed[2] > 250,
+        "blue channel should receive red: {transformed:?}"
+    );
+    assert!(
+        transformed[3] > 250,
+        "alpha should be preserved: {transformed:?}"
+    );
 }

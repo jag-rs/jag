@@ -4,9 +4,9 @@ use std::sync::Arc;
 // use crate::display_list::{Command, DisplayList, Viewport};
 use crate::pipeline::{
     BackdropBlurRenderer, BackgroundRenderer, BasicSolidRenderer, Blitter, BlurRenderer,
-    Compositor, OverlaySolidRenderer, ScrimSolidRenderer, ScrimStencilMaskRenderer,
-    ScrimStencilRenderer, ShadowCompositeInstanceRenderer, ShadowCompositeRenderer,
-    ShadowInstanceRenderer, SmaaRenderer, TextRenderer,
+    ColorFilterRenderer, Compositor, OverlaySolidRenderer, ScrimSolidRenderer,
+    ScrimStencilMaskRenderer, ScrimStencilRenderer, ShadowCompositeInstanceRenderer,
+    ShadowCompositeRenderer, ShadowInstanceRenderer, SmaaRenderer, TextRenderer,
 };
 
 /// Apply a 2D affine transform to a point
@@ -213,6 +213,7 @@ pub struct PassManager {
     pub mask_renderer: BasicSolidRenderer,
     pub blur_r8: BlurRenderer,
     pub blur_rgba: BlurRenderer,
+    pub color_filter: ColorFilterRenderer,
     pub backdrop_blur: BackdropBlurRenderer,
     pub shadow_comp: ShadowCompositeRenderer,
     // Analytic box-shadow instance pipelines (offscreen + direct targets).

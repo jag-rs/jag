@@ -168,9 +168,17 @@ pub struct Stroke {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ColorMatrix {
+    pub rows: [[f32; 4]; 4],
+    pub bias: [f32; 4],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FilterEffect {
     /// CSS `blur()` standard deviation in logical pixels.
     Blur(f32),
+    /// A 4x5 matrix applied to unpremultiplied RGBA, then premultiplied again.
+    ColorMatrix(ColorMatrix),
 }
 
 #[derive(Clone, Copy, Debug)]

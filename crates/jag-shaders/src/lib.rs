@@ -477,6 +477,35 @@ fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
+pub const COLOR_FILTER_WGSL: &str = r#"
+struct Params {
+    row0: vec4<f32>,
+    row1: vec4<f32>,
+    row2: vec4<f32>,
+    row3: vec4<f32>,
+    bias: vec4<f32>,
+};
+@group(0) @binding(0) var source: texture_2d<f32>;
+@group(0) @binding(1) var source_sampler: sampler;
+@group(0) @binding(2) var<uniform> params: Params;
+
+struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
+@vertex fn vs_main(@builtin(vertex_index) index: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+    var uvs = array<vec2<f32>, 3>(vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
+    return VsOut(vec4(positions[index], 0.0, 1.0), uvs[index]);
+}
+@fragment fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
+    let premul = textureSample(source, source_sampler, input.uv);
+    let straight = vec4(premul.rgb / max(premul.a, 0.00001), premul.a);
+    let filtered = clamp(vec4(
+        dot(params.row0, straight), dot(params.row1, straight),
+        dot(params.row2, straight), dot(params.row3, straight)
+    ) + params.bias, vec4(0.0), vec4(1.0));
+    return vec4(filtered.rgb * filtered.a, filtered.a);
+}
+"#;
+
 /// Composite blurred mask tinted with a premultiplied color onto the target.
 pub const SHADOW_COMPOSITE_WGSL: &str = r#"
 struct VsOut {

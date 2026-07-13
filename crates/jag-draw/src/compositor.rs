@@ -10,6 +10,7 @@ use crate::scene::{FilterEffect, Path, PathCmd, Rect, Transform2D};
 pub enum SurfaceEffect {
     Opacity(f32),
     Blur(f32),
+    ColorMatrix(crate::ColorMatrix),
 }
 
 /// A display-list range that must be rendered into an isolated intermediate surface.
@@ -46,27 +47,16 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
 
     for (index, command) in list.commands.iter().enumerate() {
         match command {
-            Command::PushOpacity(alpha) | Command::PushFilter(FilterEffect::Blur(alpha)) => {
-                let effect = match command {
-                    Command::PushOpacity(_) => SurfaceEffect::Opacity(alpha.clamp(0.0, 1.0)),
-                    Command::PushFilter(_) => SurfaceEffect::Blur(alpha.max(0.0)),
-                    _ => unreachable!(),
+            Command::PushOpacity(alpha) => {
+                let effect = SurfaceEffect::Opacity(alpha.clamp(0.0, 1.0));
+                push_surface(&mut plan, &mut open, &clips, &transforms, index, effect);
+            }
+            Command::PushFilter(filter) => {
+                let effect = match filter {
+                    FilterEffect::Blur(radius) => SurfaceEffect::Blur(radius.max(0.0)),
+                    FilterEffect::ColorMatrix(matrix) => SurfaceEffect::ColorMatrix(*matrix),
                 };
-                let id = plan.surfaces.len();
-                plan.surfaces.push(CompositorSurface {
-                    parent: open.last().map(|surface| surface.id),
-                    commands: index + 1..index + 1,
-                    effect,
-                    inherited_clip: *clips.last().unwrap(),
-                    inherited_transform: *transforms.last().unwrap(),
-                    bounds: None,
-                });
-                open.push(OpenSurface {
-                    id,
-                    start: index + 1,
-                    effect,
-                    bounds: None,
-                });
+                push_surface(&mut plan, &mut open, &clips, &transforms, index, effect);
             }
             Command::PopOpacity | Command::PopFilter => {
                 let Some(surface) = open.last() else {
@@ -76,6 +66,7 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
                     (command, surface.effect),
                     (Command::PopOpacity, SurfaceEffect::Opacity(_))
                         | (Command::PopFilter, SurfaceEffect::Blur(_))
+                        | (Command::PopFilter, SurfaceEffect::ColorMatrix(_))
                 );
                 if !matches {
                     bail!("mismatched effect pop at command {index}");
@@ -86,6 +77,7 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
                         surface.bounds.map(|bounds| outset(bounds, radius * 6.0))
                     }
                     SurfaceEffect::Opacity(_) => surface.bounds,
+                    SurfaceEffect::ColorMatrix(_) => surface.bounds,
                 };
                 let completed = &mut plan.surfaces[surface.id];
                 completed.commands = surface.start..index;
@@ -144,6 +136,31 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
         );
     }
     Ok(plan)
+}
+
+fn push_surface(
+    plan: &mut CompositorPlan,
+    open: &mut Vec<OpenSurface>,
+    clips: &[Option<Rect>],
+    transforms: &[Transform2D],
+    index: usize,
+    effect: SurfaceEffect,
+) {
+    let id = plan.surfaces.len();
+    plan.surfaces.push(CompositorSurface {
+        parent: open.last().map(|surface| surface.id),
+        commands: index + 1..index + 1,
+        effect,
+        inherited_clip: *clips.last().unwrap(),
+        inherited_transform: *transforms.last().unwrap(),
+        bounds: None,
+    });
+    open.push(OpenSurface {
+        id,
+        start: index + 1,
+        effect,
+        bounds: None,
+    });
 }
 
 fn command_bounds(command: &Command) -> Option<Rect> {

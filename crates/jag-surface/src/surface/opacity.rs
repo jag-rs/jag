@@ -310,6 +310,10 @@ impl JagSurface {
                 self.pass
                     .blur_surface(&mut encoder, &layer_view, width, height, radius)
             }
+            jag_draw::SurfaceEffect::ColorMatrix(matrix) => {
+                self.pass
+                    .color_filter_surface(&mut encoder, &layer_view, width, height, matrix)
+            }
         };
         self.queue.submit(std::iter::once(encoder.finish()));
 
@@ -359,6 +363,7 @@ impl JagSurface {
                     let layer_opacity = match surface.effect {
                         jag_draw::SurfaceEffect::Opacity(opacity) => opacity,
                         jag_draw::SurfaceEffect::Blur(_) => 1.0,
+                        jag_draw::SurfaceEffect::ColorMatrix(_) => 1.0,
                     };
                     if layer_opacity > 0.0
                         && let Some(z) = Self::effect_group_z(&flattened_group)
