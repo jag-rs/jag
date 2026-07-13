@@ -7,6 +7,7 @@
 mod background_blur;
 mod color_filter;
 mod composite;
+mod drop_shadow_filter;
 mod scrim_stencil;
 mod shadow;
 mod shadow_composite_instance;
@@ -17,6 +18,7 @@ mod text_image;
 pub use background_blur::*;
 pub use color_filter::*;
 pub use composite::*;
+pub use drop_shadow_filter::*;
 pub use scrim_stencil::*;
 pub use shadow::*;
 pub use shadow_composite_instance::*;

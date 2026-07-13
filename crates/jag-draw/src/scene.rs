@@ -174,11 +174,20 @@ pub struct ColorMatrix {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DropShadow {
+    pub offset: [f32; 2],
+    /// CSS drop-shadow standard deviation in logical pixels.
+    pub blur_radius: f32,
+    pub color: SrgbColor,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FilterEffect {
     /// CSS `blur()` standard deviation in logical pixels.
     Blur(f32),
     /// A 4x5 matrix applied to unpremultiplied RGBA, then premultiplied again.
     ColorMatrix(ColorMatrix),
+    DropShadow(DropShadow),
 }
 
 #[derive(Clone, Copy, Debug)]

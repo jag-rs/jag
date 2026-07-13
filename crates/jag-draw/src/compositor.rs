@@ -11,6 +11,7 @@ pub enum SurfaceEffect {
     Opacity(f32),
     Blur(f32),
     ColorMatrix(crate::ColorMatrix),
+    DropShadow(crate::DropShadow),
 }
 
 /// A display-list range that must be rendered into an isolated intermediate surface.
@@ -55,6 +56,7 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
                 let effect = match filter {
                     FilterEffect::Blur(radius) => SurfaceEffect::Blur(radius.max(0.0)),
                     FilterEffect::ColorMatrix(matrix) => SurfaceEffect::ColorMatrix(*matrix),
+                    FilterEffect::DropShadow(shadow) => SurfaceEffect::DropShadow(*shadow),
                 };
                 push_surface(&mut plan, &mut open, &clips, &transforms, index, effect);
             }
@@ -67,6 +69,7 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
                     (Command::PopOpacity, SurfaceEffect::Opacity(_))
                         | (Command::PopFilter, SurfaceEffect::Blur(_))
                         | (Command::PopFilter, SurfaceEffect::ColorMatrix(_))
+                        | (Command::PopFilter, SurfaceEffect::DropShadow(_))
                 );
                 if !matches {
                     bail!("mismatched effect pop at command {index}");
@@ -78,6 +81,17 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
                     }
                     SurfaceEffect::Opacity(_) => surface.bounds,
                     SurfaceEffect::ColorMatrix(_) => surface.bounds,
+                    SurfaceEffect::DropShadow(shadow) => surface.bounds.and_then(|bounds| {
+                        let shifted = Rect {
+                            x: bounds.x + shadow.offset[0],
+                            y: bounds.y + shadow.offset[1],
+                            ..bounds
+                        };
+                        union(
+                            Some(bounds),
+                            Some(outset(shifted, shadow.blur_radius * 6.0)),
+                        )
+                    }),
                 };
                 let completed = &mut plan.surfaces[surface.id];
                 completed.commands = surface.start..index;
@@ -492,6 +506,34 @@ mod tests {
                 y: -2.0,
                 w: 28.0,
                 h: 28.0,
+            })
+        );
+    }
+
+    #[test]
+    fn drop_shadow_bounds_union_source_with_shifted_kernel_support() {
+        let shadow = crate::DropShadow {
+            offset: [5.0, -2.0],
+            blur_radius: 1.0,
+            color: crate::SrgbColor::rgba(0, 0, 0, 255),
+        };
+        let list = DisplayList {
+            commands: vec![
+                Command::PushFilter(FilterEffect::DropShadow(shadow)),
+                rect(10.0, 10.0, 4.0, 4.0),
+                Command::PopFilter,
+            ],
+            ..Default::default()
+        };
+        let surface = &build_compositor_plan(&list).unwrap().surfaces[0];
+        assert_eq!(surface.effect, SurfaceEffect::DropShadow(shadow));
+        assert_eq!(
+            surface.bounds,
+            Some(Rect {
+                x: 9.0,
+                y: 2.0,
+                w: 16.0,
+                h: 16.0,
             })
         );
     }

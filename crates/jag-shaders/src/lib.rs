@@ -515,6 +515,40 @@ fn srgb_to_linear(value: vec3<f32>) -> vec3<f32> {
 }
 "#;
 
+pub const DROP_SHADOW_FILTER_WGSL: &str = r#"
+@group(0) @binding(0) var source: texture_2d<f32>;
+@group(0) @binding(1) var blurred: texture_2d<f32>;
+@group(0) @binding(2) var source_sampler: sampler;
+struct Params { offset_uv: vec2<f32>, _pad: vec2<f32>, color: vec4<f32> };
+@group(0) @binding(3) var<uniform> params: Params;
+
+struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
+@vertex fn vs_main(@builtin(vertex_index) index: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+    var uvs = array<vec2<f32>, 3>(vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
+    return VsOut(vec4(positions[index], 0.0, 1.0), uvs[index]);
+}
+fn linear_to_srgb(value: vec3<f32>) -> vec3<f32> {
+    return select(12.92 * value, 1.055 * pow(value, vec3(1.0 / 2.4)) - 0.055, value > vec3(0.0031308));
+}
+fn srgb_to_linear(value: vec3<f32>) -> vec3<f32> {
+    return select(value / 12.92, pow((value + 0.055) / 1.055, vec3(2.4)), value > vec3(0.04045));
+}
+@fragment fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
+    let source_linear = textureSample(source, source_sampler, input.uv);
+    let source_rgb = linear_to_srgb(source_linear.rgb / max(source_linear.a, 0.00001));
+    let source_srgb = vec4(source_rgb * source_linear.a, source_linear.a);
+    let shadow_uv = input.uv - params.offset_uv;
+    let inside = all(shadow_uv >= vec2(0.0)) && all(shadow_uv <= vec2(1.0));
+    let mask = select(0.0, textureSample(blurred, source_sampler, shadow_uv).a, inside);
+    let shadow_alpha = mask * params.color.a;
+    let shadow = vec4(params.color.rgb * shadow_alpha, shadow_alpha);
+    let result = source_srgb + shadow * (1.0 - source_srgb.a);
+    let straight = result.rgb / max(result.a, 0.00001);
+    return vec4(srgb_to_linear(straight) * result.a, result.a);
+}
+"#;
+
 /// Composite blurred mask tinted with a premultiplied color onto the target.
 pub const SHADOW_COMPOSITE_WGSL: &str = r#"
 struct VsOut {

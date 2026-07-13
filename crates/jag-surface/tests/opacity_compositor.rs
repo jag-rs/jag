@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use jag_draw::{Brush, ColorLinPremul, ColorMatrix, FilterEffect, wgpu};
+use jag_draw::{Brush, ColorLinPremul, ColorMatrix, DropShadow, FilterEffect, SrgbColor, wgpu};
 use jag_surface::JagSurface;
 
 fn pixel(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
@@ -183,5 +183,54 @@ fn color_matrix_filter_uses_srgb_and_preserves_alpha() {
     assert!(
         transformed[3] > 250,
         "alpha should be preserved: {transformed:?}"
+    );
+}
+
+#[test]
+fn drop_shadow_keeps_source_above_shifted_tinted_alpha() {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+    else {
+        return;
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .unwrap();
+    let mut surface = JagSurface::new(
+        Arc::new(device),
+        Arc::new(queue),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    surface.set_frame_cache_enabled(false);
+    let mut canvas = surface.begin_frame(32, 16);
+    canvas.clear(ColorLinPremul::default());
+    canvas.push_filter(FilterEffect::DropShadow(DropShadow {
+        offset: [8.0, 0.0],
+        blur_radius: 0.0,
+        color: SrgbColor::rgba(0, 0, 255, 255),
+    }));
+    canvas.fill_rect(
+        4.0,
+        4.0,
+        6.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255, 0, 0, 255])),
+        1,
+    );
+    canvas.pop_filter();
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    let source = pixel(&pixels, width, 6, 8);
+    let gap = pixel(&pixels, width, 11, 8);
+    let shadow = pixel(&pixels, width, 15, 8);
+    assert!(
+        source[0] > 250 && source[2] < 5,
+        "source changed: {source:?}"
+    );
+    assert!(gap[3] < 5, "zero blur should keep a sharp gap: {gap:?}");
+    assert!(
+        shadow[2] > 240 && shadow[3] > 240,
+        "shifted shadow missing: {shadow:?}"
     );
 }

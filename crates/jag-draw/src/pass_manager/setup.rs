@@ -4,9 +4,10 @@
 use super::PassManager;
 use crate::pipeline::{
     BackdropBlurRenderer, BackgroundRenderer, BasicSolidRenderer, Blitter, BlurRenderer,
-    ColorFilterRenderer, Compositor, OverlaySolidRenderer, ScrimSolidRenderer,
-    ScrimStencilMaskRenderer, ScrimStencilRenderer, ShadowCompositeInstanceRenderer,
-    ShadowCompositeRenderer, ShadowInstanceRenderer, SmaaRenderer, TextRenderer,
+    ColorFilterRenderer, Compositor, DropShadowFilterRenderer, OverlaySolidRenderer,
+    ScrimSolidRenderer, ScrimStencilMaskRenderer, ScrimStencilRenderer,
+    ShadowCompositeInstanceRenderer, ShadowCompositeRenderer, ShadowInstanceRenderer, SmaaRenderer,
+    TextRenderer,
 };
 use std::sync::Arc;
 
@@ -93,6 +94,7 @@ impl PassManager {
         let blur_r8 = BlurRenderer::new(device.clone(), wgpu::TextureFormat::R8Unorm);
         let blur_rgba = BlurRenderer::new(device.clone(), target_format);
         let color_filter = ColorFilterRenderer::new(device.clone(), target_format);
+        let drop_shadow_filter = DropShadowFilterRenderer::new(device.clone(), target_format);
         let backdrop_blur = BackdropBlurRenderer::new(device.clone(), offscreen_format);
         let shadow_comp = ShadowCompositeRenderer::new(device.clone(), target_format);
         let shadow_offscreen =
@@ -193,6 +195,7 @@ impl PassManager {
             blur_r8,
             blur_rgba,
             color_filter,
+            drop_shadow_filter,
             backdrop_blur,
             shadow_comp,
             shadow_offscreen,
