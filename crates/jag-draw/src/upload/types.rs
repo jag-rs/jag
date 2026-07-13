@@ -84,6 +84,7 @@ pub struct SolidBatch {
 
 /// Complete unified scene data extracted from DisplayList
 pub struct UnifiedSceneData {
+    pub compositor_plan: crate::compositor::CompositorPlan,
     pub gpu_scene: GpuScene,
     pub solid_batches: Vec<SolidBatch>,
     pub transparent_gpu_scene: GpuScene,

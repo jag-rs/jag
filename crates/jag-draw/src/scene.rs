@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Transform2D {
     // Affine 2D: [a, b, c, d, e, f] for matrix [[a c e],[b d f],[0 0 1]]
     pub m: [f32; 6],
