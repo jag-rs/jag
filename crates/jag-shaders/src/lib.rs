@@ -554,12 +554,15 @@ pub const MASK_FILTER_WGSL: &str = r#"
 @group(0) @binding(1) var mask: texture_2d<f32>;
 @group(0) @binding(2) var source_sampler: sampler;
 struct Params {
-    uv_scale: vec2<f32>,
-    uv_offset: vec2<f32>,
-    mode: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
+    surface_origin: vec2<f32>,
+    surface_size: vec2<f32>,
+    inverse_x: vec4<f32>,
+    inverse_y: vec4<f32>,
+    paint_rect: vec4<f32>,
+    tile_rect: vec4<f32>,
+    tile_step: vec2<f32>,
+    _padding: vec2<f32>,
+    flags: vec4<u32>,
 };
 @group(0) @binding(3) var<uniform> params: Params;
 
@@ -571,11 +574,27 @@ struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 }
 @fragment fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
     let source_color = textureSample(source, source_sampler, input.uv);
-    let mask_uv = input.uv * params.uv_scale + params.uv_offset;
-    let inside = all(mask_uv >= vec2(0.0)) && all(mask_uv <= vec2(1.0));
+    let world = params.surface_origin + input.uv * params.surface_size;
+    let local = vec2(
+        dot(params.inverse_x.xyz, vec3(world, 1.0)),
+        dot(params.inverse_y.xyz, vec3(world, 1.0))
+    );
+    let paint_offset = local - params.paint_rect.xy;
+    let inside_paint = all(paint_offset >= vec2(0.0))
+        && all(paint_offset <= params.paint_rect.zw);
+    let raw_offset = local - params.tile_rect.xy;
+    let repeated_offset = raw_offset - floor(raw_offset / params.tile_step) * params.tile_step;
+    let offset = vec2(
+        select(raw_offset.x, repeated_offset.x, params.flags.y == 1u),
+        select(raw_offset.y, repeated_offset.y, params.flags.z == 1u)
+    );
+    let inside_tile = all(offset >= vec2(0.0)) && all(offset <= params.tile_rect.zw);
+    var mask_uv = offset / params.tile_rect.zw;
+    mask_uv.y = select(mask_uv.y, 1.0 - mask_uv.y, params.flags.w == 1u);
+    let inside = inside_paint && inside_tile;
     let mask_color = select(vec4(0.0), textureSample(mask, source_sampler, mask_uv), inside);
     let luminance = dot(mask_color.rgb, vec3(0.2126, 0.7152, 0.0722)) * mask_color.a;
-    let coverage = select(mask_color.a, luminance, params.mode == 1u);
+    let coverage = select(mask_color.a, luminance, params.flags.x == 1u);
     return source_color * coverage;
 }
 "#;

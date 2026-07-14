@@ -25,6 +25,8 @@ impl JagSurface {
         self.pass.set_scale_factor(self.dpi_scale);
         self.pass.set_logical_pixels(self.logical_pixels);
         self.pass.set_ui_scale(self.ui_scale);
+        self.pending_image_loads = false;
+        self.pass.poll_image_loads(&self.queue);
 
         // Box shadows composite in sRGB (gamma) space, which only the
         // offscreen path implements; force intermediate when shadows exist.
@@ -139,6 +141,7 @@ impl JagSurface {
         // Build final display list from painter
         let text_provider = canvas.text_provider.clone();
         self.register_generated_mask_textures(&canvas.generated_mask_textures);
+        self.register_url_mask_textures(&canvas.url_mask_textures);
 
         // Build final display list from painter
         let mut list = canvas.painter.finish();

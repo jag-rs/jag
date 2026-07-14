@@ -188,11 +188,24 @@ pub enum MaskMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MaskTextureMapping {
+    /// World-to-mask-local affine transform.
+    pub inverse_transform: [f32; 6],
+    pub paint_rect: Rect,
+    pub tile_rect: Rect,
+    pub tile_step: [f32; 2],
+    pub repeat_axes: [bool; 2],
+    /// Decoded images are uploaded top-to-bottom; render targets are not.
+    pub flip_y: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MaskEffect {
     /// A straight-RGBA resolved mask texture mapped to `rect` in scene space.
     pub texture_id: crate::display_list::ExternalTextureId,
     pub mode: MaskMode,
     pub rect: Rect,
+    pub mapping: Option<MaskTextureMapping>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

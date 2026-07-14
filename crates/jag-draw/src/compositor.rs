@@ -553,6 +553,7 @@ mod tests {
                 w: 4.0,
                 h: 6.0,
             },
+            mapping: None,
         };
         let list = DisplayList {
             commands: vec![

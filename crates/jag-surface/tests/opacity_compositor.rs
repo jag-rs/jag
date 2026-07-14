@@ -361,6 +361,39 @@ fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
             depth_or_array_layers: 1,
         },
     );
+    let url_texture = Arc::new(device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("url-mask-test"),
+        size: wgpu::Extent3d {
+            width: 2,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    }));
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: &url_texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &[0, 0, 0, 255, 0, 0, 0, 0],
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(8),
+            rows_per_image: Some(1),
+        },
+        wgpu::Extent3d {
+            width: 2,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
 
     let mut surface = JagSurface::new(device, queue, wgpu::TextureFormat::Rgba8UnormSrgb);
     surface.set_frame_cache_enabled(false);
@@ -368,7 +401,13 @@ fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
     surface
         .pass_manager()
         .register_external_texture(mask_id, mask_texture.create_view(&Default::default()));
-    let mut canvas = surface.begin_frame(32, 8);
+    surface.pass_manager().store_loaded_image(
+        std::path::Path::new("url-mask-test"),
+        url_texture,
+        2,
+        1,
+    );
+    let mut canvas = surface.begin_frame(44, 8);
     canvas.clear(ColorLinPremul::default());
     for (x, mode, z) in [(0.0, MaskMode::Alpha, 1), (4.0, MaskMode::Luminance, 2)] {
         canvas.push_filter(FilterEffect::Mask(MaskEffect {
@@ -380,6 +419,7 @@ fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
                 w: 4.0,
                 h: 8.0,
             },
+            mapping: None,
         }));
         canvas.fill_rect(
             x,
@@ -400,6 +440,7 @@ fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
             w: 2.0,
             h: 8.0,
         },
+        mapping: None,
     }));
     canvas.fill_rect(
         8.0,
@@ -408,6 +449,60 @@ fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
         8.0,
         Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
         3,
+    );
+    canvas.pop_filter();
+    assert!(canvas.push_url_mask(
+        "url-mask-test",
+        jag_draw::Rect {
+            x: 32.0,
+            y: 0.0,
+            w: 8.0,
+            h: 8.0,
+        },
+        jag_draw::Rect {
+            x: 32.0,
+            y: 0.0,
+            w: 2.0,
+            h: 8.0,
+        },
+        [4.0, 8.0],
+        [true, false],
+        MaskMode::Alpha,
+    ));
+    canvas.fill_rect(
+        32.0,
+        0.0,
+        8.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+        8,
+    );
+    canvas.pop_filter();
+    assert!(canvas.push_url_mask(
+        "missing-url-mask-test",
+        jag_draw::Rect {
+            x: 40.0,
+            y: 0.0,
+            w: 4.0,
+            h: 8.0,
+        },
+        jag_draw::Rect {
+            x: 40.0,
+            y: 0.0,
+            w: 4.0,
+            h: 8.0,
+        },
+        [4.0, 8.0],
+        [false; 2],
+        MaskMode::Alpha,
+    ));
+    canvas.fill_rect(
+        40.0,
+        0.0,
+        4.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+        9,
     );
     canvas.pop_filter();
     assert!(canvas.push_generated_mask_pattern(
@@ -537,4 +632,9 @@ fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
     assert!(pixel(&pixels, width, 24, 4)[3] > 240);
     assert!(pixel(&pixels, width, 27, 4)[3] < 10);
     assert!(pixel(&pixels, width, 28, 4)[3] > 240);
+    assert!(pixel(&pixels, width, 32, 4)[3] > 150);
+    assert!(pixel(&pixels, width, 33, 4)[3] < 100);
+    assert!(pixel(&pixels, width, 35, 4)[3] < 10);
+    assert!(pixel(&pixels, width, 36, 4)[3] > 150);
+    assert!(pixel(&pixels, width, 42, 4)[3] < 10);
 }

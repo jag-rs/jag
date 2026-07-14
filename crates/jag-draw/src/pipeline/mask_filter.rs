@@ -4,10 +4,15 @@ use wgpu::util::DeviceExt;
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct MaskParams {
-    uv_scale: [f32; 2],
-    uv_offset: [f32; 2],
-    mode: u32,
-    padding: [u32; 3],
+    surface_origin: [f32; 2],
+    surface_size: [f32; 2],
+    inverse_x: [f32; 4],
+    inverse_y: [f32; 4],
+    paint_rect: [f32; 4],
+    tile_rect: [f32; 4],
+    tile_step: [f32; 2],
+    padding: [f32; 2],
+    flags: [u32; 4],
 }
 
 pub struct MaskFilterRenderer {
@@ -49,7 +54,7 @@ impl MaskFilterRenderer {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: std::num::NonZeroU64::new(32),
+                        min_binding_size: std::num::NonZeroU64::new(112),
                     },
                     count: None,
                 },
@@ -83,8 +88,8 @@ impl MaskFilterRenderer {
             multiview: None,
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
         Self {
@@ -135,14 +140,40 @@ impl MaskFilterRenderer {
         surface_size: [f32; 2],
         mask: crate::MaskEffect,
     ) -> MaskParams {
+        let mapping = mask.mapping.unwrap_or(crate::MaskTextureMapping {
+            inverse_transform: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            paint_rect: mask.rect,
+            tile_rect: mask.rect,
+            tile_step: [mask.rect.w, mask.rect.h],
+            repeat_axes: [false; 2],
+            flip_y: false,
+        });
+        let [a, b, c, d, e, f] = mapping.inverse_transform;
         MaskParams {
-            uv_scale: [surface_size[0] / mask.rect.w, surface_size[1] / mask.rect.h],
-            uv_offset: [
-                (surface_origin[0] - mask.rect.x) / mask.rect.w,
-                (surface_origin[1] - mask.rect.y) / mask.rect.h,
+            surface_origin,
+            surface_size,
+            inverse_x: [a, c, e, 0.0],
+            inverse_y: [b, d, f, 0.0],
+            paint_rect: [
+                mapping.paint_rect.x,
+                mapping.paint_rect.y,
+                mapping.paint_rect.w,
+                mapping.paint_rect.h,
             ],
-            mode: u32::from(mask.mode == crate::MaskMode::Luminance),
-            padding: [0; 3],
+            tile_rect: [
+                mapping.tile_rect.x,
+                mapping.tile_rect.y,
+                mapping.tile_rect.w,
+                mapping.tile_rect.h,
+            ],
+            tile_step: mapping.tile_step,
+            padding: [0.0; 2],
+            flags: [
+                u32::from(mask.mode == crate::MaskMode::Luminance),
+                u32::from(mapping.repeat_axes[0]),
+                u32::from(mapping.repeat_axes[1]),
+                u32::from(mapping.flip_y),
+            ],
         }
     }
 

@@ -97,7 +97,13 @@ pub struct Canvas {
     // emitted through the display-list command stream.
     pub(crate) opacity_stack: Vec<f32>,
     pub(crate) generated_mask_textures: Vec<GeneratedMaskTexture>,
+    pub(crate) url_mask_textures: Vec<UrlMaskTexture>,
     pub(crate) next_generated_mask_texture_id: u64,
+}
+
+pub(crate) struct UrlMaskTexture {
+    pub id: jag_draw::ExternalTextureId,
+    pub path: std::path::PathBuf,
 }
 
 pub(crate) struct GeneratedMaskTexture {

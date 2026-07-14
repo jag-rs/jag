@@ -1,6 +1,8 @@
-use jag_draw::{Brush, ExternalTextureId, FilterEffect, MaskEffect, MaskMode, Rect};
+use jag_draw::{
+    Brush, ExternalTextureId, FilterEffect, MaskEffect, MaskMode, MaskTextureMapping, Rect,
+};
 
-use super::{Canvas, GeneratedMaskTexture};
+use super::{Canvas, GeneratedMaskTexture, UrlMaskTexture};
 
 impl Canvas {
     /// Resolve a generated-gradient brush into a texture and begin an owned mask scope.
@@ -57,6 +59,53 @@ impl Canvas {
             texture_id: id,
             mode,
             rect: mapped_rect,
+            mapping: None,
+        }));
+        true
+    }
+
+    /// Begin a GPU-native URL mask. Missing or loading images resolve to transparent.
+    pub fn push_url_mask(
+        &mut self,
+        path: impl Into<std::path::PathBuf>,
+        paint_rect: Rect,
+        tile_rect: Rect,
+        tile_step: [f32; 2],
+        repeat_axes: [bool; 2],
+        mode: MaskMode,
+    ) -> bool {
+        let transform = self.current_transform().m;
+        let Some(inverse_transform) = inverse_transform(transform) else {
+            return false;
+        };
+        if paint_rect.w <= 0.0
+            || paint_rect.h <= 0.0
+            || tile_rect.w <= 0.0
+            || tile_rect.h <= 0.0
+            || repeat_axes[0] && tile_step[0] <= f32::EPSILON
+            || repeat_axes[1] && tile_step[1] <= f32::EPSILON
+        {
+            return false;
+        }
+        let rect = transformed_bounds(paint_rect, transform);
+        let id = ExternalTextureId(self.next_generated_mask_texture_id);
+        self.next_generated_mask_texture_id = self.next_generated_mask_texture_id.wrapping_add(1);
+        self.url_mask_textures.push(UrlMaskTexture {
+            id,
+            path: path.into(),
+        });
+        self.push_filter(FilterEffect::Mask(MaskEffect {
+            texture_id: id,
+            mode,
+            rect,
+            mapping: Some(MaskTextureMapping {
+                inverse_transform,
+                paint_rect,
+                tile_rect,
+                tile_step,
+                repeat_axes,
+                flip_y: true,
+            }),
         }));
         true
     }
@@ -162,14 +211,25 @@ fn pattern_point(
 }
 
 fn inverse_transform_point(point: [f32; 2], transform: [f32; 6]) -> [f32; 2] {
+    let inverse = inverse_transform(transform).expect("validated mask transform must invert");
+    let [a, b, c, d, e, f] = inverse;
+    [
+        a * point[0] + c * point[1] + e,
+        b * point[0] + d * point[1] + f,
+    ]
+}
+
+fn inverse_transform(transform: [f32; 6]) -> Option<[f32; 6]> {
     let [a, b, c, d, e, f] = transform;
     let determinant = a * d - b * c;
-    let x = point[0] - e;
-    let y = point[1] - f;
-    [
-        (d * x - c * y) / determinant,
-        (-b * x + a * y) / determinant,
-    ]
+    (determinant.abs() > f32::EPSILON).then_some([
+        d / determinant,
+        -b / determinant,
+        -c / determinant,
+        a / determinant,
+        (c * f - d * e) / determinant,
+        (b * e - a * f) / determinant,
+    ])
 }
 
 fn gradient_position(brush: &Brush, point: [f32; 2]) -> f32 {
