@@ -7,6 +7,7 @@ use jag_draw::{
 
 mod helpers;
 mod images_state;
+mod masks;
 mod shapes;
 mod text;
 mod text_extra;
@@ -95,6 +96,15 @@ pub struct Canvas {
     // Effective opacity for side-channel draws (SVGs/images) that are not
     // emitted through the display-list command stream.
     pub(crate) opacity_stack: Vec<f32>,
+    pub(crate) generated_mask_textures: Vec<GeneratedMaskTexture>,
+    pub(crate) next_generated_mask_texture_id: u64,
+}
+
+pub(crate) struct GeneratedMaskTexture {
+    pub id: jag_draw::ExternalTextureId,
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
 }
 
 /// Scrim drawing modes.

@@ -38,6 +38,8 @@ impl JagSurface {
             overlay_draws: Vec::new(),
             scrim_draws: Vec::new(),
             opacity_stack: vec![1.0],
+            generated_mask_textures: Vec::new(),
+            next_generated_mask_texture_id: 0x6000_0000_0000_0000,
         }
     }
 
@@ -51,6 +53,7 @@ impl JagSurface {
         self.pass.poll_image_loads(&self.queue);
 
         let text_provider = canvas.text_provider.clone();
+        self.register_generated_mask_textures(&canvas.generated_mask_textures);
 
         // Build final display list from painter
         let mut list = canvas.painter.finish();

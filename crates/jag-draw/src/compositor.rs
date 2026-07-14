@@ -547,6 +547,12 @@ mod tests {
         let mask = crate::MaskEffect {
             texture_id: crate::ExternalTextureId(7),
             mode: crate::MaskMode::Alpha,
+            rect: Rect {
+                x: 10.0,
+                y: 12.0,
+                w: 4.0,
+                h: 6.0,
+            },
         };
         let list = DisplayList {
             commands: vec![

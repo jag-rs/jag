@@ -138,6 +138,7 @@ impl JagSurface {
 
         // Build final display list from painter
         let text_provider = canvas.text_provider.clone();
+        self.register_generated_mask_textures(&canvas.generated_mask_textures);
 
         // Build final display list from painter
         let mut list = canvas.painter.finish();

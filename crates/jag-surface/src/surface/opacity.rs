@@ -318,10 +318,15 @@ impl JagSurface {
                 self.pass
                     .drop_shadow_surface(&mut encoder, &layer_view, width, height, shadow)
             }
-            jag_draw::SurfaceEffect::Mask(mask) => {
-                self.pass
-                    .mask_surface(&mut encoder, &layer_view, width, height, mask)?
-            }
+            jag_draw::SurfaceEffect::Mask(mask) => self.pass.mask_surface(
+                &mut encoder,
+                &layer_view,
+                width,
+                height,
+                geometry.origin,
+                geometry.logical_size,
+                mask,
+            )?,
         };
         self.queue.submit(std::iter::once(encoder.finish()));
 

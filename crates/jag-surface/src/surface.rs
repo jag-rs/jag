@@ -12,6 +12,7 @@ use crate::canvas::ImageFitMode;
 mod cached;
 mod core;
 mod frame;
+mod masks;
 mod opacity;
 
 /// Cached GPU resources from a previous `end_frame` call, enabling scroll-only

@@ -8,6 +8,8 @@ impl PassManager {
         source: &wgpu::TextureView,
         width: u32,
         height: u32,
+        surface_origin: [f32; 2],
+        surface_size: [f32; 2],
         mask: crate::MaskEffect,
     ) -> Result<wgpu::TextureView> {
         let mask_view = self
@@ -29,9 +31,11 @@ impl PassManager {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let params =
+            crate::pipeline::MaskFilterRenderer::params(surface_origin, surface_size, mask);
         let group = self
             .mask_filter
-            .bind_group(&self.device, source, mask_view, mask.mode);
+            .bind_group(&self.device, source, mask_view, params);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("mask-filter-pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

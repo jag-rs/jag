@@ -1,6 +1,15 @@
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct MaskParams {
+    uv_scale: [f32; 2],
+    uv_offset: [f32; 2],
+    mode: u32,
+    padding: [u32; 3],
+}
+
 pub struct MaskFilterRenderer {
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
@@ -40,7 +49,7 @@ impl MaskFilterRenderer {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: std::num::NonZeroU64::new(16),
+                        min_binding_size: std::num::NonZeroU64::new(32),
                     },
                     count: None,
                 },
@@ -85,17 +94,16 @@ impl MaskFilterRenderer {
         }
     }
 
-    pub fn bind_group(
+    pub(crate) fn bind_group(
         &self,
         device: &wgpu::Device,
         source: &wgpu::TextureView,
         mask: &wgpu::TextureView,
-        mode: crate::MaskMode,
+        params: MaskParams,
     ) -> wgpu::BindGroup {
-        let params = [u32::from(mode == crate::MaskMode::Luminance), 0, 0, 0];
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mask-filter-params"),
-            contents: bytemuck::cast_slice(&params),
+            contents: bytemuck::bytes_of(&params),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -120,6 +128,22 @@ impl MaskFilterRenderer {
                 },
             ],
         })
+    }
+
+    pub(crate) fn params(
+        surface_origin: [f32; 2],
+        surface_size: [f32; 2],
+        mask: crate::MaskEffect,
+    ) -> MaskParams {
+        MaskParams {
+            uv_scale: [surface_size[0] / mask.rect.w, surface_size[1] / mask.rect.h],
+            uv_offset: [
+                (surface_origin[0] - mask.rect.x) / mask.rect.w,
+                (surface_origin[1] - mask.rect.y) / mask.rect.h,
+            ],
+            mode: u32::from(mask.mode == crate::MaskMode::Luminance),
+            padding: [0; 3],
+        }
     }
 
     pub fn record<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, group: &'a wgpu::BindGroup) {

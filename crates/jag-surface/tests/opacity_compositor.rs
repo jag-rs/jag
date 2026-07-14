@@ -368,12 +368,18 @@ fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
     surface
         .pass_manager()
         .register_external_texture(mask_id, mask_texture.create_view(&Default::default()));
-    let mut canvas = surface.begin_frame(8, 8);
+    let mut canvas = surface.begin_frame(16, 8);
     canvas.clear(ColorLinPremul::default());
     for (x, mode, z) in [(0.0, MaskMode::Alpha, 1), (4.0, MaskMode::Luminance, 2)] {
         canvas.push_filter(FilterEffect::Mask(MaskEffect {
             texture_id: mask_id,
             mode,
+            rect: jag_draw::Rect {
+                x,
+                y: 0.0,
+                w: 4.0,
+                h: 8.0,
+            },
         }));
         canvas.fill_rect(
             x,
@@ -385,8 +391,57 @@ fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
         );
         canvas.pop_filter();
     }
+    canvas.push_filter(FilterEffect::Mask(MaskEffect {
+        texture_id: mask_id,
+        mode: MaskMode::Alpha,
+        rect: jag_draw::Rect {
+            x: 8.0,
+            y: 0.0,
+            w: 2.0,
+            h: 8.0,
+        },
+    }));
+    canvas.fill_rect(
+        8.0,
+        0.0,
+        4.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+        3,
+    );
+    canvas.pop_filter();
+    assert!(canvas.push_generated_mask(
+        jag_draw::Rect {
+            x: 12.0,
+            y: 0.0,
+            w: 4.0,
+            h: 8.0,
+        },
+        &Brush::LinearGradient {
+            start: [12.0, 4.0],
+            end: [16.0, 4.0],
+            stops: vec![
+                (0.0, ColorLinPremul::from_srgba_u8([0, 0, 0, 0])),
+                (1.0, ColorLinPremul::from_srgba_u8([0, 0, 0, 255])),
+            ],
+        },
+        MaskMode::Alpha,
+    ));
+    canvas.fill_rect(
+        12.0,
+        0.0,
+        4.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+        4,
+    );
+    canvas.pop_filter();
 
     let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
     assert_alpha_near(pixel(&pixels, width, 2, 4), 128);
     assert_alpha_near(pixel(&pixels, width, 6, 4), 27);
+    assert_alpha_near(pixel(&pixels, width, 9, 4), 128);
+    assert_alpha_near(pixel(&pixels, width, 11, 4), 0);
+    assert!(pixel(&pixels, width, 12, 4)[3] < 64);
+    assert!(pixel(&pixels, width, 15, 4)[3] > 190);
 }

@@ -362,7 +362,15 @@ impl PassManager {
                     self.drop_shadow_surface(encoder, input, width, height, shadow)
                 }
                 crate::FilterEffect::Mask(mask) => {
-                    let Ok(output) = self.mask_surface(encoder, input, width, height, mask) else {
+                    let Ok(output) = self.mask_surface(
+                        encoder,
+                        input,
+                        width,
+                        height,
+                        [0.0, 0.0],
+                        [width as f32, height as f32],
+                        mask,
+                    ) else {
                         allocator.release_texture(snapshot);
                         return;
                     };

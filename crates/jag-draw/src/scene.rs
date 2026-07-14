@@ -187,11 +187,12 @@ pub enum MaskMode {
     Luminance,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MaskEffect {
-    /// A straight-RGBA resolved mask texture aligned to the owned surface bounds.
+    /// A straight-RGBA resolved mask texture mapped to `rect` in scene space.
     pub texture_id: crate::display_list::ExternalTextureId,
     pub mode: MaskMode,
+    pub rect: Rect,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
