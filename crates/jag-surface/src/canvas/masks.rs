@@ -6,6 +6,19 @@ impl Canvas {
     /// Resolve a generated-gradient brush into a texture and begin an owned mask scope.
     /// Returns false for unsupported brushes or singular transforms.
     pub fn push_generated_mask(&mut self, rect: Rect, brush: &Brush, mode: MaskMode) -> bool {
+        self.push_generated_mask_pattern(rect, rect, [rect.w, rect.h], [false; 2], brush, mode)
+    }
+
+    /// Resolve a positioned and optionally repeated generated-gradient mask pattern.
+    pub fn push_generated_mask_pattern(
+        &mut self,
+        paint_rect: Rect,
+        tile_rect: Rect,
+        tile_step: [f32; 2],
+        repeat_axes: [bool; 2],
+        brush: &Brush,
+        mode: MaskMode,
+    ) -> bool {
         let Some(stops) = gradient_stops(brush) else {
             return false;
         };
@@ -14,14 +27,24 @@ impl Canvas {
         if (a * d - b * c).abs() <= f32::EPSILON {
             return false;
         }
-        let mapped_rect = transformed_bounds(rect, transform);
+        let mapped_rect = transformed_bounds(paint_rect, transform);
         if mapped_rect.w <= 0.0 || mapped_rect.h <= 0.0 || stops.is_empty() {
             return false;
         }
         let width = mapped_rect.w.ceil().max(1.0) as u32;
         let height = mapped_rect.h.ceil().max(1.0) as u32;
-        let pixels =
-            raster_generated_gradient(mapped_rect, rect, width, height, brush, transform, stops);
+        let pixels = raster_generated_gradient(
+            mapped_rect,
+            paint_rect,
+            tile_rect,
+            tile_step,
+            repeat_axes,
+            width,
+            height,
+            brush,
+            transform,
+            stops,
+        );
         let id = ExternalTextureId(self.next_generated_mask_texture_id);
         self.next_generated_mask_texture_id = self.next_generated_mask_texture_id.wrapping_add(1);
         self.generated_mask_textures.push(GeneratedMaskTexture {
@@ -77,7 +100,10 @@ fn gradient_stops(brush: &Brush) -> Option<&[(f32, jag_draw::ColorLinPremul)]> {
 
 fn raster_generated_gradient(
     rect: Rect,
-    source_rect: Rect,
+    paint_rect: Rect,
+    tile_rect: Rect,
+    tile_step: [f32; 2],
+    repeat_axes: [bool; 2],
     width: u32,
     height: u32,
     brush: &Brush,
@@ -94,19 +120,45 @@ fn raster_generated_gradient(
                 rect.y + (height as f32 - y as f32 - 0.5) * rect.h / height as f32,
             ];
             let local = inverse_transform_point(world, transform);
-            if local[0] < source_rect.x
-                || local[0] > source_rect.x + source_rect.w
-                || local[1] < source_rect.y
-                || local[1] > source_rect.y + source_rect.h
+            if local[0] < paint_rect.x
+                || local[0] > paint_rect.x + paint_rect.w
+                || local[1] < paint_rect.y
+                || local[1] > paint_rect.y + paint_rect.h
             {
                 pixels.extend_from_slice(&[0; 4]);
                 continue;
             }
-            let t = gradient_position(brush, local);
+            let Some(sample) = pattern_point(local, tile_rect, tile_step, repeat_axes) else {
+                pixels.extend_from_slice(&[0; 4]);
+                continue;
+            };
+            let t = gradient_position(brush, sample);
             pixels.extend_from_slice(&sample_stops(stops, t));
         }
     }
     pixels
+}
+
+fn pattern_point(
+    point: [f32; 2],
+    tile: Rect,
+    step: [f32; 2],
+    repeat: [bool; 2],
+) -> Option<[f32; 2]> {
+    let axis = |value: f32, start: f32, size: f32, step: f32, repeat: bool| {
+        if !repeat {
+            return (value >= start && value <= start + size).then_some(value);
+        }
+        if step <= f32::EPSILON {
+            return None;
+        }
+        let offset = (value - start).rem_euclid(step);
+        (offset <= size).then_some(start + offset)
+    };
+    Some([
+        axis(point[0], tile.x, tile.w, step[0], repeat[0])?,
+        axis(point[1], tile.y, tile.h, step[1], repeat[1])?,
+    ])
 }
 
 fn inverse_transform_point(point: [f32; 2], transform: [f32; 6]) -> [f32; 2] {
@@ -163,7 +215,7 @@ fn sample_stops(stops: &[(f32, jag_draw::ColorLinPremul)], t: f32) -> [u8; 4] {
 #[cfg(test)]
 mod tests {
     use super::{
-        gradient_position, gradient_stops, raster_generated_gradient, sample_stops,
+        gradient_position, gradient_stops, pattern_point, raster_generated_gradient, sample_stops,
         transformed_bounds,
     };
     use jag_draw::{Brush, ColorLinPremul};
@@ -230,6 +282,9 @@ mod tests {
         let pixels = raster_generated_gradient(
             bounds,
             rect,
+            rect,
+            [rect.w, rect.h],
+            [false; 2],
             width,
             height,
             &brush,
@@ -242,5 +297,24 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(alphas.contains(&0));
         assert!(alphas.contains(&255));
+    }
+
+    #[test]
+    fn repeated_pattern_maps_tiles_and_preserves_space_gaps() {
+        let tile = jag_draw::Rect {
+            x: 2.0,
+            y: 3.0,
+            w: 4.0,
+            h: 5.0,
+        };
+        assert_eq!(
+            pattern_point([8.0, 8.0], tile, [6.0, 7.0], [true; 2]),
+            Some([2.0, 8.0])
+        );
+        assert_eq!(pattern_point([7.0, 8.0], tile, [6.0, 7.0], [true; 2]), None);
+        assert_eq!(
+            pattern_point([4.0, 8.0], tile, [6.0, 7.0], [false, true]),
+            Some([4.0, 8.0])
+        );
     }
 }

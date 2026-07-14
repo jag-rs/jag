@@ -368,7 +368,7 @@ fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
     surface
         .pass_manager()
         .register_external_texture(mask_id, mask_texture.create_view(&Default::default()));
-    let mut canvas = surface.begin_frame(24, 8);
+    let mut canvas = surface.begin_frame(32, 8);
     canvas.clear(ColorLinPremul::default());
     for (x, mode, z) in [(0.0, MaskMode::Alpha, 1), (4.0, MaskMode::Luminance, 2)] {
         canvas.push_filter(FilterEffect::Mask(MaskEffect {
@@ -408,6 +408,40 @@ fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
         8.0,
         Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
         3,
+    );
+    canvas.pop_filter();
+    assert!(canvas.push_generated_mask_pattern(
+        jag_draw::Rect {
+            x: 24.0,
+            y: 0.0,
+            w: 8.0,
+            h: 8.0,
+        },
+        jag_draw::Rect {
+            x: 24.0,
+            y: 0.0,
+            w: 2.0,
+            h: 8.0,
+        },
+        [4.0, 8.0],
+        [true, false],
+        &Brush::LinearGradient {
+            start: [24.0, 0.0],
+            end: [26.0, 0.0],
+            stops: vec![
+                (0.0, ColorLinPremul::from_srgba_u8([0, 0, 0, 255])),
+                (1.0, ColorLinPremul::from_srgba_u8([0, 0, 0, 255])),
+            ],
+        },
+        MaskMode::Alpha,
+    ));
+    canvas.fill_rect(
+        24.0,
+        0.0,
+        8.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+        7,
     );
     canvas.pop_filter();
     for (rect, brush, z) in [
@@ -500,4 +534,7 @@ fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
         conic_top < 80 && conic_bottom > 160,
         "conic alpha top/bottom: {conic_top}/{conic_bottom}"
     );
+    assert!(pixel(&pixels, width, 24, 4)[3] > 240);
+    assert!(pixel(&pixels, width, 27, 4)[3] < 10);
+    assert!(pixel(&pixels, width, 28, 4)[3] > 240);
 }
