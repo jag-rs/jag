@@ -31,20 +31,26 @@ fn pixel(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
     pixels[offset..offset + 4].try_into().unwrap()
 }
 
-fn test_surface() -> Option<JagSurface> {
+fn test_gpu() -> Option<(Arc<wgpu::Device>, Arc<wgpu::Queue>, JagSurface)> {
     let instance = wgpu::Instance::default();
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))?;
     let (device, queue) =
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
             .ok()?;
+    let device = Arc::new(device);
+    let queue = Arc::new(queue);
     let mut surface = JagSurface::new(
-        Arc::new(device),
-        Arc::new(queue),
+        device.clone(),
+        queue.clone(),
         wgpu::TextureFormat::Rgba8UnormSrgb,
     );
     surface.set_frame_cache_enabled(false);
-    Some(surface)
+    Some((device, queue, surface))
+}
+
+fn test_surface() -> Option<JagSurface> {
+    test_gpu().map(|(_, _, surface)| surface)
 }
 
 fn physical(logical: f32, scale: f32) -> u32 {
@@ -542,6 +548,81 @@ fn blur_halo_keeps_css_extent_across_device_scales() {
         assert!(far <= 2, "far alpha changed at {scale}x: {far}");
         assert!(halo > 2, "blur halo vanished at {scale}x: {halo}");
         assert!(center > halo, "center {center} <= halo {halo} at {scale}x");
+    }
+}
+
+#[test]
+fn nested_mask_keeps_css_geometry_across_device_scales() {
+    for scale in [1.0, 1.25, 2.0] {
+        let Some((device, queue, mut surface)) = test_gpu() else {
+            return;
+        };
+        let mask_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("cross-dpr-mask"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            mask_texture.as_image_copy(),
+            &[0, 0, 0, 255],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let mask_id = ExternalTextureId(90);
+        surface
+            .pass_manager()
+            .register_external_texture(mask_id, mask_texture.create_view(&Default::default()));
+        surface.set_logical_pixels(true);
+        surface.set_dpi_scale(scale);
+        let mut canvas = surface.begin_frame(physical(24.0, scale), physical(12.0, scale));
+        canvas.clear(ColorLinPremul::default());
+        canvas.push_opacity(0.5);
+        canvas.push_filter(FilterEffect::Mask(MaskEffect {
+            texture_id: mask_id,
+            mode: MaskMode::Alpha,
+            rect: jag_draw::Rect {
+                x: 8.0,
+                y: 2.0,
+                w: 8.0,
+                h: 8.0,
+            },
+            mapping: None,
+        }));
+        canvas.fill_rect(
+            4.0,
+            2.0,
+            16.0,
+            8.0,
+            Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+            1,
+        );
+        canvas.pop_filter();
+        canvas.pop_opacity();
+
+        let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+        for (x, alpha) in [(6.0, 0), (10.0, 128), (18.0, 0)] {
+            assert_alpha_near(
+                pixel(&pixels, width, physical(x, scale), physical(6.0, scale)),
+                alpha,
+            );
+        }
     }
 }
 
