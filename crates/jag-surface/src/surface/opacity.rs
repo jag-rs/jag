@@ -14,7 +14,15 @@ struct LayerGeometry {
 }
 
 fn layer_geometry(bounds: Rect, viewport: Viewport, scale: f32) -> Option<LayerGeometry> {
-    if !scale.is_finite() || scale <= 0.0 || !bounds.x.is_finite() || !bounds.y.is_finite() {
+    if !scale.is_finite()
+        || scale <= 0.0
+        || !bounds.x.is_finite()
+        || !bounds.y.is_finite()
+        || !bounds.w.is_finite()
+        || !bounds.h.is_finite()
+        || bounds.w <= 0.0
+        || bounds.h <= 0.0
+    {
         return None;
     }
     let x0 = (bounds.x * scale).floor().clamp(0.0, viewport.width as f32) as u32;
@@ -37,12 +45,56 @@ fn layer_geometry(bounds: Rect, viewport: Viewport, scale: f32) -> Option<LayerG
     })
 }
 
-fn translate_clips(commands: &mut [Command], origin: [f32; 2]) {
+fn localize_clips(commands: &mut [Command], origin: [f32; 2]) {
+    let mut transforms = vec![Transform2D::identity()];
     for command in commands {
-        if let Command::PushClip(clip) = command {
-            clip.0.x -= origin[0];
-            clip.0.y -= origin[1];
+        match command {
+            Command::PushTransform(transform) => transforms.push(*transform),
+            Command::PopTransform => {
+                if transforms.len() > 1 {
+                    transforms.pop();
+                }
+            }
+            Command::PushClip(clip) => {
+                clip.0 = transformed_rect_bounds(clip.0, *transforms.last().unwrap());
+                clip.0.x -= origin[0];
+                clip.0.y -= origin[1];
+            }
+            _ => {}
         }
+    }
+}
+
+fn transformed_rect_bounds(rect: Rect, transform: Transform2D) -> Rect {
+    let [a, b, c, d, e, f] = transform.m;
+    let points = [
+        [rect.x, rect.y],
+        [rect.x + rect.w, rect.y],
+        [rect.x, rect.y + rect.h],
+        [rect.x + rect.w, rect.y + rect.h],
+    ]
+    .map(|[x, y]| [a * x + c * y + e, b * x + d * y + f]);
+    let min_x = points
+        .iter()
+        .map(|point| point[0])
+        .fold(f32::INFINITY, f32::min);
+    let max_x = points
+        .iter()
+        .map(|point| point[0])
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_y = points
+        .iter()
+        .map(|point| point[1])
+        .fold(f32::INFINITY, f32::min);
+    let max_y = points
+        .iter()
+        .map(|point| point[1])
+        .fold(f32::NEG_INFINITY, f32::max);
+    Rect {
+        x: min_x,
+        y: min_y,
+        w: max_x - min_x,
+        h: max_y - min_y,
     }
 }
 
@@ -70,7 +122,7 @@ impl JagSurface {
             jag_draw::SurfaceEffect::MaskGroup(group)
                 if group.layers.iter().any(|layer| layer.text_clip)
         );
-        translate_clips(&mut commands, geometry.origin);
+        localize_clips(&mut commands, geometry.origin);
         let backdrop_draws = commands
             .iter()
             .filter_map(|command| match command {
@@ -381,15 +433,21 @@ mod tests {
     }
 
     #[test]
-    fn inherited_clips_are_translated_into_layer_space() {
-        let mut commands = vec![Command::PushClip(jag_draw::ClipRect(Rect {
-            x: 12.0,
-            y: 18.0,
-            w: 5.0,
-            h: 6.0,
-        }))];
-        translate_clips(&mut commands, [10.0, 15.0]);
-        let Command::PushClip(clip) = &commands[0] else {
+    fn transformed_clips_are_normalized_into_layer_space() {
+        let mut commands = vec![
+            Command::PushTransform(Transform2D {
+                m: [2.0, 0.0, 0.0, 3.0, 10.0, 15.0],
+            }),
+            Command::PushClip(jag_draw::ClipRect(Rect {
+                x: 1.0,
+                y: 1.0,
+                w: 5.0,
+                h: 6.0,
+            })),
+            Command::PopTransform,
+        ];
+        localize_clips(&mut commands, [10.0, 15.0]);
+        let Command::PushClip(clip) = &commands[1] else {
             unreachable!()
         };
         assert_eq!(
@@ -397,9 +455,60 @@ mod tests {
             Rect {
                 x: 2.0,
                 y: 3.0,
-                w: 5.0,
-                h: 6.0
+                w: 10.0,
+                h: 18.0
             }
         );
+    }
+
+    #[test]
+    fn layer_bounds_align_outward_at_fractional_device_scale() {
+        let geometry = layer_geometry(
+            Rect {
+                x: 2.2,
+                y: 3.4,
+                w: 4.1,
+                h: 5.2,
+            },
+            Viewport {
+                width: 100,
+                height: 100,
+            },
+            1.25,
+        )
+        .unwrap();
+        assert_eq!(geometry.pixel_size, [6, 7]);
+        assert_eq!(geometry.origin, [1.6, 3.2]);
+        assert_eq!(geometry.logical_size, [4.8, 5.6]);
+    }
+
+    #[test]
+    fn invalid_layer_bounds_are_rejected() {
+        let viewport = Viewport {
+            width: 100,
+            height: 100,
+        };
+        for bounds in [
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: f32::NAN,
+                h: 1.0,
+            },
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 1.0,
+                h: f32::INFINITY,
+            },
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 0.0,
+                h: 1.0,
+            },
+        ] {
+            assert_eq!(layer_geometry(bounds, viewport, 1.0), None);
+        }
     }
 }

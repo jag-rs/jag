@@ -109,7 +109,8 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
                 }
             }
             Command::PushClip(clip) => {
-                clips.push(intersection(*clips.last().unwrap_or(&None), clip.0));
+                let world_clip = transformed_bounds(clip.0, *transforms.last().unwrap());
+                clips.push(intersection(*clips.last().unwrap_or(&None), world_clip));
             }
             Command::PopClip => {
                 if clips.len() == 1 {
@@ -436,7 +437,7 @@ mod tests {
             commands: vec![
                 Command::PushTransform(Transform2D::translate(10.0, 0.0)),
                 Command::PushClip(crate::scene::ClipRect(Rect {
-                    x: 15.0,
+                    x: 5.0,
                     y: 0.0,
                     w: 5.0,
                     h: 20.0,
@@ -480,6 +481,59 @@ mod tests {
             surface.inherited_transform,
             Transform2D::translate(10.0, 0.0)
         );
+    }
+
+    #[test]
+    fn nested_transformed_clips_intersect_in_world_space() {
+        let list = DisplayList {
+            commands: vec![
+                Command::PushTransform(Transform2D::translate(10.0, 5.0)),
+                Command::PushClip(crate::scene::ClipRect(Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 20.0,
+                    h: 20.0,
+                })),
+                Command::PushTransform(Transform2D {
+                    m: [2.0, 0.0, 0.0, 2.0, 10.0, 5.0],
+                }),
+                Command::PushClip(crate::scene::ClipRect(Rect {
+                    x: 2.0,
+                    y: 3.0,
+                    w: 6.0,
+                    h: 7.0,
+                })),
+                Command::PushOpacity(0.5),
+                match rect(0.0, 0.0, 10.0, 10.0) {
+                    Command::DrawRect { rect, brush, z, .. } => Command::DrawRect {
+                        rect,
+                        brush,
+                        z,
+                        transform: Transform2D {
+                            m: [2.0, 0.0, 0.0, 2.0, 10.0, 5.0],
+                        },
+                    },
+                    _ => unreachable!(),
+                },
+                Command::PopOpacity,
+                Command::PopClip,
+                Command::PopTransform,
+                Command::PopClip,
+                Command::PopTransform,
+            ],
+            ..Default::default()
+        };
+        let surface = &build_compositor_plan(&list).unwrap().surfaces[0];
+        assert_eq!(
+            surface.inherited_clip,
+            Some(Rect {
+                x: 14.0,
+                y: 11.0,
+                w: 12.0,
+                h: 14.0,
+            })
+        );
+        assert_eq!(surface.bounds, surface.inherited_clip);
     }
 
     #[test]

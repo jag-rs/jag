@@ -248,6 +248,53 @@ fn overlapping_and_nested_descendants_composite_each_group_once() {
 }
 
 #[test]
+fn transformed_clip_bounds_nested_effect_layers_in_world_space() {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+    else {
+        return;
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .unwrap();
+    let mut surface = JagSurface::new(
+        Arc::new(device),
+        Arc::new(queue),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    surface.set_frame_cache_enabled(false);
+    let mut canvas = surface.begin_frame(32, 12);
+    canvas.clear(ColorLinPremul::default());
+    canvas.push_opacity(0.5);
+    canvas.push_transform(jag_draw::Transform2D::translate(8.0, 2.0));
+    canvas.push_clip_rect(jag_draw::Rect {
+        x: 0.0,
+        y: 0.0,
+        w: 8.0,
+        h: 8.0,
+    });
+    canvas.push_opacity(0.5);
+    canvas.fill_rect(
+        0.0,
+        0.0,
+        16.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+        1,
+    );
+    canvas.pop_opacity();
+    canvas.pop_clip();
+    canvas.pop_transform();
+    canvas.pop_opacity();
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    assert_alpha_near(pixel(&pixels, width, 7, 5), 0);
+    assert_alpha_near(pixel(&pixels, width, 10, 5), 64);
+    assert_alpha_near(pixel(&pixels, width, 17, 5), 0);
+}
+
+#[test]
 fn blur_filter_spreads_surface_alpha_beyond_descendant_ink() {
     let instance = wgpu::Instance::default();
     let Some(adapter) =
