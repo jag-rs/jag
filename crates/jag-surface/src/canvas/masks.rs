@@ -3,10 +3,10 @@ use jag_draw::{Brush, ExternalTextureId, FilterEffect, MaskEffect, MaskMode, Rec
 use super::{Canvas, GeneratedMaskTexture};
 
 impl Canvas {
-    /// Resolve a linear-gradient brush into a texture and begin an owned mask scope.
+    /// Resolve a generated-gradient brush into a texture and begin an owned mask scope.
     /// Returns false for unsupported brushes or non-axis-aligned transforms.
     pub fn push_generated_mask(&mut self, rect: Rect, brush: &Brush, mode: MaskMode) -> bool {
-        let Brush::LinearGradient { start, end, stops } = brush else {
+        let Some(stops) = gradient_stops(brush) else {
             return false;
         };
         let [a, b, c, d, e, f] = self.current_transform().m;
@@ -25,12 +25,10 @@ impl Canvas {
         if mapped_rect.w <= 0.0 || mapped_rect.h <= 0.0 || stops.is_empty() {
             return false;
         }
-        let mapped_start = map(*start);
-        let mapped_end = map(*end);
         let width = mapped_rect.w.ceil().max(1.0) as u32;
         let height = mapped_rect.h.ceil().max(1.0) as u32;
         let pixels =
-            raster_linear_gradient(mapped_rect, width, height, mapped_start, mapped_end, stops);
+            raster_generated_gradient(mapped_rect, width, height, brush, [a, d, e, f], stops);
         let id = ExternalTextureId(self.next_generated_mask_texture_id);
         self.next_generated_mask_texture_id = self.next_generated_mask_texture_id.wrapping_add(1);
         self.generated_mask_textures.push(GeneratedMaskTexture {
@@ -48,29 +46,65 @@ impl Canvas {
     }
 }
 
-fn raster_linear_gradient(
+fn gradient_stops(brush: &Brush) -> Option<&[(f32, jag_draw::ColorLinPremul)]> {
+    match brush {
+        Brush::LinearGradient { stops, .. }
+        | Brush::RadialGradient { stops, .. }
+        | Brush::ConicGradient { stops, .. } => Some(stops),
+        Brush::Solid(_) => None,
+    }
+}
+
+fn raster_generated_gradient(
     rect: Rect,
     width: u32,
     height: u32,
-    start: [f32; 2],
-    end: [f32; 2],
+    brush: &Brush,
+    transform: [f32; 4],
     stops: &[(f32, jag_draw::ColorLinPremul)],
 ) -> Vec<u8> {
-    let delta = [end[0] - start[0], end[1] - start[1]];
-    let length2 = (delta[0] * delta[0] + delta[1] * delta[1]).max(f32::EPSILON);
+    let [scale_x, scale_y, translate_x, translate_y] = transform;
     let mut pixels = Vec::with_capacity((width * height * 4) as usize);
     for y in 0..height {
         for x in 0..width {
-            let p = [
+            let world = [
                 rect.x + (x as f32 + 0.5) * rect.w / width as f32,
-                rect.y + (y as f32 + 0.5) * rect.h / height as f32,
+                // External textures are sampled with render-target UV orientation,
+                // so upload rows bottom-to-top to preserve scene-space Y.
+                rect.y + (height as f32 - y as f32 - 0.5) * rect.h / height as f32,
             ];
-            let t = (((p[0] - start[0]) * delta[0] + (p[1] - start[1]) * delta[1]) / length2)
-                .clamp(0.0, 1.0);
+            let local = [
+                (world[0] - translate_x) / scale_x,
+                (world[1] - translate_y) / scale_y,
+            ];
+            let t = gradient_position(brush, local);
             pixels.extend_from_slice(&sample_stops(stops, t));
         }
     }
     pixels
+}
+
+fn gradient_position(brush: &Brush, point: [f32; 2]) -> f32 {
+    match brush {
+        Brush::LinearGradient { start, end, .. } => {
+            let delta = [end[0] - start[0], end[1] - start[1]];
+            let length2 = (delta[0] * delta[0] + delta[1] * delta[1]).max(f32::EPSILON);
+            ((point[0] - start[0]) * delta[0] + (point[1] - start[1]) * delta[1]) / length2
+        }
+        Brush::RadialGradient { center, radius, .. } => {
+            let delta = [point[0] - center[0], point[1] - center[1]];
+            (delta[0] * delta[0] + delta[1] * delta[1]).sqrt() / radius.abs().max(f32::EPSILON)
+        }
+        Brush::ConicGradient {
+            center,
+            start_angle,
+            ..
+        } => {
+            let angle = (point[0] - center[0]).atan2(-(point[1] - center[1])) - start_angle;
+            angle.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU
+        }
+        Brush::Solid(_) => 0.0,
+    }
 }
 
 fn sample_stops(stops: &[(f32, jag_draw::ColorLinPremul)], t: f32) -> [u8; 4] {
@@ -92,8 +126,8 @@ fn sample_stops(stops: &[(f32, jag_draw::ColorLinPremul)], t: f32) -> [u8; 4] {
 
 #[cfg(test)]
 mod tests {
-    use super::sample_stops;
-    use jag_draw::ColorLinPremul;
+    use super::{gradient_position, sample_stops};
+    use jag_draw::{Brush, ColorLinPremul};
 
     #[test]
     fn samples_linear_gradient_midpoint_in_srgb() {
@@ -102,5 +136,27 @@ mod tests {
             (1.0, ColorLinPremul::from_srgba_u8([255, 255, 255, 255])),
         ];
         assert_eq!(sample_stops(&stops, 0.5), [128; 4]);
+    }
+
+    #[test]
+    fn radial_position_reaches_one_at_radius() {
+        let brush = Brush::RadialGradient {
+            center: [5.0, 6.0],
+            radius: 4.0,
+            stops: vec![],
+        };
+        assert_eq!(gradient_position(&brush, [5.0, 6.0]), 0.0);
+        assert_eq!(gradient_position(&brush, [9.0, 6.0]), 1.0);
+    }
+
+    #[test]
+    fn conic_position_runs_clockwise_from_north() {
+        let brush = Brush::ConicGradient {
+            center: [5.0, 5.0],
+            start_angle: 0.0,
+            stops: vec![],
+        };
+        assert_eq!(gradient_position(&brush, [5.0, 4.0]), 0.0);
+        assert_eq!(gradient_position(&brush, [6.0, 5.0]), 0.25);
     }
 }
