@@ -199,9 +199,19 @@ impl PassManager {
         height: u32,
         shadow: crate::DropShadow,
     ) -> wgpu::TextureView {
+        let physical_scale =
+            crate::dpi::logical_multiplier(self.logical_pixels, self.scale_factor, self.ui_scale);
         let blurred = (shadow.blur_radius > 0.0)
             .then(|| self.blur_surface(encoder, source, width, height, shadow.blur_radius));
         let shadow_mask = blurred.as_ref().unwrap_or(source);
+        let physical_shadow = crate::DropShadow {
+            offset: [
+                shadow.offset[0] * physical_scale,
+                shadow.offset[1] * physical_scale,
+            ],
+            blur_radius: shadow.blur_radius * physical_scale,
+            ..shadow
+        };
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("drop-shadow-filter-output"),
             size: wgpu::Extent3d {
@@ -222,7 +232,7 @@ impl PassManager {
             source,
             shadow_mask,
             [width, height],
-            shadow,
+            physical_shadow,
         );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("drop-shadow-filter-pass"),
@@ -295,6 +305,8 @@ impl PassManager {
         height: u32,
         sigma: f32,
     ) -> wgpu::TextureView {
+        let sigma = sigma
+            * crate::dpi::logical_multiplier(self.logical_pixels, self.scale_factor, self.ui_scale);
         let make_target = |label| {
             self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),

@@ -31,6 +31,26 @@ fn pixel(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
     pixels[offset..offset + 4].try_into().unwrap()
 }
 
+fn test_surface() -> Option<JagSurface> {
+    let instance = wgpu::Instance::default();
+    let adapter =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))?;
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .ok()?;
+    let mut surface = JagSurface::new(
+        Arc::new(device),
+        Arc::new(queue),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    surface.set_frame_cache_enabled(false);
+    Some(surface)
+}
+
+fn physical(logical: f32, scale: f32) -> u32 {
+    (logical * scale).round() as u32
+}
+
 #[test]
 fn mask_group_composites_all_css_operators_before_applying_content() {
     let instance = wgpu::Instance::default();
@@ -453,6 +473,76 @@ fn drop_shadow_keeps_source_above_shifted_tinted_alpha() {
         shadow[2] > 240 && shadow[3] > 240,
         "shifted shadow missing: {shadow:?}"
     );
+}
+
+#[test]
+fn nested_transformed_drop_shadow_keeps_css_offset_across_device_scales() {
+    for scale in [1.0, 1.25, 2.0] {
+        let Some(mut surface) = test_surface() else {
+            return;
+        };
+        surface.set_logical_pixels(true);
+        surface.set_dpi_scale(scale);
+        let mut canvas = surface.begin_frame(physical(32.0, scale), physical(16.0, scale));
+        canvas.clear(ColorLinPremul::default());
+        canvas.push_opacity(0.5);
+        canvas.push_filter(FilterEffect::DropShadow(DropShadow {
+            offset: [8.0, 0.0],
+            blur_radius: 0.0,
+            color: SrgbColor::rgba(0, 0, 255, 255),
+        }));
+        canvas.push_transform(jag_draw::Transform2D::translate(2.0, 0.0));
+        canvas.fill_rect(
+            2.0,
+            4.0,
+            6.0,
+            8.0,
+            Brush::Solid(ColorLinPremul::from_srgba_u8([255, 0, 0, 255])),
+            1,
+        );
+        canvas.pop_transform();
+        canvas.pop_filter();
+        canvas.pop_opacity();
+
+        let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+        let source = pixel(&pixels, width, physical(6.0, scale), physical(8.0, scale));
+        let gap = pixel(&pixels, width, physical(11.0, scale), physical(8.0, scale));
+        let shadow = pixel(&pixels, width, physical(14.0, scale), physical(8.0, scale));
+        assert_alpha_near(source, 128);
+        assert_alpha_near(gap, 0);
+        assert_alpha_near(shadow, 128);
+    }
+}
+
+#[test]
+fn blur_halo_keeps_css_extent_across_device_scales() {
+    for scale in [1.0, 1.25, 2.0] {
+        let Some(mut surface) = test_surface() else {
+            return;
+        };
+        surface.set_logical_pixels(true);
+        surface.set_dpi_scale(scale);
+        let mut canvas = surface.begin_frame(physical(32.0, scale), physical(16.0, scale));
+        canvas.clear(ColorLinPremul::default());
+        canvas.push_filter(FilterEffect::Blur(1.5));
+        canvas.fill_rect(
+            10.0,
+            4.0,
+            12.0,
+            8.0,
+            Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+            1,
+        );
+        canvas.pop_filter();
+
+        let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+        let far = pixel(&pixels, width, physical(1.0, scale), physical(8.0, scale))[3];
+        let halo = pixel(&pixels, width, physical(8.0, scale), physical(8.0, scale))[3];
+        let center = pixel(&pixels, width, physical(16.0, scale), physical(8.0, scale))[3];
+        assert!(far <= 2, "far alpha changed at {scale}x: {far}");
+        assert!(halo > 2, "blur halo vanished at {scale}x: {halo}");
+        assert!(center > halo, "center {center} <= halo {halo} at {scale}x");
+    }
 }
 
 #[test]
