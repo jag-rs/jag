@@ -4,31 +4,24 @@ use super::{Canvas, GeneratedMaskTexture};
 
 impl Canvas {
     /// Resolve a generated-gradient brush into a texture and begin an owned mask scope.
-    /// Returns false for unsupported brushes or non-axis-aligned transforms.
+    /// Returns false for unsupported brushes or singular transforms.
     pub fn push_generated_mask(&mut self, rect: Rect, brush: &Brush, mode: MaskMode) -> bool {
         let Some(stops) = gradient_stops(brush) else {
             return false;
         };
         let [a, b, c, d, e, f] = self.current_transform().m;
-        if b.abs() > f32::EPSILON || c.abs() > f32::EPSILON || a == 0.0 || d == 0.0 {
+        let transform = [a, b, c, d, e, f];
+        if (a * d - b * c).abs() <= f32::EPSILON {
             return false;
         }
-        let map = |p: [f32; 2]| [a * p[0] + e, d * p[1] + f];
-        let p0 = map([rect.x, rect.y]);
-        let p1 = map([rect.x + rect.w, rect.y + rect.h]);
-        let mapped_rect = Rect {
-            x: p0[0].min(p1[0]),
-            y: p0[1].min(p1[1]),
-            w: (p1[0] - p0[0]).abs(),
-            h: (p1[1] - p0[1]).abs(),
-        };
+        let mapped_rect = transformed_bounds(rect, transform);
         if mapped_rect.w <= 0.0 || mapped_rect.h <= 0.0 || stops.is_empty() {
             return false;
         }
         let width = mapped_rect.w.ceil().max(1.0) as u32;
         let height = mapped_rect.h.ceil().max(1.0) as u32;
         let pixels =
-            raster_generated_gradient(mapped_rect, width, height, brush, [a, d, e, f], stops);
+            raster_generated_gradient(mapped_rect, rect, width, height, brush, transform, stops);
         let id = ExternalTextureId(self.next_generated_mask_texture_id);
         self.next_generated_mask_texture_id = self.next_generated_mask_texture_id.wrapping_add(1);
         self.generated_mask_textures.push(GeneratedMaskTexture {
@@ -46,6 +39,33 @@ impl Canvas {
     }
 }
 
+fn transformed_bounds(rect: Rect, transform: [f32; 6]) -> Rect {
+    let [a, b, c, d, e, f] = transform;
+    let map = |x, y| [a * x + c * y + e, b * x + d * y + f];
+    let corners = [
+        map(rect.x, rect.y),
+        map(rect.x + rect.w, rect.y),
+        map(rect.x + rect.w, rect.y + rect.h),
+        map(rect.x, rect.y + rect.h),
+    ];
+    let min_x = corners.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min);
+    let max_x = corners
+        .iter()
+        .map(|p| p[0])
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_y = corners.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min);
+    let max_y = corners
+        .iter()
+        .map(|p| p[1])
+        .fold(f32::NEG_INFINITY, f32::max);
+    Rect {
+        x: min_x,
+        y: min_y,
+        w: max_x - min_x,
+        h: max_y - min_y,
+    }
+}
+
 fn gradient_stops(brush: &Brush) -> Option<&[(f32, jag_draw::ColorLinPremul)]> {
     match brush {
         Brush::LinearGradient { stops, .. }
@@ -57,13 +77,13 @@ fn gradient_stops(brush: &Brush) -> Option<&[(f32, jag_draw::ColorLinPremul)]> {
 
 fn raster_generated_gradient(
     rect: Rect,
+    source_rect: Rect,
     width: u32,
     height: u32,
     brush: &Brush,
-    transform: [f32; 4],
+    transform: [f32; 6],
     stops: &[(f32, jag_draw::ColorLinPremul)],
 ) -> Vec<u8> {
-    let [scale_x, scale_y, translate_x, translate_y] = transform;
     let mut pixels = Vec::with_capacity((width * height * 4) as usize);
     for y in 0..height {
         for x in 0..width {
@@ -73,15 +93,31 @@ fn raster_generated_gradient(
                 // so upload rows bottom-to-top to preserve scene-space Y.
                 rect.y + (height as f32 - y as f32 - 0.5) * rect.h / height as f32,
             ];
-            let local = [
-                (world[0] - translate_x) / scale_x,
-                (world[1] - translate_y) / scale_y,
-            ];
+            let local = inverse_transform_point(world, transform);
+            if local[0] < source_rect.x
+                || local[0] > source_rect.x + source_rect.w
+                || local[1] < source_rect.y
+                || local[1] > source_rect.y + source_rect.h
+            {
+                pixels.extend_from_slice(&[0; 4]);
+                continue;
+            }
             let t = gradient_position(brush, local);
             pixels.extend_from_slice(&sample_stops(stops, t));
         }
     }
     pixels
+}
+
+fn inverse_transform_point(point: [f32; 2], transform: [f32; 6]) -> [f32; 2] {
+    let [a, b, c, d, e, f] = transform;
+    let determinant = a * d - b * c;
+    let x = point[0] - e;
+    let y = point[1] - f;
+    [
+        (d * x - c * y) / determinant,
+        (-b * x + a * y) / determinant,
+    ]
 }
 
 fn gradient_position(brush: &Brush, point: [f32; 2]) -> f32 {
@@ -126,7 +162,10 @@ fn sample_stops(stops: &[(f32, jag_draw::ColorLinPremul)], t: f32) -> [u8; 4] {
 
 #[cfg(test)]
 mod tests {
-    use super::{gradient_position, sample_stops};
+    use super::{
+        gradient_position, gradient_stops, raster_generated_gradient, sample_stops,
+        transformed_bounds,
+    };
     use jag_draw::{Brush, ColorLinPremul};
 
     #[test]
@@ -158,5 +197,50 @@ mod tests {
         };
         assert_eq!(gradient_position(&brush, [5.0, 4.0]), 0.0);
         assert_eq!(gradient_position(&brush, [6.0, 5.0]), 0.25);
+    }
+
+    #[test]
+    fn rotated_mask_raster_keeps_aabb_corners_transparent() {
+        let rect = jag_draw::Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 4.0,
+            h: 4.0,
+        };
+        let angle = std::f32::consts::FRAC_PI_4;
+        let transform = [
+            angle.cos(),
+            angle.sin(),
+            -angle.sin(),
+            angle.cos(),
+            4.0,
+            0.0,
+        ];
+        let bounds = transformed_bounds(rect, transform);
+        let brush = Brush::LinearGradient {
+            start: [0.0, 0.0],
+            end: [4.0, 0.0],
+            stops: vec![
+                (0.0, ColorLinPremul::from_srgba_u8([0, 0, 0, 255])),
+                (1.0, ColorLinPremul::from_srgba_u8([0, 0, 0, 255])),
+            ],
+        };
+        let width = bounds.w.ceil() as u32;
+        let height = bounds.h.ceil() as u32;
+        let pixels = raster_generated_gradient(
+            bounds,
+            rect,
+            width,
+            height,
+            &brush,
+            transform,
+            gradient_stops(&brush).unwrap(),
+        );
+        let alphas = pixels
+            .chunks_exact(4)
+            .map(|pixel| pixel[3])
+            .collect::<Vec<_>>();
+        assert!(alphas.contains(&0));
+        assert!(alphas.contains(&255));
     }
 }
