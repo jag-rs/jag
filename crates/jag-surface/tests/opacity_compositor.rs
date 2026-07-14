@@ -1,14 +1,121 @@
 use std::sync::Arc;
 
 use jag_draw::{
-    Brush, ColorLinPremul, ColorMatrix, DropShadow, ExternalTextureId, FilterEffect, MaskEffect,
-    MaskMode, SrgbColor, wgpu,
+    Brush, ColorLinPremul, ColorMatrix, DropShadow, ExternalTextureId, FilterEffect, MaskComposite,
+    MaskCompositeLayer, MaskEffect, MaskMode, SrgbColor, wgpu,
 };
 use jag_surface::JagSurface;
 
 fn pixel(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
     let offset = ((y * width + x) * 4) as usize;
     pixels[offset..offset + 4].try_into().unwrap()
+}
+
+#[test]
+fn mask_group_composites_all_css_operators_before_applying_content() {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+    else {
+        return;
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .unwrap();
+    let device = Arc::new(device);
+    let queue = Arc::new(queue);
+    let upload_mask = |label: &'static str, alpha: u8| {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            texture.as_image_copy(),
+            &[0, 0, 0, alpha],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        texture
+    };
+    let top_texture = upload_mask("mask-top-half", 128);
+    let below_texture = upload_mask("mask-below-quarter", 64);
+    let top_id = ExternalTextureId(50);
+    let below_id = ExternalTextureId(51);
+    let mut surface = JagSurface::new(device, queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    surface.set_frame_cache_enabled(false);
+    surface
+        .pass_manager()
+        .register_external_texture(top_id, top_texture.create_view(&Default::default()));
+    surface
+        .pass_manager()
+        .register_external_texture(below_id, below_texture.create_view(&Default::default()));
+
+    let mut canvas = surface.begin_frame(16, 4);
+    canvas.clear(ColorLinPremul::default());
+    for (index, composite) in [
+        MaskComposite::Add,
+        MaskComposite::Subtract,
+        MaskComposite::Intersect,
+        MaskComposite::Exclude,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let rect = jag_draw::Rect {
+            x: (index * 4) as f32,
+            y: 0.0,
+            w: 4.0,
+            h: 4.0,
+        };
+        let layer = |texture_id| MaskEffect {
+            texture_id,
+            mode: MaskMode::Alpha,
+            rect,
+            mapping: None,
+        };
+        assert!(canvas.push_mask_group(vec![
+            MaskCompositeLayer {
+                mask: layer(top_id),
+                composite,
+            },
+            MaskCompositeLayer {
+                mask: layer(below_id),
+                composite: MaskComposite::Add,
+            },
+        ]));
+        canvas.fill_rect(
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
+            Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+            index as i32,
+        );
+        canvas.pop_filter();
+    }
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    for (x, expected) in [(2, 160), (6, 96), (10, 32), (14, 128)] {
+        assert_alpha_near(pixel(&pixels, width, x, 2), expected);
+    }
 }
 
 fn assert_alpha_near(actual: [u8; 4], expected: u8) {

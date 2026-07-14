@@ -327,6 +327,15 @@ impl JagSurface {
                 geometry.logical_size,
                 mask,
             )?,
+            jag_draw::SurfaceEffect::MaskGroup(group) => self.pass.mask_group_surface(
+                &mut encoder,
+                &layer_view,
+                width,
+                height,
+                geometry.origin,
+                geometry.logical_size,
+                &group,
+            )?,
         };
         self.queue.submit(std::iter::once(encoder.finish()));
 
@@ -373,12 +382,13 @@ impl JagSurface {
                         }
                     }
 
-                    let layer_opacity = match surface.effect {
-                        jag_draw::SurfaceEffect::Opacity(opacity) => opacity,
+                    let layer_opacity = match &surface.effect {
+                        jag_draw::SurfaceEffect::Opacity(opacity) => *opacity,
                         jag_draw::SurfaceEffect::Blur(_) => 1.0,
                         jag_draw::SurfaceEffect::ColorMatrix(_) => 1.0,
                         jag_draw::SurfaceEffect::DropShadow(_) => 1.0,
                         jag_draw::SurfaceEffect::Mask(_) => 1.0,
+                        jag_draw::SurfaceEffect::MaskGroup(_) => 1.0,
                     };
                     if layer_opacity > 0.0
                         && let Some(z) = Self::effect_group_z(&flattened_group)
@@ -395,7 +405,7 @@ impl JagSurface {
                             let tex_id = self.render_effect_group_layer(
                                 geometry,
                                 flattened_group,
-                                surface.effect,
+                                surface.effect.clone(),
                                 text_provider,
                             )?;
                             out.push(Command::DrawExternalTexture {

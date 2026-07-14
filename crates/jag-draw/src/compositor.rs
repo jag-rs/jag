@@ -6,13 +6,14 @@ use crate::display_list::{Command, DisplayList};
 use crate::scene::{FilterEffect, Path, PathCmd, Rect, Transform2D};
 
 /// An effect applied once when an isolated surface is composited into its parent.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SurfaceEffect {
     Opacity(f32),
     Blur(f32),
     ColorMatrix(crate::ColorMatrix),
     DropShadow(crate::DropShadow),
     Mask(crate::MaskEffect),
+    MaskGroup(crate::MaskGroupEffect),
 }
 
 /// A display-list range that must be rendered into an isolated intermediate surface.
@@ -59,6 +60,7 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
                     FilterEffect::ColorMatrix(matrix) => SurfaceEffect::ColorMatrix(*matrix),
                     FilterEffect::DropShadow(shadow) => SurfaceEffect::DropShadow(*shadow),
                     FilterEffect::Mask(mask) => SurfaceEffect::Mask(*mask),
+                    FilterEffect::MaskGroup(group) => SurfaceEffect::MaskGroup(group.clone()),
                 };
                 push_surface(&mut plan, &mut open, &clips, &transforms, index, effect);
             }
@@ -67,12 +69,13 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
                     bail!("effect pop at command {index} has no matching push");
                 };
                 let matches = matches!(
-                    (command, surface.effect),
+                    (command, &surface.effect),
                     (Command::PopOpacity, SurfaceEffect::Opacity(_))
                         | (Command::PopFilter, SurfaceEffect::Blur(_))
                         | (Command::PopFilter, SurfaceEffect::ColorMatrix(_))
                         | (Command::PopFilter, SurfaceEffect::DropShadow(_))
                         | (Command::PopFilter, SurfaceEffect::Mask(_))
+                        | (Command::PopFilter, SurfaceEffect::MaskGroup(_))
                 );
                 if !matches {
                     bail!("mismatched effect pop at command {index}");
@@ -96,6 +99,7 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
                         )
                     }),
                     SurfaceEffect::Mask(_) => surface.bounds,
+                    SurfaceEffect::MaskGroup(_) => surface.bounds,
                 };
                 let completed = &mut plan.surfaces[surface.id];
                 completed.commands = surface.start..index;
@@ -168,7 +172,7 @@ fn push_surface(
     plan.surfaces.push(CompositorSurface {
         parent: open.last().map(|surface| surface.id),
         commands: index + 1..index + 1,
-        effect,
+        effect: effect.clone(),
         inherited_clip: *clips.last().unwrap(),
         inherited_transform: *transforms.last().unwrap(),
         bounds: None,

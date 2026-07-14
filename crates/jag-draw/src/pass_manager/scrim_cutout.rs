@@ -350,7 +350,7 @@ impl PassManager {
         let mut filtered_views = Vec::with_capacity(draw.effects.len());
         for effect in &draw.effects {
             let input = filtered_views.last().unwrap_or(&snapshot.view);
-            let output = match *effect {
+            let output = match effect.clone() {
                 crate::FilterEffect::Blur(radius) if radius > 0.0 => {
                     self.blur_surface(encoder, input, width, height, radius)
                 }
@@ -370,6 +370,21 @@ impl PassManager {
                         [0.0, 0.0],
                         [width as f32, height as f32],
                         mask,
+                    ) else {
+                        allocator.release_texture(snapshot);
+                        return;
+                    };
+                    output
+                }
+                crate::FilterEffect::MaskGroup(group) => {
+                    let Ok(output) = self.mask_group_surface(
+                        encoder,
+                        input,
+                        width,
+                        height,
+                        [0.0, 0.0],
+                        [width as f32, height as f32],
+                        &group,
                     ) else {
                         allocator.release_texture(snapshot);
                         return;

@@ -1,5 +1,6 @@
 use jag_draw::{
-    Brush, ExternalTextureId, FilterEffect, MaskEffect, MaskMode, MaskTextureMapping, Rect,
+    Brush, ExternalTextureId, FilterEffect, MaskCompositeLayer, MaskEffect, MaskGroupEffect,
+    MaskMode, MaskTextureMapping, Rect,
 };
 
 use super::{Canvas, GeneratedMaskTexture, UrlMaskTexture};
@@ -21,17 +22,39 @@ impl Canvas {
         brush: &Brush,
         mode: MaskMode,
     ) -> bool {
-        let Some(stops) = gradient_stops(brush) else {
+        let Some(mask) = self.resolve_generated_mask_pattern(
+            paint_rect,
+            tile_rect,
+            tile_step,
+            repeat_axes,
+            brush,
+            mode,
+        ) else {
             return false;
         };
+        self.push_filter(FilterEffect::Mask(mask));
+        true
+    }
+
+    /// Resolve a generated mask layer without beginning an effect scope.
+    pub fn resolve_generated_mask_pattern(
+        &mut self,
+        paint_rect: Rect,
+        tile_rect: Rect,
+        tile_step: [f32; 2],
+        repeat_axes: [bool; 2],
+        brush: &Brush,
+        mode: MaskMode,
+    ) -> Option<MaskEffect> {
+        let stops = gradient_stops(brush)?;
         let [a, b, c, d, e, f] = self.current_transform().m;
         let transform = [a, b, c, d, e, f];
         if (a * d - b * c).abs() <= f32::EPSILON {
-            return false;
+            return None;
         }
         let mapped_rect = transformed_bounds(paint_rect, transform);
         if mapped_rect.w <= 0.0 || mapped_rect.h <= 0.0 || stops.is_empty() {
-            return false;
+            return None;
         }
         let width = mapped_rect.w.ceil().max(1.0) as u32;
         let height = mapped_rect.h.ceil().max(1.0) as u32;
@@ -55,13 +78,12 @@ impl Canvas {
             height,
             pixels,
         });
-        self.push_filter(FilterEffect::Mask(MaskEffect {
+        Some(MaskEffect {
             texture_id: id,
             mode,
             rect: mapped_rect,
             mapping: None,
-        }));
-        true
+        })
     }
 
     /// Begin a GPU-native URL mask. Missing or loading images resolve to transparent.
@@ -74,10 +96,27 @@ impl Canvas {
         repeat_axes: [bool; 2],
         mode: MaskMode,
     ) -> bool {
-        let transform = self.current_transform().m;
-        let Some(inverse_transform) = inverse_transform(transform) else {
+        let Some(mask) =
+            self.resolve_url_mask(path, paint_rect, tile_rect, tile_step, repeat_axes, mode)
+        else {
             return false;
         };
+        self.push_filter(FilterEffect::Mask(mask));
+        true
+    }
+
+    /// Resolve a URL mask layer without beginning an effect scope.
+    pub fn resolve_url_mask(
+        &mut self,
+        path: impl Into<std::path::PathBuf>,
+        paint_rect: Rect,
+        tile_rect: Rect,
+        tile_step: [f32; 2],
+        repeat_axes: [bool; 2],
+        mode: MaskMode,
+    ) -> Option<MaskEffect> {
+        let transform = self.current_transform().m;
+        let inverse_transform = inverse_transform(transform)?;
         if paint_rect.w <= 0.0
             || paint_rect.h <= 0.0
             || tile_rect.w <= 0.0
@@ -85,7 +124,7 @@ impl Canvas {
             || repeat_axes[0] && tile_step[0] <= f32::EPSILON
             || repeat_axes[1] && tile_step[1] <= f32::EPSILON
         {
-            return false;
+            return None;
         }
         let rect = transformed_bounds(paint_rect, transform);
         let id = ExternalTextureId(self.next_generated_mask_texture_id);
@@ -94,7 +133,7 @@ impl Canvas {
             id,
             path: path.into(),
         });
-        self.push_filter(FilterEffect::Mask(MaskEffect {
+        Some(MaskEffect {
             texture_id: id,
             mode,
             rect,
@@ -106,7 +145,15 @@ impl Canvas {
                 repeat_axes,
                 flip_y: true,
             }),
-        }));
+        })
+    }
+
+    /// Begin one owned scope whose resolved layers are composited before application.
+    pub fn push_mask_group(&mut self, layers: Vec<MaskCompositeLayer>) -> bool {
+        if layers.is_empty() {
+            return false;
+        }
+        self.push_filter(FilterEffect::MaskGroup(MaskGroupEffect { layers }));
         true
     }
 }

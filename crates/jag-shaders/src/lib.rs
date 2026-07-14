@@ -561,7 +561,7 @@ struct Params {
     paint_rect: vec4<f32>,
     tile_rect: vec4<f32>,
     tile_step: vec2<f32>,
-    _padding: vec2<f32>,
+    extra_flags: vec2<u32>,
     flags: vec4<u32>,
 };
 @group(0) @binding(3) var<uniform> params: Params;
@@ -595,7 +595,31 @@ struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
     let mask_color = select(vec4(0.0), textureSample(mask, source_sampler, mask_uv), inside);
     let luminance = dot(mask_color.rgb, vec3(0.2126, 0.7152, 0.0722)) * mask_color.a;
     let coverage = select(mask_color.a, luminance, params.flags.x == 1u);
-    return source_color * coverage;
+    return select(source_color * coverage, vec4(coverage), params.extra_flags.x == 1u);
+}
+"#;
+
+/// Combine two already-resolved mask coverage surfaces using CSS mask-composite.
+pub const MASK_COMPOSITE_WGSL: &str = r#"
+@group(0) @binding(0) var accumulated: texture_2d<f32>;
+@group(0) @binding(1) var next_layer: texture_2d<f32>;
+@group(0) @binding(2) var source_sampler: sampler;
+@group(0) @binding(3) var<uniform> operation: vec4<u32>;
+
+struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
+@vertex fn vs_main(@builtin(vertex_index) index: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+    var uvs = array<vec2<f32>, 3>(vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
+    return VsOut(vec4(positions[index], 0.0, 1.0), uvs[index]);
+}
+@fragment fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
+    let top = textureSample(accumulated, source_sampler, input.uv).a;
+    let below = textureSample(next_layer, source_sampler, input.uv).a;
+    var coverage = top + below - top * below;
+    if operation.x == 1u { coverage = top * (1.0 - below); }
+    if operation.x == 2u { coverage = top * below; }
+    if operation.x == 3u { coverage = top + below - 2.0 * top * below; }
+    return vec4(coverage);
 }
 "#;
 

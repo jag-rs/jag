@@ -32,7 +32,7 @@ impl PassManager {
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let params =
-            crate::pipeline::MaskFilterRenderer::params(surface_origin, surface_size, mask);
+            crate::pipeline::MaskFilterRenderer::params(surface_origin, surface_size, mask, false);
         let group = self
             .mask_filter
             .bind_group(&self.device, source, mask_view, params);
@@ -53,6 +53,127 @@ impl PassManager {
         self.mask_filter.record(&mut pass, &group);
         drop(pass);
         Ok(view)
+    }
+
+    pub fn mask_group_surface(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        source: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        surface_origin: [f32; 2],
+        surface_size: [f32; 2],
+        group: &crate::MaskGroupEffect,
+    ) -> Result<wgpu::TextureView> {
+        anyhow::ensure!(!group.layers.is_empty(), "mask group has no layers");
+        let mut coverages = Vec::with_capacity(group.layers.len());
+        for layer in &group.layers {
+            let mask_view = self
+                .external_textures
+                .get(&layer.mask.texture_id)
+                .context("mask texture is not registered")?;
+            let view = self.new_filter_target(width, height, "mask-layer-coverage");
+            let params = crate::pipeline::MaskFilterRenderer::params(
+                surface_origin,
+                surface_size,
+                layer.mask,
+                true,
+            );
+            let bind = self
+                .mask_filter
+                .bind_group(&self.device, mask_view, mask_view, params);
+            self.record_mask_pass(encoder, &view, &bind, false);
+            coverages.push(view);
+        }
+
+        let mut accumulated = coverages.pop().expect("non-empty mask coverages");
+        for (layer, coverage) in group.layers[..group.layers.len() - 1]
+            .iter()
+            .rev()
+            .zip(coverages.into_iter().rev())
+        {
+            let view = self.new_filter_target(width, height, "mask-composite-output");
+            let bind = self.mask_filter.composite_group(
+                &self.device,
+                &coverage,
+                &accumulated,
+                layer.composite,
+            );
+            self.record_mask_pass(encoder, &view, &bind, true);
+            accumulated = view;
+        }
+
+        let view = self.new_filter_target(width, height, "mask-group-output");
+        let rect = crate::Rect {
+            x: surface_origin[0],
+            y: surface_origin[1],
+            w: surface_size[0],
+            h: surface_size[1],
+        };
+        let params = crate::pipeline::MaskFilterRenderer::params(
+            surface_origin,
+            surface_size,
+            crate::MaskEffect {
+                texture_id: crate::ExternalTextureId(0),
+                mode: crate::MaskMode::Alpha,
+                rect,
+                mapping: None,
+            },
+            false,
+        );
+        let bind = self
+            .mask_filter
+            .bind_group(&self.device, source, &accumulated, params);
+        self.record_mask_pass(encoder, &view, &bind, false);
+        Ok(view)
+    }
+
+    fn new_filter_target(&self, width: u32, height: u32, label: &'static str) -> wgpu::TextureView {
+        self.device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.surface_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    fn record_mask_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        group: &wgpu::BindGroup,
+        composite: bool,
+    ) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("mask-compositor-pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        if composite {
+            self.mask_filter.record_composite(&mut pass, group);
+        } else {
+            self.mask_filter.record(&mut pass, group);
+        }
     }
 
     pub fn drop_shadow_surface(

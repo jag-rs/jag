@@ -187,6 +187,15 @@ pub enum MaskMode {
     Luminance,
 }
 
+/// Porter-Duff operation used to combine a mask layer with the layers below it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaskComposite {
+    Add,
+    Subtract,
+    Intersect,
+    Exclude,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MaskTextureMapping {
     /// World-to-mask-local affine transform.
@@ -209,6 +218,18 @@ pub struct MaskEffect {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MaskCompositeLayer {
+    pub mask: MaskEffect,
+    pub composite: MaskComposite,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MaskGroupEffect {
+    /// Layers are ordered as authored: first is visually on top.
+    pub layers: Vec<MaskCompositeLayer>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum FilterEffect {
     /// CSS `blur()` standard deviation in logical pixels.
     Blur(f32),
@@ -216,6 +237,7 @@ pub enum FilterEffect {
     ColorMatrix(ColorMatrix),
     DropShadow(DropShadow),
     Mask(MaskEffect),
+    MaskGroup(MaskGroupEffect),
 }
 
 #[derive(Clone, Copy, Debug)]
