@@ -14,6 +14,7 @@ mod core;
 mod frame;
 mod masks;
 mod opacity;
+mod text_mask;
 
 /// Cached GPU resources from a previous `end_frame` call, enabling scroll-only
 /// frames to skip the expensive IR walk, display list build, and GPU upload.

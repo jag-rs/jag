@@ -385,6 +385,7 @@ impl PassManager {
                         [0.0, 0.0],
                         [width as f32, height as f32],
                         &group,
+                        None,
                     ) else {
                         allocator.release_texture(snapshot);
                         return;

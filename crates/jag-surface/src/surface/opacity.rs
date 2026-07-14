@@ -58,134 +58,6 @@ impl JagSurface {
         commands.iter().filter_map(Command::z_index).min()
     }
 
-    fn build_glyph_draws_from_text_draws(
-        &self,
-        text_draws: &[jag_draw::ExtractedTextDraw],
-        provider: Option<&Arc<dyn jag_draw::TextProvider + Send + Sync>>,
-    ) -> Vec<(
-        [f32; 2],
-        jag_draw::RasterizedGlyph,
-        jag_draw::ColorLinPremul,
-        i32,
-        Option<jag_draw::Rect>,
-    )> {
-        let Some(provider) = provider else {
-            return Vec::new();
-        };
-
-        let sf = if self.dpi_scale.is_finite() && self.dpi_scale > 0.0 {
-            self.dpi_scale
-        } else {
-            1.0
-        };
-        let snap = |v: f32| -> f32 { (v * sf).round() / sf };
-
-        let mut glyph_draws = Vec::new();
-        for text_draw in text_draws {
-            let run = &text_draw.run;
-            let [a, b, c, d, e, f] = text_draw.transform.m;
-
-            let origin_x = a * run.pos[0] + c * run.pos[1] + e;
-            let origin_y = b * run.pos[0] + d * run.pos[1] + f;
-
-            let sx = (a * a + b * b).sqrt();
-            let sy = (c * c + d * d).sqrt();
-            let mut s = if sx.is_finite() && sy.is_finite() {
-                if sx > 0.0 && sy > 0.0 {
-                    (sx + sy) * 0.5
-                } else {
-                    sx.max(sy).max(1.0)
-                }
-            } else {
-                1.0
-            };
-            if !s.is_finite() || s <= 0.0 {
-                s = 1.0;
-            }
-
-            let logical_size = (run.size * s).max(1.0);
-            let physical_size = (logical_size * sf).max(1.0);
-            let run_for_provider = jag_draw::TextRun {
-                text: run.text.clone(),
-                pos: [0.0, 0.0],
-                size: physical_size,
-                logical_size: 0.0,
-                color: run.color,
-                weight: run.weight,
-                style: run.style,
-                family: run.family.clone(),
-            };
-
-            let glyphs = jag_draw::rasterize_run_cached(provider.as_ref(), &run_for_provider);
-            for g in glyphs.iter() {
-                let mut origin = [origin_x + g.offset[0] / sf, origin_y + g.offset[1] / sf];
-                if logical_size <= 15.0 {
-                    origin[0] = snap(origin[0]);
-                    origin[1] = snap(origin[1]);
-                }
-                // Opacity groups are rendered into intermediate layers; LCD/subpixel text
-                // can ghost when composited again. Force grayscale AA in this path.
-                glyph_draws.push((
-                    origin,
-                    Self::grayscale_glyph_for_compositing(g),
-                    run.color,
-                    text_draw.z,
-                    text_draw.clip,
-                ));
-            }
-        }
-
-        glyph_draws
-    }
-
-    fn grayscale_glyph_for_compositing(
-        glyph: &jag_draw::RasterizedGlyph,
-    ) -> jag_draw::RasterizedGlyph {
-        use jag_draw::{GlyphMask, MaskFormat, SubpixelMask};
-
-        let mask = match &glyph.mask {
-            GlyphMask::Color(c) => GlyphMask::Color(c.clone()),
-            GlyphMask::Subpixel(m) => match m.format {
-                MaskFormat::Rgba8 => {
-                    let mut out = Vec::with_capacity(m.data.len());
-                    for px in m.data.chunks_exact(4) {
-                        let gray =
-                            ((u16::from(px[0]) + u16::from(px[1]) + u16::from(px[2])) / 3) as u8;
-                        out.extend_from_slice(&[gray, gray, gray, 0]);
-                    }
-                    GlyphMask::Subpixel(SubpixelMask {
-                        width: m.width,
-                        height: m.height,
-                        format: MaskFormat::Rgba8,
-                        data: out,
-                    })
-                }
-                MaskFormat::Rgba16 => {
-                    let mut out = Vec::with_capacity(m.data.len());
-                    for px in m.data.chunks_exact(8) {
-                        let r = u16::from_le_bytes([px[0], px[1]]);
-                        let g = u16::from_le_bytes([px[2], px[3]]);
-                        let b = u16::from_le_bytes([px[4], px[5]]);
-                        let gray = ((u32::from(r) + u32::from(g) + u32::from(b)) / 3) as u16;
-                        let gb = gray.to_le_bytes();
-                        out.extend_from_slice(&[gb[0], gb[1], gb[0], gb[1], gb[0], gb[1], 0, 0]);
-                    }
-                    GlyphMask::Subpixel(SubpixelMask {
-                        width: m.width,
-                        height: m.height,
-                        format: MaskFormat::Rgba16,
-                        data: out,
-                    })
-                }
-            },
-        };
-
-        jag_draw::RasterizedGlyph {
-            offset: glyph.offset,
-            mask,
-        }
-    }
-
     fn render_effect_group_layer(
         &mut self,
         geometry: LayerGeometry,
@@ -193,6 +65,11 @@ impl JagSurface {
         effect: jag_draw::SurfaceEffect,
         text_provider: Option<&Arc<dyn jag_draw::TextProvider + Send + Sync>>,
     ) -> Result<ExternalTextureId> {
+        let needs_text_clip = matches!(
+            &effect,
+            jag_draw::SurfaceEffect::MaskGroup(group)
+                if group.layers.iter().any(|layer| layer.text_clip)
+        );
         translate_clips(&mut commands, geometry.origin);
         let group_list = DisplayList {
             viewport: Viewport {
@@ -302,6 +179,9 @@ impl JagSurface {
             &self.queue,
             false,
         );
+        let text_clip_view = needs_text_clip.then(|| {
+            self.render_mask_text_coverage(&mut encoder, width, height, &group_scene, &group_glyphs)
+        });
         self.pass.set_scroll_offset(saved_scroll);
         self.pass.set_shadow_instances(&[]);
         let layer_view = match effect {
@@ -335,6 +215,7 @@ impl JagSurface {
                 geometry.origin,
                 geometry.logical_size,
                 &group,
+                text_clip_view.as_ref(),
             )?,
         };
         self.queue.submit(std::iter::once(encoder.finish()));

@@ -92,7 +92,7 @@ impl Canvas {
         // Inside opacity groups we route through display-list text so the
         // whole subtree can be composited once with group alpha.
         if let Some(ref provider) = self.text_provider
-            && !self.painter.has_active_opacity()
+            && !self.painter.has_active_effect()
         {
             // Apply current transform to origin (handles zone positioning)
             let transform = self.painter.current_transform();
@@ -215,7 +215,7 @@ impl Canvas {
         z: i32,
     ) {
         if let Some(ref provider) = self.text_provider
-            && !self.painter.has_active_opacity()
+            && !self.painter.has_active_effect()
         {
             let transform = self.painter.current_transform();
             let [a, b, c, d, e, f] = transform.m;

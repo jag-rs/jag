@@ -64,6 +64,7 @@ impl PassManager {
         surface_origin: [f32; 2],
         surface_size: [f32; 2],
         group: &crate::MaskGroupEffect,
+        text_clip: Option<&wgpu::TextureView>,
     ) -> Result<wgpu::TextureView> {
         anyhow::ensure!(!group.layers.is_empty(), "mask group has no layers");
         let mut coverages = Vec::with_capacity(group.layers.len());
@@ -83,6 +84,20 @@ impl PassManager {
                 .mask_filter
                 .bind_group(&self.device, mask_view, mask_view, params);
             self.record_mask_pass(encoder, &view, &bind, false);
+            let view = if layer.text_clip {
+                let text_clip = text_clip.context("text-clipped mask has no glyph coverage")?;
+                let clipped = self.new_filter_target(width, height, "text-clipped-mask-layer");
+                let bind = self.mask_filter.composite_group(
+                    &self.device,
+                    &view,
+                    text_clip,
+                    crate::MaskComposite::Intersect,
+                );
+                self.record_mask_pass(encoder, &clipped, &bind, true);
+                clipped
+            } else {
+                view
+            };
             coverages.push(view);
         }
 

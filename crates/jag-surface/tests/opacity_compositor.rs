@@ -6,6 +6,26 @@ use jag_draw::{
 };
 use jag_surface::JagSurface;
 
+struct BlockTextProvider;
+
+impl jag_draw::TextProvider for BlockTextProvider {
+    fn rasterize_run(&self, _run: &jag_draw::TextRun) -> Vec<jag_draw::RasterizedGlyph> {
+        vec![jag_draw::RasterizedGlyph {
+            offset: [0.0, 0.0],
+            mask: jag_draw::GlyphMask::Subpixel(jag_draw::SubpixelMask {
+                width: 2,
+                height: 2,
+                format: jag_draw::MaskFormat::Rgba8,
+                data: [255, 255, 255, 0].repeat(4),
+            }),
+        }]
+    }
+
+    fn cache_tag(&self) -> u64 {
+        0x5445_5854_434c_4950
+    }
+}
+
 fn pixel(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
     let offset = ((y * width + x) * 4) as usize;
     pixels[offset..offset + 4].try_into().unwrap()
@@ -57,8 +77,10 @@ fn mask_group_composites_all_css_operators_before_applying_content() {
     };
     let top_texture = upload_mask("mask-top-half", 128);
     let below_texture = upload_mask("mask-below-quarter", 64);
+    let opaque_texture = upload_mask("mask-text-clip-opaque", 255);
     let top_id = ExternalTextureId(50);
     let below_id = ExternalTextureId(51);
+    let opaque_id = ExternalTextureId(52);
     let mut surface = JagSurface::new(device, queue, wgpu::TextureFormat::Rgba8UnormSrgb);
     surface.set_frame_cache_enabled(false);
     surface
@@ -67,8 +89,12 @@ fn mask_group_composites_all_css_operators_before_applying_content() {
     surface
         .pass_manager()
         .register_external_texture(below_id, below_texture.create_view(&Default::default()));
+    surface
+        .pass_manager()
+        .register_external_texture(opaque_id, opaque_texture.create_view(&Default::default()));
 
-    let mut canvas = surface.begin_frame(16, 4);
+    let mut canvas = surface.begin_frame(24, 4);
+    canvas.set_text_provider(Arc::new(BlockTextProvider));
     canvas.clear(ColorLinPremul::default());
     for (index, composite) in [
         MaskComposite::Add,
@@ -95,10 +121,12 @@ fn mask_group_composites_all_css_operators_before_applying_content() {
             MaskCompositeLayer {
                 mask: layer(top_id),
                 composite,
+                text_clip: false,
             },
             MaskCompositeLayer {
                 mask: layer(below_id),
                 composite: MaskComposite::Add,
+                text_clip: false,
             },
         ]));
         canvas.fill_rect(
@@ -111,11 +139,46 @@ fn mask_group_composites_all_css_operators_before_applying_content() {
         );
         canvas.pop_filter();
     }
+    let text_rect = jag_draw::Rect {
+        x: 16.0,
+        y: 0.0,
+        w: 8.0,
+        h: 4.0,
+    };
+    assert!(canvas.push_mask_group(vec![MaskCompositeLayer {
+        mask: MaskEffect {
+            texture_id: opaque_id,
+            mode: MaskMode::Alpha,
+            rect: text_rect,
+            mapping: None,
+        },
+        composite: MaskComposite::Add,
+        text_clip: true,
+    }]));
+    canvas.fill_rect(
+        text_rect.x,
+        text_rect.y,
+        text_rect.w,
+        text_rect.h,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+        5,
+    );
+    canvas.draw_text_run(
+        [19.0, 1.0],
+        "x".into(),
+        2.0,
+        ColorLinPremul::from_srgba_u8([255; 4]),
+        6,
+    );
+    canvas.pop_filter();
 
     let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
     for (x, expected) in [(2, 160), (6, 96), (10, 32), (14, 128)] {
         assert_alpha_near(pixel(&pixels, width, x, 2), expected);
     }
+    assert_alpha_near(pixel(&pixels, width, 17, 2), 0);
+    assert_alpha_near(pixel(&pixels, width, 19, 2), 255);
+    assert_alpha_near(pixel(&pixels, width, 22, 2), 0);
 }
 
 fn assert_alpha_near(actual: [u8; 4], expected: u8) {

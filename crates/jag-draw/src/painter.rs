@@ -68,6 +68,10 @@ impl Painter {
         self.opacity_depth > 0
     }
 
+    pub fn has_active_effect(&self) -> bool {
+        self.opacity_depth > 0 || self.filter_depth > 0
+    }
+
     pub fn push_filter(&mut self, effect: FilterEffect) {
         self.filter_depth += 1;
         self.list.commands.push(Command::PushFilter(effect));

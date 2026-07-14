@@ -221,6 +221,7 @@ pub struct MaskEffect {
 pub struct MaskCompositeLayer {
     pub mask: MaskEffect,
     pub composite: MaskComposite,
+    pub text_clip: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
