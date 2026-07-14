@@ -4,8 +4,8 @@ use std::sync::Arc;
 // use crate::display_list::{Command, DisplayList, Viewport};
 use crate::pipeline::{
     BackdropBlurRenderer, BackgroundRenderer, BasicSolidRenderer, Blitter, BlurRenderer,
-    ColorFilterRenderer, Compositor, DropShadowFilterRenderer, OverlaySolidRenderer,
-    ScrimSolidRenderer, ScrimStencilMaskRenderer, ScrimStencilRenderer,
+    ColorFilterRenderer, Compositor, DropShadowFilterRenderer, MaskFilterRenderer,
+    OverlaySolidRenderer, ScrimSolidRenderer, ScrimStencilMaskRenderer, ScrimStencilRenderer,
     ShadowCompositeInstanceRenderer, ShadowCompositeRenderer, ShadowInstanceRenderer, SmaaRenderer,
     TextRenderer,
 };
@@ -216,6 +216,7 @@ pub struct PassManager {
     pub blur_rgba: BlurRenderer,
     pub color_filter: ColorFilterRenderer,
     pub drop_shadow_filter: DropShadowFilterRenderer,
+    pub mask_filter: MaskFilterRenderer,
     pub backdrop_blur: BackdropBlurRenderer,
     pub shadow_comp: ShadowCompositeRenderer,
     // Analytic box-shadow instance pipelines (offscreen + direct targets).

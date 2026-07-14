@@ -1,6 +1,56 @@
 use super::PassManager;
+use anyhow::{Context, Result};
 
 impl PassManager {
+    pub fn mask_surface(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        source: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        mask: crate::MaskEffect,
+    ) -> Result<wgpu::TextureView> {
+        let mask_view = self
+            .external_textures
+            .get(&mask.texture_id)
+            .context("mask texture is not registered")?;
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("mask-filter-output"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.surface_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let group = self
+            .mask_filter
+            .bind_group(&self.device, source, mask_view, mask.mode);
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("mask-filter-pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        self.mask_filter.record(&mut pass, &group);
+        drop(pass);
+        Ok(view)
+    }
+
     pub fn drop_shadow_surface(
         &self,
         encoder: &mut wgpu::CommandEncoder,

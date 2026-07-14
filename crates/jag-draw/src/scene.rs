@@ -181,6 +181,19 @@ pub struct DropShadow {
     pub color: SrgbColor,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaskMode {
+    Alpha,
+    Luminance,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MaskEffect {
+    /// A straight-RGBA resolved mask texture aligned to the owned surface bounds.
+    pub texture_id: crate::display_list::ExternalTextureId,
+    pub mode: MaskMode,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FilterEffect {
     /// CSS `blur()` standard deviation in logical pixels.
@@ -188,6 +201,7 @@ pub enum FilterEffect {
     /// A 4x5 matrix applied to unpremultiplied RGBA, then premultiplied again.
     ColorMatrix(ColorMatrix),
     DropShadow(DropShadow),
+    Mask(MaskEffect),
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -361,6 +361,13 @@ impl PassManager {
                 crate::FilterEffect::DropShadow(shadow) => {
                     self.drop_shadow_surface(encoder, input, width, height, shadow)
                 }
+                crate::FilterEffect::Mask(mask) => {
+                    let Ok(output) = self.mask_surface(encoder, input, width, height, mask) else {
+                        allocator.release_texture(snapshot);
+                        return;
+                    };
+                    output
+                }
             };
             filtered_views.push(output);
         }

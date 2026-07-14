@@ -12,6 +12,7 @@ pub enum SurfaceEffect {
     Blur(f32),
     ColorMatrix(crate::ColorMatrix),
     DropShadow(crate::DropShadow),
+    Mask(crate::MaskEffect),
 }
 
 /// A display-list range that must be rendered into an isolated intermediate surface.
@@ -57,6 +58,7 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
                     FilterEffect::Blur(radius) => SurfaceEffect::Blur(radius.max(0.0)),
                     FilterEffect::ColorMatrix(matrix) => SurfaceEffect::ColorMatrix(*matrix),
                     FilterEffect::DropShadow(shadow) => SurfaceEffect::DropShadow(*shadow),
+                    FilterEffect::Mask(mask) => SurfaceEffect::Mask(*mask),
                 };
                 push_surface(&mut plan, &mut open, &clips, &transforms, index, effect);
             }
@@ -70,6 +72,7 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
                         | (Command::PopFilter, SurfaceEffect::Blur(_))
                         | (Command::PopFilter, SurfaceEffect::ColorMatrix(_))
                         | (Command::PopFilter, SurfaceEffect::DropShadow(_))
+                        | (Command::PopFilter, SurfaceEffect::Mask(_))
                 );
                 if !matches {
                     bail!("mismatched effect pop at command {index}");
@@ -92,6 +95,7 @@ pub fn build_compositor_plan(list: &DisplayList) -> Result<CompositorPlan> {
                             Some(outset(shifted, shadow.blur_radius * 6.0)),
                         )
                     }),
+                    SurfaceEffect::Mask(_) => surface.bounds,
                 };
                 let completed = &mut plan.surfaces[surface.id];
                 completed.commands = surface.start..index;
@@ -534,6 +538,33 @@ mod tests {
                 y: 2.0,
                 w: 16.0,
                 h: 16.0,
+            })
+        );
+    }
+
+    #[test]
+    fn mask_surface_owns_descendants_without_expanding_ink_bounds() {
+        let mask = crate::MaskEffect {
+            texture_id: crate::ExternalTextureId(7),
+            mode: crate::MaskMode::Alpha,
+        };
+        let list = DisplayList {
+            commands: vec![
+                Command::PushFilter(FilterEffect::Mask(mask)),
+                rect(10.0, 12.0, 4.0, 6.0),
+                Command::PopFilter,
+            ],
+            ..Default::default()
+        };
+        let surface = &build_compositor_plan(&list).unwrap().surfaces[0];
+        assert_eq!(surface.effect, SurfaceEffect::Mask(mask));
+        assert_eq!(
+            surface.bounds,
+            Some(Rect {
+                x: 10.0,
+                y: 12.0,
+                w: 4.0,
+                h: 6.0
             })
         );
     }

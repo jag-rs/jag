@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use jag_draw::{Brush, ColorLinPremul, ColorMatrix, DropShadow, FilterEffect, SrgbColor, wgpu};
+use jag_draw::{
+    Brush, ColorLinPremul, ColorMatrix, DropShadow, ExternalTextureId, FilterEffect, MaskEffect,
+    MaskMode, SrgbColor, wgpu,
+};
 use jag_surface::JagSurface;
 
 fn pixel(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
@@ -309,4 +312,81 @@ fn backdrop_filter_snapshots_before_later_transparent_content() {
         "chain order wrong: {filtered:?}"
     );
     assert!(later[1] > 250, "later content was filtered: {later:?}");
+}
+
+#[test]
+fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+    else {
+        return;
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .unwrap();
+    let device = Arc::new(device);
+    let queue = Arc::new(queue);
+    let mask_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("resolved-mask-test"),
+        size: wgpu::Extent3d {
+            width: 4,
+            height: 8,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let mask_pixels = [255, 0, 0, 128].repeat(32);
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: &mask_texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &mask_pixels,
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(16),
+            rows_per_image: Some(8),
+        },
+        wgpu::Extent3d {
+            width: 4,
+            height: 8,
+            depth_or_array_layers: 1,
+        },
+    );
+
+    let mut surface = JagSurface::new(device, queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    surface.set_frame_cache_enabled(false);
+    let mask_id = ExternalTextureId(42);
+    surface
+        .pass_manager()
+        .register_external_texture(mask_id, mask_texture.create_view(&Default::default()));
+    let mut canvas = surface.begin_frame(8, 8);
+    canvas.clear(ColorLinPremul::default());
+    for (x, mode, z) in [(0.0, MaskMode::Alpha, 1), (4.0, MaskMode::Luminance, 2)] {
+        canvas.push_filter(FilterEffect::Mask(MaskEffect {
+            texture_id: mask_id,
+            mode,
+        }));
+        canvas.fill_rect(
+            x,
+            0.0,
+            4.0,
+            8.0,
+            Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+            z,
+        );
+        canvas.pop_filter();
+    }
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    assert_alpha_near(pixel(&pixels, width, 2, 4), 128);
+    assert_alpha_near(pixel(&pixels, width, 6, 4), 27);
 }

@@ -318,6 +318,10 @@ impl JagSurface {
                 self.pass
                     .drop_shadow_surface(&mut encoder, &layer_view, width, height, shadow)
             }
+            jag_draw::SurfaceEffect::Mask(mask) => {
+                self.pass
+                    .mask_surface(&mut encoder, &layer_view, width, height, mask)?
+            }
         };
         self.queue.submit(std::iter::once(encoder.finish()));
 
@@ -369,6 +373,7 @@ impl JagSurface {
                         jag_draw::SurfaceEffect::Blur(_) => 1.0,
                         jag_draw::SurfaceEffect::ColorMatrix(_) => 1.0,
                         jag_draw::SurfaceEffect::DropShadow(_) => 1.0,
+                        jag_draw::SurfaceEffect::Mask(_) => 1.0,
                     };
                     if layer_opacity > 0.0
                         && let Some(z) = Self::effect_group_z(&flattened_group)

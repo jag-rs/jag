@@ -549,6 +549,28 @@ fn srgb_to_linear(value: vec3<f32>) -> vec3<f32> {
 }
 "#;
 
+pub const MASK_FILTER_WGSL: &str = r#"
+@group(0) @binding(0) var source: texture_2d<f32>;
+@group(0) @binding(1) var mask: texture_2d<f32>;
+@group(0) @binding(2) var source_sampler: sampler;
+struct Params { mode: u32, _pad0: u32, _pad1: u32, _pad2: u32 };
+@group(0) @binding(3) var<uniform> params: Params;
+
+struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
+@vertex fn vs_main(@builtin(vertex_index) index: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+    var uvs = array<vec2<f32>, 3>(vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
+    return VsOut(vec4(positions[index], 0.0, 1.0), uvs[index]);
+}
+@fragment fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
+    let source_color = textureSample(source, source_sampler, input.uv);
+    let mask_color = textureSample(mask, source_sampler, input.uv);
+    let luminance = dot(mask_color.rgb, vec3(0.2126, 0.7152, 0.0722)) * mask_color.a;
+    let coverage = select(mask_color.a, luminance, params.mode == 1u);
+    return source_color * coverage;
+}
+"#;
+
 /// Composite blurred mask tinted with a premultiplied color onto the target.
 pub const SHADOW_COMPOSITE_WGSL: &str = r#"
 struct VsOut {
