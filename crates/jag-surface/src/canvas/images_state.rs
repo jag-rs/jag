@@ -145,13 +145,18 @@ impl Canvas {
         {
             return;
         }
-        self.backdrop_blur_draws.push(BackdropBlurDraw {
+        let draw = BackdropBlurDraw {
             rect,
             effects,
             z,
             transform: self.painter.current_transform(),
             clip: self.clip_stack.last().copied().flatten(),
-        });
+        };
+        if self.painter.has_active_effect() {
+            self.painter.backdrop_filter(draw);
+        } else {
+            self.backdrop_blur_draws.push(draw);
+        }
     }
 
     /// Queue raw pixel data to be drawn at origin with the given size.

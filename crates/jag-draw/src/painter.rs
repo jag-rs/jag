@@ -84,6 +84,10 @@ impl Painter {
         }
     }
 
+    pub fn backdrop_filter(&mut self, draw: BackdropBlurDraw) {
+        self.list.commands.push(Command::BackdropFilter(draw));
+    }
+
     /// Return the current number of commands in the display list.
     pub fn command_count(&self) -> usize {
         self.list.commands.len()

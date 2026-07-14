@@ -283,6 +283,7 @@ fn command_bounds(command: &Command) -> Option<Rect> {
         Command::DrawExternalTexture {
             rect, transform, ..
         } => (*rect, *transform),
+        Command::BackdropFilter(draw) => (draw.rect, draw.transform),
         _ => return None,
     };
     Some(transformed_bounds(rect, transform))

@@ -71,6 +71,20 @@ impl JagSurface {
                 if group.layers.iter().any(|layer| layer.text_clip)
         );
         translate_clips(&mut commands, geometry.origin);
+        let backdrop_draws = commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::BackdropFilter(draw) => {
+                    let mut draw = draw.clone();
+                    if let Some(clip) = &mut draw.clip {
+                        clip.x -= geometry.origin[0];
+                        clip.y -= geometry.origin[1];
+                    }
+                    Some(draw)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         let group_list = DisplayList {
             viewport: Viewport {
                 width: geometry.pixel_size[0],
@@ -172,10 +186,10 @@ impl JagSurface {
             &group_glyphs,
             &group_svgs,
             &group_images,
-            &[],
+            &backdrop_draws,
             &group_scene.external_texture_draws,
             wgpu::Color::TRANSPARENT,
-            true,
+            backdrop_draws.is_empty(),
             &self.queue,
             false,
         );

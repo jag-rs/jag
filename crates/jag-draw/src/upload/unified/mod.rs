@@ -243,7 +243,7 @@ impl UnifiedBuilder {
                 }
             }
             // Effect groups are flattened to external textures by jag-surface.
-            Command::PushFilter(_) | Command::PopFilter => {}
+            Command::PushFilter(_) | Command::PopFilter | Command::BackdropFilter(_) => {}
         }
     }
 
