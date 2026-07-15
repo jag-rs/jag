@@ -1,3 +1,20 @@
+//! Raster image cache: decode PNG/JPEG/GIF/WebP files into GPU textures and
+//! keep them in an LRU cache with a byte budget (256 MiB by default).
+//!
+//! Decoding notes:
+//! - **Format is detected from the file's content (magic bytes), not its
+//!   extension.** Callers can point at a file whose name doesn't match its
+//!   bytes — e.g. a PNG screenshot cached under a `.jpg` name by an upstream
+//!   media bridge — and it still decodes correctly. `image::open` would pick the
+//!   decoder from the extension and fail silently on such a mismatch; we use
+//!   `decode_image_from_path` (`image::ImageReader` + `with_guessed_format`)
+//!   instead.
+//! - Images whose decoded width or height exceeds the device's
+//!   `max_texture_dimension_2d` are skipped (they cannot be uploaded as a single
+//!   texture).
+//! - Filesystem decodes run off the render thread; results are delivered back
+//!   over an `mpsc` channel and uploaded on a later frame.
+
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
