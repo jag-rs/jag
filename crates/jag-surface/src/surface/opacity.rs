@@ -6,6 +6,98 @@ use jag_draw::{Command, DisplayList, ExternalTextureId, Rect, Transform2D, Viewp
 
 use super::JagSurface;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LayerGeometry {
+    origin: [f32; 2],
+    logical_size: [f32; 2],
+    pixel_size: [u32; 2],
+}
+
+fn layer_geometry(bounds: Rect, viewport: Viewport, scale: f32) -> Option<LayerGeometry> {
+    if !scale.is_finite()
+        || scale <= 0.0
+        || !bounds.x.is_finite()
+        || !bounds.y.is_finite()
+        || !bounds.w.is_finite()
+        || !bounds.h.is_finite()
+        || bounds.w <= 0.0
+        || bounds.h <= 0.0
+    {
+        return None;
+    }
+    let x0 = (bounds.x * scale).floor().clamp(0.0, viewport.width as f32) as u32;
+    let y0 = (bounds.y * scale)
+        .floor()
+        .clamp(0.0, viewport.height as f32) as u32;
+    let x1 = ((bounds.x + bounds.w) * scale)
+        .ceil()
+        .clamp(0.0, viewport.width as f32) as u32;
+    let y1 = ((bounds.y + bounds.h) * scale)
+        .ceil()
+        .clamp(0.0, viewport.height as f32) as u32;
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    Some(LayerGeometry {
+        origin: [x0 as f32 / scale, y0 as f32 / scale],
+        logical_size: [(x1 - x0) as f32 / scale, (y1 - y0) as f32 / scale],
+        pixel_size: [x1 - x0, y1 - y0],
+    })
+}
+
+fn localize_clips(commands: &mut [Command], origin: [f32; 2]) {
+    let mut transforms = vec![Transform2D::identity()];
+    for command in commands {
+        match command {
+            Command::PushTransform(transform) => transforms.push(*transform),
+            Command::PopTransform => {
+                if transforms.len() > 1 {
+                    transforms.pop();
+                }
+            }
+            Command::PushClip(clip) => {
+                clip.0 = transformed_rect_bounds(clip.0, *transforms.last().unwrap());
+                clip.0.x -= origin[0];
+                clip.0.y -= origin[1];
+            }
+            _ => {}
+        }
+    }
+}
+
+fn transformed_rect_bounds(rect: Rect, transform: Transform2D) -> Rect {
+    let [a, b, c, d, e, f] = transform.m;
+    let points = [
+        [rect.x, rect.y],
+        [rect.x + rect.w, rect.y],
+        [rect.x, rect.y + rect.h],
+        [rect.x + rect.w, rect.y + rect.h],
+    ]
+    .map(|[x, y]| [a * x + c * y + e, b * x + d * y + f]);
+    let min_x = points
+        .iter()
+        .map(|point| point[0])
+        .fold(f32::INFINITY, f32::min);
+    let max_x = points
+        .iter()
+        .map(|point| point[0])
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_y = points
+        .iter()
+        .map(|point| point[1])
+        .fold(f32::INFINITY, f32::min);
+    let max_y = points
+        .iter()
+        .map(|point| point[1])
+        .fold(f32::NEG_INFINITY, f32::max);
+    Rect {
+        x: min_x,
+        y: min_y,
+        w: max_x - min_x,
+        h: max_y - min_y,
+    }
+}
+
 impl JagSurface {
     fn allocate_synthetic_external_texture_id(&mut self) -> ExternalTextureId {
         let id = ExternalTextureId(self.next_synthetic_external_texture_id);
@@ -14,172 +106,44 @@ impl JagSurface {
         id
     }
 
-    fn opacity_group_z(commands: &[Command]) -> Option<i32> {
+    fn effect_group_z(commands: &[Command]) -> Option<i32> {
         commands.iter().filter_map(Command::z_index).min()
     }
 
-    fn collect_opacity_group(commands: &[Command], start_idx: usize) -> (Vec<Command>, usize) {
-        let mut depth = 1usize;
-        let mut i = start_idx;
-        let mut group = Vec::new();
-
-        while i < commands.len() {
-            match &commands[i] {
-                Command::PushOpacity(_) => {
-                    depth += 1;
-                    group.push(commands[i].clone());
-                }
-                Command::PopOpacity => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        return (group, i + 1);
-                    }
-                    group.push(Command::PopOpacity);
-                }
-                _ => group.push(commands[i].clone()),
-            }
-            i += 1;
-        }
-
-        (group, i)
-    }
-
-    fn build_glyph_draws_from_text_draws(
-        &self,
-        text_draws: &[jag_draw::ExtractedTextDraw],
-        provider: Option<&Arc<dyn jag_draw::TextProvider + Send + Sync>>,
-    ) -> Vec<(
-        [f32; 2],
-        jag_draw::RasterizedGlyph,
-        jag_draw::ColorLinPremul,
-        i32,
-        Option<jag_draw::Rect>,
-    )> {
-        let Some(provider) = provider else {
-            return Vec::new();
-        };
-
-        let sf = if self.dpi_scale.is_finite() && self.dpi_scale > 0.0 {
-            self.dpi_scale
-        } else {
-            1.0
-        };
-        let snap = |v: f32| -> f32 { (v * sf).round() / sf };
-
-        let mut glyph_draws = Vec::new();
-        for text_draw in text_draws {
-            let run = &text_draw.run;
-            let [a, b, c, d, e, f] = text_draw.transform.m;
-
-            let origin_x = a * run.pos[0] + c * run.pos[1] + e;
-            let origin_y = b * run.pos[0] + d * run.pos[1] + f;
-
-            let sx = (a * a + b * b).sqrt();
-            let sy = (c * c + d * d).sqrt();
-            let mut s = if sx.is_finite() && sy.is_finite() {
-                if sx > 0.0 && sy > 0.0 {
-                    (sx + sy) * 0.5
-                } else {
-                    sx.max(sy).max(1.0)
-                }
-            } else {
-                1.0
-            };
-            if !s.is_finite() || s <= 0.0 {
-                s = 1.0;
-            }
-
-            let logical_size = (run.size * s).max(1.0);
-            let physical_size = (logical_size * sf).max(1.0);
-            let run_for_provider = jag_draw::TextRun {
-                text: run.text.clone(),
-                pos: [0.0, 0.0],
-                size: physical_size,
-                logical_size: 0.0,
-                color: run.color,
-                weight: run.weight,
-                style: run.style,
-                family: run.family.clone(),
-            };
-
-            let glyphs = jag_draw::rasterize_run_cached(provider.as_ref(), &run_for_provider);
-            for g in glyphs.iter() {
-                let mut origin = [origin_x + g.offset[0] / sf, origin_y + g.offset[1] / sf];
-                if logical_size <= 15.0 {
-                    origin[0] = snap(origin[0]);
-                    origin[1] = snap(origin[1]);
-                }
-                // Opacity groups are rendered into intermediate layers; LCD/subpixel text
-                // can ghost when composited again. Force grayscale AA in this path.
-                glyph_draws.push((
-                    origin,
-                    Self::grayscale_glyph_for_compositing(g),
-                    run.color,
-                    text_draw.z,
-                    text_draw.clip,
-                ));
-            }
-        }
-
-        glyph_draws
-    }
-
-    fn grayscale_glyph_for_compositing(
-        glyph: &jag_draw::RasterizedGlyph,
-    ) -> jag_draw::RasterizedGlyph {
-        use jag_draw::{GlyphMask, MaskFormat, SubpixelMask};
-
-        let mask = match &glyph.mask {
-            GlyphMask::Color(c) => GlyphMask::Color(c.clone()),
-            GlyphMask::Subpixel(m) => match m.format {
-                MaskFormat::Rgba8 => {
-                    let mut out = Vec::with_capacity(m.data.len());
-                    for px in m.data.chunks_exact(4) {
-                        let gray =
-                            ((u16::from(px[0]) + u16::from(px[1]) + u16::from(px[2])) / 3) as u8;
-                        out.extend_from_slice(&[gray, gray, gray, 0]);
-                    }
-                    GlyphMask::Subpixel(SubpixelMask {
-                        width: m.width,
-                        height: m.height,
-                        format: MaskFormat::Rgba8,
-                        data: out,
-                    })
-                }
-                MaskFormat::Rgba16 => {
-                    let mut out = Vec::with_capacity(m.data.len());
-                    for px in m.data.chunks_exact(8) {
-                        let r = u16::from_le_bytes([px[0], px[1]]);
-                        let g = u16::from_le_bytes([px[2], px[3]]);
-                        let b = u16::from_le_bytes([px[4], px[5]]);
-                        let gray = ((u32::from(r) + u32::from(g) + u32::from(b)) / 3) as u16;
-                        let gb = gray.to_le_bytes();
-                        out.extend_from_slice(&[gb[0], gb[1], gb[0], gb[1], gb[0], gb[1], 0, 0]);
-                    }
-                    GlyphMask::Subpixel(SubpixelMask {
-                        width: m.width,
-                        height: m.height,
-                        format: MaskFormat::Rgba16,
-                        data: out,
-                    })
-                }
-            },
-        };
-
-        jag_draw::RasterizedGlyph {
-            offset: glyph.offset,
-            mask,
-        }
-    }
-
-    fn render_opacity_group_layer(
+    fn render_effect_group_layer(
         &mut self,
-        viewport: Viewport,
-        commands: Vec<Command>,
+        geometry: LayerGeometry,
+        mut commands: Vec<Command>,
+        effect: jag_draw::SurfaceEffect,
         text_provider: Option<&Arc<dyn jag_draw::TextProvider + Send + Sync>>,
     ) -> Result<ExternalTextureId> {
-        let mut group_list = DisplayList { viewport, commands };
-        group_list.sort_by_z();
+        let needs_text_clip = matches!(
+            &effect,
+            jag_draw::SurfaceEffect::MaskGroup(group)
+                if group.layers.iter().any(|layer| layer.text_clip)
+        );
+        localize_clips(&mut commands, geometry.origin);
+        let backdrop_draws = commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::BackdropFilter(draw) => {
+                    let mut draw = draw.clone();
+                    if let Some(clip) = &mut draw.clip {
+                        clip.x -= geometry.origin[0];
+                        clip.y -= geometry.origin[1];
+                    }
+                    Some(draw)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let group_list = DisplayList {
+            viewport: Viewport {
+                width: geometry.pixel_size[0],
+                height: geometry.pixel_size[1],
+            },
+            commands,
+        };
 
         let group_scene =
             jag_draw::upload_display_list_unified(&mut self.allocator, &self.queue, &group_list)?;
@@ -232,10 +196,10 @@ impl JagSurface {
         }
         group_images.sort_by_key(|(_, _, _, z, _, _, _)| *z);
 
-        let width = viewport.width.max(1);
-        let height = viewport.height.max(1);
+        let width = geometry.pixel_size[0];
+        let height = geometry.pixel_size[1];
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("opacity-group-layer"),
+            label: Some("effect-group-layer"),
             size: wgpu::Extent3d {
                 width,
                 height,
@@ -253,11 +217,12 @@ impl JagSurface {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("opacity-group-encoder"),
+                label: Some("effect-group-encoder"),
             });
-        // Opacity groups render in their own coordinate space with no scroll.
+        // Shift world coordinates into this bounded layer's local pixel-aligned origin.
         let saved_scroll = self.pass.scroll_offset();
-        self.pass.set_scroll_offset([0.0, 0.0]);
+        self.pass
+            .set_scroll_offset([-geometry.origin[0], -geometry.origin[1]]);
         self.pass
             .set_shadow_instances(&group_scene.shadow_instances);
         self.pass.render_unified(
@@ -273,15 +238,52 @@ impl JagSurface {
             &group_glyphs,
             &group_svgs,
             &group_images,
-            &[],
+            &backdrop_draws,
             &group_scene.external_texture_draws,
             wgpu::Color::TRANSPARENT,
-            true,
+            backdrop_draws.is_empty(),
             &self.queue,
             false,
         );
+        let text_clip_view = needs_text_clip.then(|| {
+            self.render_mask_text_coverage(&mut encoder, width, height, &group_scene, &group_glyphs)
+        });
         self.pass.set_scroll_offset(saved_scroll);
         self.pass.set_shadow_instances(&[]);
+        let layer_view = match effect {
+            jag_draw::SurfaceEffect::Opacity(_) => layer_view,
+            jag_draw::SurfaceEffect::Blur(radius) => {
+                self.pass
+                    .blur_surface(&mut encoder, &layer_view, width, height, radius)
+            }
+            jag_draw::SurfaceEffect::ColorMatrix(matrix) => {
+                self.pass
+                    .color_filter_surface(&mut encoder, &layer_view, width, height, matrix)
+            }
+            jag_draw::SurfaceEffect::DropShadow(shadow) => {
+                self.pass
+                    .drop_shadow_surface(&mut encoder, &layer_view, width, height, shadow)
+            }
+            jag_draw::SurfaceEffect::Mask(mask) => self.pass.mask_surface(
+                &mut encoder,
+                &layer_view,
+                width,
+                height,
+                geometry.origin,
+                geometry.logical_size,
+                mask,
+            )?,
+            jag_draw::SurfaceEffect::MaskGroup(group) => self.pass.mask_group_surface(
+                &mut encoder,
+                &layer_view,
+                width,
+                height,
+                geometry.origin,
+                geometry.logical_size,
+                &group,
+                text_clip_view.as_ref(),
+            )?,
+        };
         self.queue.submit(std::iter::once(encoder.finish()));
 
         let tex_id = self.allocate_synthetic_external_texture_id();
@@ -289,20 +291,33 @@ impl JagSurface {
         Ok(tex_id)
     }
 
-    pub(super) fn flatten_opacity_groups(
+    pub(super) fn flatten_effect_groups(
         &mut self,
         commands: &[Command],
         viewport: Viewport,
         text_provider: Option<&Arc<dyn jag_draw::TextProvider + Send + Sync>>,
     ) -> Result<Vec<Command>> {
+        let plan = jag_draw::build_compositor_plan(&DisplayList {
+            viewport,
+            commands: commands.to_vec(),
+        })?;
         let mut out: Vec<Command> = Vec::new();
         let mut i = 0usize;
         while i < commands.len() {
-            match &commands[i] {
-                Command::PushOpacity(opacity) => {
-                    let (raw_group, next_i) = Self::collect_opacity_group(commands, i + 1);
+            match commands[i] {
+                Command::PushOpacity(_) | Command::PushFilter(_) => {
+                    let surface = plan
+                        .surfaces
+                        .iter()
+                        .find(|surface| surface.parent.is_none() && surface.commands.start == i + 1)
+                        .expect("validated compositor plan must own each root opacity scope");
+                    let mut raw_group = commands[surface.commands.clone()].to_vec();
+                    if let Some(clip) = surface.inherited_clip {
+                        raw_group.insert(0, Command::PushClip(jag_draw::ClipRect(clip)));
+                        raw_group.push(Command::PopClip);
+                    }
                     let flattened_group =
-                        self.flatten_opacity_groups(&raw_group, viewport, text_provider)?;
+                        self.flatten_effect_groups(&raw_group, viewport, text_provider)?;
 
                     // Preserve hit-only regions outside the composited layer.
                     for cmd in flattened_group.iter() {
@@ -314,9 +329,17 @@ impl JagSurface {
                         }
                     }
 
-                    let layer_opacity = opacity.clamp(0.0, 1.0);
+                    let layer_opacity = match &surface.effect {
+                        jag_draw::SurfaceEffect::Opacity(opacity) => *opacity,
+                        jag_draw::SurfaceEffect::Blur(_) => 1.0,
+                        jag_draw::SurfaceEffect::ColorMatrix(_) => 1.0,
+                        jag_draw::SurfaceEffect::DropShadow(_) => 1.0,
+                        jag_draw::SurfaceEffect::Mask(_) => 1.0,
+                        jag_draw::SurfaceEffect::MaskGroup(_) => 1.0,
+                    };
                     if layer_opacity > 0.0
-                        && let Some(z) = Self::opacity_group_z(&flattened_group)
+                        && let Some(z) = Self::effect_group_z(&flattened_group)
+                        && let Some(bounds) = surface.bounds
                     {
                         // DrawExternalTexture coordinates are interpreted in logical units
                         // by PassManager when logical pixel mode is enabled.
@@ -325,30 +348,31 @@ impl JagSurface {
                             self.dpi_scale,
                             self.ui_scale,
                         );
-                        let logical_w = (viewport.width as f32) / logical_scale;
-                        let logical_h = (viewport.height as f32) / logical_scale;
-                        let tex_id = self.render_opacity_group_layer(
-                            viewport,
-                            flattened_group,
-                            text_provider,
-                        )?;
-                        out.push(Command::DrawExternalTexture {
-                            rect: Rect {
-                                x: 0.0,
-                                y: 0.0,
-                                w: logical_w,
-                                h: logical_h,
-                            },
-                            texture_id: tex_id,
-                            z,
-                            transform: Transform2D::identity(),
-                            opacity: layer_opacity,
-                            premultiplied: true,
-                        });
+                        if let Some(geometry) = layer_geometry(bounds, viewport, logical_scale) {
+                            let tex_id = self.render_effect_group_layer(
+                                geometry,
+                                flattened_group,
+                                surface.effect.clone(),
+                                text_provider,
+                            )?;
+                            out.push(Command::DrawExternalTexture {
+                                rect: Rect {
+                                    x: geometry.origin[0],
+                                    y: geometry.origin[1],
+                                    w: geometry.logical_size[0],
+                                    h: geometry.logical_size[1],
+                                },
+                                texture_id: tex_id,
+                                z,
+                                transform: Transform2D::identity(),
+                                opacity: layer_opacity,
+                                premultiplied: true,
+                            });
+                        }
                     }
-                    i = next_i;
+                    i = surface.commands.end + 1;
                 }
-                Command::PopOpacity => {
+                Command::PopOpacity | Command::PopFilter => {
                     // Ignore unmatched pops.
                     i += 1;
                 }
@@ -359,5 +383,132 @@ impl JagSurface {
             }
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn layer_bounds_align_outward_to_device_pixels() {
+        let geometry = layer_geometry(
+            Rect {
+                x: 10.25,
+                y: 20.75,
+                w: 5.5,
+                h: 4.5,
+            },
+            Viewport {
+                width: 200,
+                height: 200,
+            },
+            2.0,
+        )
+        .unwrap();
+        assert_eq!(geometry.origin, [10.0, 20.5]);
+        assert_eq!(geometry.logical_size, [6.0, 5.0]);
+        assert_eq!(geometry.pixel_size, [12, 10]);
+    }
+
+    #[test]
+    fn layer_bounds_are_clamped_to_the_viewport() {
+        let geometry = layer_geometry(
+            Rect {
+                x: -5.0,
+                y: 8.0,
+                w: 20.0,
+                h: 10.0,
+            },
+            Viewport {
+                width: 10,
+                height: 12,
+            },
+            1.0,
+        )
+        .unwrap();
+        assert_eq!(geometry.origin, [0.0, 8.0]);
+        assert_eq!(geometry.logical_size, [10.0, 4.0]);
+        assert_eq!(geometry.pixel_size, [10, 4]);
+    }
+
+    #[test]
+    fn transformed_clips_are_normalized_into_layer_space() {
+        let mut commands = vec![
+            Command::PushTransform(Transform2D {
+                m: [2.0, 0.0, 0.0, 3.0, 10.0, 15.0],
+            }),
+            Command::PushClip(jag_draw::ClipRect(Rect {
+                x: 1.0,
+                y: 1.0,
+                w: 5.0,
+                h: 6.0,
+            })),
+            Command::PopTransform,
+        ];
+        localize_clips(&mut commands, [10.0, 15.0]);
+        let Command::PushClip(clip) = &commands[1] else {
+            unreachable!()
+        };
+        assert_eq!(
+            clip.0,
+            Rect {
+                x: 2.0,
+                y: 3.0,
+                w: 10.0,
+                h: 18.0
+            }
+        );
+    }
+
+    #[test]
+    fn layer_bounds_align_outward_at_fractional_device_scale() {
+        let geometry = layer_geometry(
+            Rect {
+                x: 2.2,
+                y: 3.4,
+                w: 4.1,
+                h: 5.2,
+            },
+            Viewport {
+                width: 100,
+                height: 100,
+            },
+            1.25,
+        )
+        .unwrap();
+        assert_eq!(geometry.pixel_size, [6, 7]);
+        assert_eq!(geometry.origin, [1.6, 3.2]);
+        assert_eq!(geometry.logical_size, [4.8, 5.6]);
+    }
+
+    #[test]
+    fn invalid_layer_bounds_are_rejected() {
+        let viewport = Viewport {
+            width: 100,
+            height: 100,
+        };
+        for bounds in [
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: f32::NAN,
+                h: 1.0,
+            },
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 1.0,
+                h: f32::INFINITY,
+            },
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 0.0,
+                h: 1.0,
+            },
+        ] {
+            assert_eq!(layer_geometry(bounds, viewport, 1.0), None);
+        }
     }
 }

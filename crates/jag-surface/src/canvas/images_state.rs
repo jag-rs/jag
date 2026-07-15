@@ -124,7 +124,20 @@ impl Canvas {
     /// This is a post-process draw that must be interleaved by z-index with
     /// transparent web paint, before the element's own translucent background.
     pub fn backdrop_blur_rect(&mut self, rect: Rect, radius: f32, z: i32) {
-        if rect.w <= 0.0 || rect.h <= 0.0 || radius <= 0.0 || !radius.is_finite() {
+        if radius <= 0.0 || !radius.is_finite() {
+            return;
+        }
+        self.backdrop_filter_rect(rect, vec![jag_draw::FilterEffect::Blur(radius)], z);
+    }
+
+    /// Queue an authored-order CSS backdrop-filter chain.
+    pub fn backdrop_filter_rect(
+        &mut self,
+        rect: Rect,
+        effects: Vec<jag_draw::FilterEffect>,
+        z: i32,
+    ) {
+        if rect.w <= 0.0 || rect.h <= 0.0 || effects.is_empty() {
             return;
         }
         if let Some(clip) = self.clip_rect_local()
@@ -132,13 +145,18 @@ impl Canvas {
         {
             return;
         }
-        self.backdrop_blur_draws.push(BackdropBlurDraw {
+        let draw = BackdropBlurDraw {
             rect,
-            radius,
+            effects,
             z,
             transform: self.painter.current_transform(),
             clip: self.clip_stack.last().copied().flatten(),
-        });
+        };
+        if self.painter.has_active_effect() {
+            self.painter.backdrop_filter(draw);
+        } else {
+            self.backdrop_blur_draws.push(draw);
+        }
     }
 
     /// Queue raw pixel data to be drawn at origin with the given size.
@@ -328,6 +346,14 @@ impl Canvas {
             self.opacity_stack.pop();
         }
         self.painter.pop_opacity();
+    }
+
+    pub fn push_filter(&mut self, effect: jag_draw::FilterEffect) {
+        self.painter.push_filter(effect);
+    }
+
+    pub fn pop_filter(&mut self) {
+        self.painter.pop_filter();
     }
 
     /// Add a hit-only region (invisible, used for interaction detection)

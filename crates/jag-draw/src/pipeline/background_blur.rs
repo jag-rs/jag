@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use wgpu::util::DeviceExt;
 
 pub struct BackgroundRenderer {
     pipeline: wgpu::RenderPipeline,
@@ -198,6 +199,37 @@ impl BlurRenderer {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: self.param_buffer.as_entire_binding(),
+                },
+            ],
+        })
+    }
+
+    pub fn bind_group_with_params(
+        &self,
+        device: &wgpu::Device,
+        tex_view: &wgpu::TextureView,
+        params: &[f32; 8],
+    ) -> wgpu::BindGroup {
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("blur-pass-params"),
+            contents: bytemuck::bytes_of(params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("blur-pass-bg"),
+            layout: &self.bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(tex_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: buffer.as_entire_binding(),
                 },
             ],
         })

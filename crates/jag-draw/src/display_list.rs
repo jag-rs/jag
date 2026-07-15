@@ -140,6 +140,11 @@ pub enum Command {
     /// intermediate layer, then blended back once with this opacity.
     PushOpacity(f32),
     PopOpacity,
+    /// Isolate descendants and apply the filter once to their rendered surface.
+    PushFilter(FilterEffect),
+    PopFilter,
+    /// Sample and filter the framebuffer owned by the current effect scope.
+    BackdropFilter(BackdropBlurDraw),
     /// Blit an externally-rendered texture (e.g., 3D viewport) into the scene.
     DrawExternalTexture {
         rect: Rect,
@@ -173,6 +178,7 @@ impl Command {
             Command::DrawSvg { z, .. } => Some(*z),
             Command::DrawHyperlink { z, .. } => Some(*z),
             Command::DrawExternalTexture { z, .. } => Some(*z),
+            Command::BackdropFilter(draw) => Some(draw.z),
             _ => None,
         }
     }

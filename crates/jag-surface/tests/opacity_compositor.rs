@@ -1,0 +1,1122 @@
+use std::sync::Arc;
+
+use jag_draw::{
+    Brush, ColorLinPremul, ColorMatrix, DropShadow, ExternalTextureId, FilterEffect, MaskComposite,
+    MaskCompositeLayer, MaskEffect, MaskMode, SrgbColor, wgpu,
+};
+use jag_surface::JagSurface;
+
+struct BlockTextProvider;
+
+impl jag_draw::TextProvider for BlockTextProvider {
+    fn rasterize_run(&self, _run: &jag_draw::TextRun) -> Vec<jag_draw::RasterizedGlyph> {
+        vec![jag_draw::RasterizedGlyph {
+            offset: [0.0, 0.0],
+            mask: jag_draw::GlyphMask::Subpixel(jag_draw::SubpixelMask {
+                width: 2,
+                height: 2,
+                format: jag_draw::MaskFormat::Rgba8,
+                data: [255, 255, 255, 0].repeat(4),
+            }),
+        }]
+    }
+
+    fn cache_tag(&self) -> u64 {
+        0x5445_5854_434c_4950
+    }
+}
+
+fn pixel(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
+    let offset = ((y * width + x) * 4) as usize;
+    pixels[offset..offset + 4].try_into().unwrap()
+}
+
+fn test_gpu() -> Option<(Arc<wgpu::Device>, Arc<wgpu::Queue>, JagSurface)> {
+    let instance = wgpu::Instance::default();
+    let adapter =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))?;
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .ok()?;
+    let device = Arc::new(device);
+    let queue = Arc::new(queue);
+    let mut surface = JagSurface::new(
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    surface.set_frame_cache_enabled(false);
+    Some((device, queue, surface))
+}
+
+fn test_surface() -> Option<JagSurface> {
+    test_gpu().map(|(_, _, surface)| surface)
+}
+
+fn physical(logical: f32, scale: f32) -> u32 {
+    (logical * scale).round() as u32
+}
+
+#[test]
+fn mask_group_composites_all_css_operators_before_applying_content() {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+    else {
+        return;
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .unwrap();
+    let device = Arc::new(device);
+    let queue = Arc::new(queue);
+    let upload_mask = |label: &'static str, alpha: u8| {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            texture.as_image_copy(),
+            &[0, 0, 0, alpha],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        texture
+    };
+    let top_texture = upload_mask("mask-top-half", 128);
+    let below_texture = upload_mask("mask-below-quarter", 64);
+    let opaque_texture = upload_mask("mask-text-clip-opaque", 255);
+    let top_id = ExternalTextureId(50);
+    let below_id = ExternalTextureId(51);
+    let opaque_id = ExternalTextureId(52);
+    let mut surface = JagSurface::new(device, queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    surface.set_frame_cache_enabled(false);
+    surface
+        .pass_manager()
+        .register_external_texture(top_id, top_texture.create_view(&Default::default()));
+    surface
+        .pass_manager()
+        .register_external_texture(below_id, below_texture.create_view(&Default::default()));
+    surface
+        .pass_manager()
+        .register_external_texture(opaque_id, opaque_texture.create_view(&Default::default()));
+
+    let mut canvas = surface.begin_frame(24, 4);
+    canvas.set_text_provider(Arc::new(BlockTextProvider));
+    canvas.clear(ColorLinPremul::default());
+    for (index, composite) in [
+        MaskComposite::Add,
+        MaskComposite::Subtract,
+        MaskComposite::Intersect,
+        MaskComposite::Exclude,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let rect = jag_draw::Rect {
+            x: (index * 4) as f32,
+            y: 0.0,
+            w: 4.0,
+            h: 4.0,
+        };
+        let layer = |texture_id| MaskEffect {
+            texture_id,
+            mode: MaskMode::Alpha,
+            rect,
+            mapping: None,
+        };
+        assert!(canvas.push_mask_group(vec![
+            MaskCompositeLayer {
+                mask: layer(top_id),
+                composite,
+                text_clip: false,
+            },
+            MaskCompositeLayer {
+                mask: layer(below_id),
+                composite: MaskComposite::Add,
+                text_clip: false,
+            },
+        ]));
+        canvas.fill_rect(
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
+            Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+            index as i32,
+        );
+        canvas.pop_filter();
+    }
+    let text_rect = jag_draw::Rect {
+        x: 16.0,
+        y: 0.0,
+        w: 8.0,
+        h: 4.0,
+    };
+    assert!(canvas.push_mask_group(vec![MaskCompositeLayer {
+        mask: MaskEffect {
+            texture_id: opaque_id,
+            mode: MaskMode::Alpha,
+            rect: text_rect,
+            mapping: None,
+        },
+        composite: MaskComposite::Add,
+        text_clip: true,
+    }]));
+    canvas.fill_rect(
+        text_rect.x,
+        text_rect.y,
+        text_rect.w,
+        text_rect.h,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+        5,
+    );
+    canvas.draw_text_run(
+        [19.0, 1.0],
+        "x".into(),
+        2.0,
+        ColorLinPremul::from_srgba_u8([255; 4]),
+        6,
+    );
+    canvas.pop_filter();
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    for (x, expected) in [(2, 160), (6, 96), (10, 32), (14, 128)] {
+        assert_alpha_near(pixel(&pixels, width, x, 2), expected);
+    }
+    assert_alpha_near(pixel(&pixels, width, 17, 2), 0);
+    assert_alpha_near(pixel(&pixels, width, 19, 2), 255);
+    assert_alpha_near(pixel(&pixels, width, 22, 2), 0);
+}
+
+fn assert_alpha_near(actual: [u8; 4], expected: u8) {
+    assert!(
+        actual[3].abs_diff(expected) <= 3,
+        "expected alpha near {expected}, got pixel {actual:?}"
+    );
+}
+
+#[test]
+fn overlapping_and_nested_descendants_composite_each_group_once() {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+    else {
+        eprintln!("skipping compositor render test: no GPU adapter available");
+        return;
+    };
+    let Ok((device, queue)) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+    else {
+        eprintln!("skipping compositor render test: GPU device unavailable");
+        return;
+    };
+
+    let mut surface = JagSurface::new(
+        Arc::new(device),
+        Arc::new(queue),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    surface.set_frame_cache_enabled(false);
+    let mut canvas = surface.begin_frame(24, 12);
+    canvas.clear(ColorLinPremul::default());
+
+    let red = Brush::Solid(ColorLinPremul {
+        r: 1.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    });
+    let blue = Brush::Solid(ColorLinPremul {
+        r: 0.0,
+        g: 0.0,
+        b: 1.0,
+        a: 1.0,
+    });
+    canvas.push_opacity(0.5);
+    canvas.fill_rect(2.0, 2.0, 8.0, 8.0, red.clone(), 1);
+    canvas.fill_rect(6.0, 2.0, 8.0, 8.0, red, 2);
+    canvas.push_opacity(0.5);
+    canvas.fill_rect(16.0, 2.0, 4.0, 8.0, blue, 3);
+    canvas.pop_opacity();
+    canvas.pop_opacity();
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    let single_red = pixel(&pixels, width, 3, 4);
+    let overlapping_red = pixel(&pixels, width, 8, 4);
+    let nested_blue = pixel(&pixels, width, 18, 4);
+
+    assert_alpha_near(single_red, 128);
+    assert_alpha_near(overlapping_red, 128);
+    assert_alpha_near(nested_blue, 64);
+}
+
+#[test]
+fn transformed_clip_bounds_nested_effect_layers_in_world_space() {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+    else {
+        return;
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .unwrap();
+    let mut surface = JagSurface::new(
+        Arc::new(device),
+        Arc::new(queue),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    surface.set_frame_cache_enabled(false);
+    let mut canvas = surface.begin_frame(32, 12);
+    canvas.clear(ColorLinPremul::default());
+    canvas.push_opacity(0.5);
+    canvas.push_transform(jag_draw::Transform2D::translate(8.0, 2.0));
+    canvas.push_clip_rect(jag_draw::Rect {
+        x: 0.0,
+        y: 0.0,
+        w: 8.0,
+        h: 8.0,
+    });
+    canvas.push_opacity(0.5);
+    canvas.fill_rect(
+        0.0,
+        0.0,
+        16.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+        1,
+    );
+    canvas.pop_opacity();
+    canvas.pop_clip();
+    canvas.pop_transform();
+    canvas.pop_opacity();
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    assert_alpha_near(pixel(&pixels, width, 7, 5), 0);
+    assert_alpha_near(pixel(&pixels, width, 10, 5), 64);
+    assert_alpha_near(pixel(&pixels, width, 17, 5), 0);
+}
+
+#[test]
+fn blur_filter_spreads_surface_alpha_beyond_descendant_ink() {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+    else {
+        return;
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .unwrap();
+    let mut surface = JagSurface::new(
+        Arc::new(device),
+        Arc::new(queue),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    surface.set_frame_cache_enabled(false);
+    let mut canvas = surface.begin_frame(32, 16);
+    canvas.clear(ColorLinPremul::default());
+    canvas.push_filter(FilterEffect::Blur(1.5));
+    canvas.fill_rect(
+        10.0,
+        4.0,
+        12.0,
+        8.0,
+        Brush::Solid(ColorLinPremul {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 1.0,
+        }),
+        1,
+    );
+    canvas.pop_filter();
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    let far = pixel(&pixels, width, 1, 8)[3];
+    let halo = pixel(&pixels, width, 8, 8)[3];
+    let center = pixel(&pixels, width, 16, 8)[3];
+    assert!(far <= 2, "far pixel should remain transparent, got {far}");
+    assert!(
+        halo > 2,
+        "blur should spread alpha beyond source ink, got {halo}"
+    );
+    assert!(center > halo, "center {center} should exceed halo {halo}");
+}
+
+#[test]
+fn color_matrix_filter_uses_srgb_and_preserves_alpha() {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+    else {
+        return;
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .unwrap();
+    let mut surface = JagSurface::new(
+        Arc::new(device),
+        Arc::new(queue),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    surface.set_frame_cache_enabled(false);
+    let mut canvas = surface.begin_frame(12, 12);
+    canvas.clear(ColorLinPremul::default());
+    canvas.push_filter(FilterEffect::ColorMatrix(ColorMatrix {
+        rows: [
+            [0.5, 0.0, 0.0, 0.0],
+            [0.0, 0.5, 0.0, 0.0],
+            [0.0, 0.0, 0.5, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        bias: [0.0; 4],
+    }));
+    canvas.fill_rect(
+        2.0,
+        2.0,
+        8.0,
+        8.0,
+        Brush::Solid(ColorLinPremul {
+            r: 0.25,
+            g: 0.25,
+            b: 0.25,
+            a: 1.0,
+        }),
+        1,
+    );
+    canvas.pop_filter();
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    let transformed = pixel(&pixels, width, 6, 6);
+    assert!(
+        transformed[..3]
+            .iter()
+            .all(|channel| (65..=72).contains(channel)),
+        "sRGB brightness should produce channels near 69: {transformed:?}"
+    );
+    assert!(
+        transformed[3] > 250,
+        "alpha should be preserved: {transformed:?}"
+    );
+}
+
+#[test]
+fn drop_shadow_keeps_source_above_shifted_tinted_alpha() {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+    else {
+        return;
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .unwrap();
+    let mut surface = JagSurface::new(
+        Arc::new(device),
+        Arc::new(queue),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    surface.set_frame_cache_enabled(false);
+    let mut canvas = surface.begin_frame(32, 16);
+    canvas.clear(ColorLinPremul::default());
+    canvas.push_filter(FilterEffect::DropShadow(DropShadow {
+        offset: [8.0, 0.0],
+        blur_radius: 0.0,
+        color: SrgbColor::rgba(0, 0, 255, 255),
+    }));
+    canvas.fill_rect(
+        4.0,
+        4.0,
+        6.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255, 0, 0, 255])),
+        1,
+    );
+    canvas.pop_filter();
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    let source = pixel(&pixels, width, 6, 8);
+    let gap = pixel(&pixels, width, 11, 8);
+    let shadow = pixel(&pixels, width, 15, 8);
+    assert!(
+        source[0] > 250 && source[2] < 5,
+        "source changed: {source:?}"
+    );
+    assert!(gap[3] < 5, "zero blur should keep a sharp gap: {gap:?}");
+    assert!(
+        shadow[2] > 240 && shadow[3] > 240,
+        "shifted shadow missing: {shadow:?}"
+    );
+}
+
+#[test]
+fn nested_transformed_drop_shadow_keeps_css_offset_across_device_scales() {
+    for scale in [1.0, 1.25, 2.0] {
+        let Some(mut surface) = test_surface() else {
+            return;
+        };
+        surface.set_logical_pixels(true);
+        surface.set_dpi_scale(scale);
+        let mut canvas = surface.begin_frame(physical(32.0, scale), physical(16.0, scale));
+        canvas.clear(ColorLinPremul::default());
+        canvas.push_opacity(0.5);
+        canvas.push_filter(FilterEffect::DropShadow(DropShadow {
+            offset: [8.0, 0.0],
+            blur_radius: 0.0,
+            color: SrgbColor::rgba(0, 0, 255, 255),
+        }));
+        canvas.push_transform(jag_draw::Transform2D::translate(2.0, 0.0));
+        canvas.fill_rect(
+            2.0,
+            4.0,
+            6.0,
+            8.0,
+            Brush::Solid(ColorLinPremul::from_srgba_u8([255, 0, 0, 255])),
+            1,
+        );
+        canvas.pop_transform();
+        canvas.pop_filter();
+        canvas.pop_opacity();
+
+        let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+        let source = pixel(&pixels, width, physical(6.0, scale), physical(8.0, scale));
+        let gap = pixel(&pixels, width, physical(11.0, scale), physical(8.0, scale));
+        let shadow = pixel(&pixels, width, physical(14.0, scale), physical(8.0, scale));
+        assert_alpha_near(source, 128);
+        assert_alpha_near(gap, 0);
+        assert_alpha_near(shadow, 128);
+    }
+}
+
+#[test]
+fn blur_halo_keeps_css_extent_across_device_scales() {
+    for scale in [1.0, 1.25, 2.0] {
+        let Some(mut surface) = test_surface() else {
+            return;
+        };
+        surface.set_logical_pixels(true);
+        surface.set_dpi_scale(scale);
+        let mut canvas = surface.begin_frame(physical(32.0, scale), physical(16.0, scale));
+        canvas.clear(ColorLinPremul::default());
+        canvas.push_filter(FilterEffect::Blur(1.5));
+        canvas.fill_rect(
+            10.0,
+            4.0,
+            12.0,
+            8.0,
+            Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+            1,
+        );
+        canvas.pop_filter();
+
+        let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+        let far = pixel(&pixels, width, physical(1.0, scale), physical(8.0, scale))[3];
+        let halo = pixel(&pixels, width, physical(8.0, scale), physical(8.0, scale))[3];
+        let center = pixel(&pixels, width, physical(16.0, scale), physical(8.0, scale))[3];
+        assert!(far <= 2, "far alpha changed at {scale}x: {far}");
+        assert!(halo > 2, "blur halo vanished at {scale}x: {halo}");
+        assert!(center > halo, "center {center} <= halo {halo} at {scale}x");
+    }
+}
+
+#[test]
+fn nested_mask_keeps_css_geometry_across_device_scales() {
+    for scale in [1.0, 1.25, 2.0] {
+        let Some((device, queue, mut surface)) = test_gpu() else {
+            return;
+        };
+        let mask_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("cross-dpr-mask"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            mask_texture.as_image_copy(),
+            &[0, 0, 0, 255],
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let mask_id = ExternalTextureId(90);
+        surface
+            .pass_manager()
+            .register_external_texture(mask_id, mask_texture.create_view(&Default::default()));
+        surface.set_logical_pixels(true);
+        surface.set_dpi_scale(scale);
+        let mut canvas = surface.begin_frame(physical(24.0, scale), physical(12.0, scale));
+        canvas.clear(ColorLinPremul::default());
+        canvas.push_opacity(0.5);
+        canvas.push_filter(FilterEffect::Mask(MaskEffect {
+            texture_id: mask_id,
+            mode: MaskMode::Alpha,
+            rect: jag_draw::Rect {
+                x: 8.0,
+                y: 2.0,
+                w: 8.0,
+                h: 8.0,
+            },
+            mapping: None,
+        }));
+        canvas.fill_rect(
+            4.0,
+            2.0,
+            16.0,
+            8.0,
+            Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+            1,
+        );
+        canvas.pop_filter();
+        canvas.pop_opacity();
+
+        let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+        for (x, alpha) in [(6.0, 0), (10.0, 128), (18.0, 0)] {
+            assert_alpha_near(
+                pixel(&pixels, width, physical(x, scale), physical(6.0, scale)),
+                alpha,
+            );
+        }
+    }
+}
+
+#[test]
+fn backdrop_filter_snapshots_before_later_transparent_content() {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+    else {
+        return;
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .unwrap();
+    let mut surface = JagSurface::new(
+        Arc::new(device),
+        Arc::new(queue),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    surface.set_frame_cache_enabled(false);
+    let mut canvas = surface.begin_frame(24, 16);
+    canvas.clear(ColorLinPremul::default());
+    canvas.fill_rect(
+        0.0,
+        0.0,
+        24.0,
+        16.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255, 0, 0, 255])),
+        1,
+    );
+    canvas.backdrop_filter_rect(
+        jag_draw::Rect {
+            x: 4.0,
+            y: 2.0,
+            w: 16.0,
+            h: 12.0,
+        },
+        vec![
+            FilterEffect::ColorMatrix(ColorMatrix {
+                rows: [
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+                bias: [0.0; 4],
+            }),
+            FilterEffect::ColorMatrix(ColorMatrix {
+                rows: [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+                bias: [0.25, 0.0, 0.0, 0.0],
+            }),
+        ],
+        2,
+    );
+    canvas.fill_rect(
+        12.0,
+        2.0,
+        8.0,
+        12.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([0, 255, 0, 254])),
+        3,
+    );
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    let filtered = pixel(&pixels, width, 8, 8);
+    let later = pixel(&pixels, width, 16, 8);
+    assert!(filtered[2] > 250, "channel swap missing: {filtered:?}");
+    assert!(
+        (60..=68).contains(&filtered[0]),
+        "chain order wrong: {filtered:?}"
+    );
+    assert!(later[1] > 250, "later content was filtered: {later:?}");
+}
+
+fn assert_backdrop_filter_captures_ancestor_framebuffer(filter_ancestor: bool) {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+    else {
+        return;
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .unwrap();
+    let mut surface = JagSurface::new(
+        Arc::new(device),
+        Arc::new(queue),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    surface.set_frame_cache_enabled(false);
+    let mut canvas = surface.begin_frame(16, 8);
+    canvas.clear(ColorLinPremul::default());
+    canvas.fill_rect(
+        0.0,
+        0.0,
+        16.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([0, 0, 255, 255])),
+        0,
+    );
+    if filter_ancestor {
+        canvas.push_filter(FilterEffect::ColorMatrix(ColorMatrix {
+            rows: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            bias: [0.0; 4],
+        }));
+    } else {
+        canvas.push_opacity(1.0);
+    }
+    canvas.fill_rect(
+        0.0,
+        0.0,
+        8.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255, 0, 0, 255])),
+        1,
+    );
+    canvas.backdrop_filter_rect(
+        jag_draw::Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 16.0,
+            h: 8.0,
+        },
+        vec![FilterEffect::ColorMatrix(ColorMatrix {
+            rows: [
+                [0.0, 0.0, 1.0, 0.0],
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            bias: [0.0; 4],
+        })],
+        2,
+    );
+    if filter_ancestor {
+        canvas.pop_filter();
+    } else {
+        canvas.pop_opacity();
+    }
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    let captured = pixel(&pixels, width, 4, 4);
+    let outside_group_capture = pixel(&pixels, width, 12, 4);
+    assert!(
+        captured[1] > 250 && captured[0] < 5 && captured[2] < 5,
+        "group-local red backdrop was not transformed: {captured:?}"
+    );
+    assert!(
+        outside_group_capture[2] > 250 && outside_group_capture[0] < 5,
+        "nested backdrop leaked into the root framebuffer: {outside_group_capture:?}"
+    );
+}
+
+#[test]
+fn backdrop_filter_inside_opacity_captures_the_group_framebuffer() {
+    assert_backdrop_filter_captures_ancestor_framebuffer(false);
+}
+
+#[test]
+fn backdrop_filter_inside_filter_captures_the_group_framebuffer() {
+    assert_backdrop_filter_captures_ancestor_framebuffer(true);
+}
+
+#[test]
+fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+    else {
+        return;
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+            .unwrap();
+    let device = Arc::new(device);
+    let queue = Arc::new(queue);
+    let mask_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("resolved-mask-test"),
+        size: wgpu::Extent3d {
+            width: 4,
+            height: 8,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let mask_pixels = [255, 0, 0, 128].repeat(32);
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: &mask_texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &mask_pixels,
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(16),
+            rows_per_image: Some(8),
+        },
+        wgpu::Extent3d {
+            width: 4,
+            height: 8,
+            depth_or_array_layers: 1,
+        },
+    );
+    let url_texture = Arc::new(device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("url-mask-test"),
+        size: wgpu::Extent3d {
+            width: 2,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    }));
+    queue.write_texture(
+        wgpu::ImageCopyTexture {
+            texture: &url_texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &[0, 0, 0, 255, 0, 0, 0, 0],
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: Some(8),
+            rows_per_image: Some(1),
+        },
+        wgpu::Extent3d {
+            width: 2,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+
+    let mut surface = JagSurface::new(device, queue, wgpu::TextureFormat::Rgba8UnormSrgb);
+    surface.set_frame_cache_enabled(false);
+    let mask_id = ExternalTextureId(42);
+    surface
+        .pass_manager()
+        .register_external_texture(mask_id, mask_texture.create_view(&Default::default()));
+    surface.pass_manager().store_loaded_image(
+        std::path::Path::new("url-mask-test"),
+        url_texture,
+        2,
+        1,
+    );
+    let mut canvas = surface.begin_frame(44, 8);
+    canvas.clear(ColorLinPremul::default());
+    for (x, mode, z) in [(0.0, MaskMode::Alpha, 1), (4.0, MaskMode::Luminance, 2)] {
+        canvas.push_filter(FilterEffect::Mask(MaskEffect {
+            texture_id: mask_id,
+            mode,
+            rect: jag_draw::Rect {
+                x,
+                y: 0.0,
+                w: 4.0,
+                h: 8.0,
+            },
+            mapping: None,
+        }));
+        canvas.fill_rect(
+            x,
+            0.0,
+            4.0,
+            8.0,
+            Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+            z,
+        );
+        canvas.pop_filter();
+    }
+    canvas.push_filter(FilterEffect::Mask(MaskEffect {
+        texture_id: mask_id,
+        mode: MaskMode::Alpha,
+        rect: jag_draw::Rect {
+            x: 8.0,
+            y: 0.0,
+            w: 2.0,
+            h: 8.0,
+        },
+        mapping: None,
+    }));
+    canvas.fill_rect(
+        8.0,
+        0.0,
+        4.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+        3,
+    );
+    canvas.pop_filter();
+    assert!(canvas.push_url_mask(
+        "url-mask-test",
+        jag_draw::Rect {
+            x: 32.0,
+            y: 0.0,
+            w: 8.0,
+            h: 8.0,
+        },
+        jag_draw::Rect {
+            x: 32.0,
+            y: 0.0,
+            w: 2.0,
+            h: 8.0,
+        },
+        [4.0, 8.0],
+        [true, false],
+        MaskMode::Alpha,
+    ));
+    canvas.fill_rect(
+        32.0,
+        0.0,
+        8.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+        8,
+    );
+    canvas.pop_filter();
+    assert!(canvas.push_url_mask(
+        "missing-url-mask-test",
+        jag_draw::Rect {
+            x: 40.0,
+            y: 0.0,
+            w: 4.0,
+            h: 8.0,
+        },
+        jag_draw::Rect {
+            x: 40.0,
+            y: 0.0,
+            w: 4.0,
+            h: 8.0,
+        },
+        [4.0, 8.0],
+        [false; 2],
+        MaskMode::Alpha,
+    ));
+    canvas.fill_rect(
+        40.0,
+        0.0,
+        4.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+        9,
+    );
+    canvas.pop_filter();
+    assert!(canvas.push_generated_mask_pattern(
+        jag_draw::Rect {
+            x: 24.0,
+            y: 0.0,
+            w: 8.0,
+            h: 8.0,
+        },
+        jag_draw::Rect {
+            x: 24.0,
+            y: 0.0,
+            w: 2.0,
+            h: 8.0,
+        },
+        [4.0, 8.0],
+        [true, false],
+        &Brush::LinearGradient {
+            start: [24.0, 0.0],
+            end: [26.0, 0.0],
+            stops: vec![
+                (0.0, ColorLinPremul::from_srgba_u8([0, 0, 0, 255])),
+                (1.0, ColorLinPremul::from_srgba_u8([0, 0, 0, 255])),
+            ],
+        },
+        MaskMode::Alpha,
+    ));
+    canvas.fill_rect(
+        24.0,
+        0.0,
+        8.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+        7,
+    );
+    canvas.pop_filter();
+    for (rect, brush, z) in [
+        (
+            jag_draw::Rect {
+                x: 16.0,
+                y: 0.0,
+                w: 4.0,
+                h: 8.0,
+            },
+            Brush::RadialGradient {
+                center: [18.0, 4.0],
+                radius: 2.0,
+                stops: vec![
+                    (0.0, ColorLinPremul::from_srgba_u8([0, 0, 0, 0])),
+                    (1.0, ColorLinPremul::from_srgba_u8([0, 0, 0, 255])),
+                ],
+            },
+            5,
+        ),
+        (
+            jag_draw::Rect {
+                x: 20.0,
+                y: 0.0,
+                w: 4.0,
+                h: 8.0,
+            },
+            Brush::ConicGradient {
+                center: [22.0, 4.0],
+                start_angle: 0.0,
+                stops: vec![
+                    (0.0, ColorLinPremul::from_srgba_u8([0, 0, 0, 0])),
+                    (0.5, ColorLinPremul::from_srgba_u8([0, 0, 0, 255])),
+                    (1.0, ColorLinPremul::from_srgba_u8([0, 0, 0, 0])),
+                ],
+            },
+            6,
+        ),
+    ] {
+        assert!(canvas.push_generated_mask(rect, &brush, MaskMode::Alpha));
+        canvas.fill_rect(
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
+            Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+            z,
+        );
+        canvas.pop_filter();
+    }
+    assert!(canvas.push_generated_mask(
+        jag_draw::Rect {
+            x: 12.0,
+            y: 0.0,
+            w: 4.0,
+            h: 8.0,
+        },
+        &Brush::LinearGradient {
+            start: [12.0, 4.0],
+            end: [16.0, 4.0],
+            stops: vec![
+                (0.0, ColorLinPremul::from_srgba_u8([0, 0, 0, 0])),
+                (1.0, ColorLinPremul::from_srgba_u8([0, 0, 0, 255])),
+            ],
+        },
+        MaskMode::Alpha,
+    ));
+    canvas.fill_rect(
+        12.0,
+        0.0,
+        4.0,
+        8.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+        4,
+    );
+    canvas.pop_filter();
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    assert_alpha_near(pixel(&pixels, width, 2, 4), 128);
+    assert_alpha_near(pixel(&pixels, width, 6, 4), 27);
+    assert_alpha_near(pixel(&pixels, width, 9, 4), 128);
+    assert_alpha_near(pixel(&pixels, width, 11, 4), 0);
+    assert!(pixel(&pixels, width, 12, 4)[3] < 64);
+    assert!(pixel(&pixels, width, 15, 4)[3] > 190);
+    assert!(pixel(&pixels, width, 18, 4)[3] < 100);
+    assert!(pixel(&pixels, width, 16, 4)[3] > 160);
+    let conic_top = pixel(&pixels, width, 22, 1)[3];
+    let conic_bottom = pixel(&pixels, width, 22, 6)[3];
+    assert!(
+        conic_top < 80 && conic_bottom > 160,
+        "conic alpha top/bottom: {conic_top}/{conic_bottom}"
+    );
+    assert!(pixel(&pixels, width, 24, 4)[3] > 240);
+    assert!(pixel(&pixels, width, 27, 4)[3] < 10);
+    assert!(pixel(&pixels, width, 28, 4)[3] > 240);
+    assert!(pixel(&pixels, width, 32, 4)[3] > 150);
+    assert!(pixel(&pixels, width, 33, 4)[3] < 100);
+    assert!(pixel(&pixels, width, 35, 4)[3] < 10);
+    assert!(pixel(&pixels, width, 36, 4)[3] > 150);
+    assert!(pixel(&pixels, width, 42, 4)[3] < 10);
+}

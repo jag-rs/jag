@@ -25,6 +25,8 @@ impl JagSurface {
         self.pass.set_scale_factor(self.dpi_scale);
         self.pass.set_logical_pixels(self.logical_pixels);
         self.pass.set_ui_scale(self.ui_scale);
+        self.pending_image_loads = false;
+        self.pass.poll_image_loads(&self.queue);
 
         // Box shadows composite in sRGB (gamma) space, which only the
         // offscreen path implements; force intermediate when shadows exist.
@@ -138,19 +140,25 @@ impl JagSurface {
 
         // Build final display list from painter
         let text_provider = canvas.text_provider.clone();
+        self.register_generated_mask_textures(&canvas.generated_mask_textures);
+        self.register_url_mask_textures(&canvas.url_mask_textures);
 
         // Build final display list from painter
         let mut list = canvas.painter.finish();
         let width = canvas.viewport.width.max(1);
         let height = canvas.viewport.height.max(1);
 
-        if list
-            .commands
-            .iter()
-            .any(|cmd| matches!(cmd, Command::PushOpacity(_) | Command::PopOpacity))
-        {
+        if list.commands.iter().any(|cmd| {
+            matches!(
+                cmd,
+                Command::PushOpacity(_)
+                    | Command::PopOpacity
+                    | Command::PushFilter(_)
+                    | Command::PopFilter
+            )
+        }) {
             let flattened =
-                self.flatten_opacity_groups(&list.commands, list.viewport, text_provider.as_ref())?;
+                self.flatten_effect_groups(&list.commands, list.viewport, text_provider.as_ref())?;
             list.commands = flattened;
         }
 

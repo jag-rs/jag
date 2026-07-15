@@ -418,8 +418,7 @@ fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
 } 
 "#;
 
-/// Separable Gaussian blur for single-channel mask (R channel). Output is written to the target
-/// format; when using `R8Unorm`, only the R component is used.
+/// Separable Gaussian blur for RGBA or single-channel targets.
 pub const SHADOW_BLUR_WGSL: &str = r#"
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -464,18 +463,163 @@ fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
     // Use a slightly wider kernel to better match CSS box-shadow tails
     // and avoid a "band" look at modest blur values.
     let r = i32(clamp(ceil(6.0 * sigma), 1.0, 64.0));
-    var acc: f32 = 0.0;
+    var acc: vec4<f32> = vec4<f32>(0.0);
     var norm: f32 = 0.0;
     for (var i: i32 = -r; i <= r; i = i + 1) {
         let fi = f32(i);
         let w = gauss(fi, sigma);
         let ofs = params.dir * params.texel * fi;
-        let c = textureSample(in_tex, in_smp, inp.uv + ofs).r;
+        let c = textureSample(in_tex, in_smp, inp.uv + ofs);
         acc = acc + c * w;
         norm = norm + w;
     }
-    let v = acc / max(1e-6, norm);
-    return vec4<f32>(v, v, v, v);
+    return acc / max(1e-6, norm);
+}
+"#;
+
+pub const COLOR_FILTER_WGSL: &str = r#"
+struct Params {
+    row0: vec4<f32>,
+    row1: vec4<f32>,
+    row2: vec4<f32>,
+    row3: vec4<f32>,
+    bias: vec4<f32>,
+};
+@group(0) @binding(0) var source: texture_2d<f32>;
+@group(0) @binding(1) var source_sampler: sampler;
+@group(0) @binding(2) var<uniform> params: Params;
+
+struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
+@vertex fn vs_main(@builtin(vertex_index) index: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+    var uvs = array<vec2<f32>, 3>(vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
+    return VsOut(vec4(positions[index], 0.0, 1.0), uvs[index]);
+}
+
+fn linear_to_srgb(value: vec3<f32>) -> vec3<f32> {
+    return select(12.92 * value, 1.055 * pow(value, vec3(1.0 / 2.4)) - 0.055, value > vec3(0.0031308));
+}
+
+fn srgb_to_linear(value: vec3<f32>) -> vec3<f32> {
+    return select(value / 12.92, pow((value + 0.055) / 1.055, vec3(2.4)), value > vec3(0.04045));
+}
+
+@fragment fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
+    let premul = textureSample(source, source_sampler, input.uv);
+    let straight = vec4(linear_to_srgb(premul.rgb / max(premul.a, 0.00001)), premul.a);
+    let filtered = clamp(vec4(
+        dot(params.row0, straight), dot(params.row1, straight),
+        dot(params.row2, straight), dot(params.row3, straight)
+    ) + params.bias, vec4(0.0), vec4(1.0));
+    return vec4(srgb_to_linear(filtered.rgb) * filtered.a, filtered.a);
+}
+"#;
+
+pub const DROP_SHADOW_FILTER_WGSL: &str = r#"
+@group(0) @binding(0) var source: texture_2d<f32>;
+@group(0) @binding(1) var blurred: texture_2d<f32>;
+@group(0) @binding(2) var source_sampler: sampler;
+struct Params { offset_uv: vec2<f32>, _pad: vec2<f32>, color: vec4<f32> };
+@group(0) @binding(3) var<uniform> params: Params;
+
+struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
+@vertex fn vs_main(@builtin(vertex_index) index: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+    var uvs = array<vec2<f32>, 3>(vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
+    return VsOut(vec4(positions[index], 0.0, 1.0), uvs[index]);
+}
+fn linear_to_srgb(value: vec3<f32>) -> vec3<f32> {
+    return select(12.92 * value, 1.055 * pow(value, vec3(1.0 / 2.4)) - 0.055, value > vec3(0.0031308));
+}
+fn srgb_to_linear(value: vec3<f32>) -> vec3<f32> {
+    return select(value / 12.92, pow((value + 0.055) / 1.055, vec3(2.4)), value > vec3(0.04045));
+}
+@fragment fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
+    let source_linear = textureSample(source, source_sampler, input.uv);
+    let source_rgb = linear_to_srgb(source_linear.rgb / max(source_linear.a, 0.00001));
+    let source_srgb = vec4(source_rgb * source_linear.a, source_linear.a);
+    let shadow_uv = input.uv - params.offset_uv;
+    let inside = all(shadow_uv >= vec2(0.0)) && all(shadow_uv <= vec2(1.0));
+    let mask = select(0.0, textureSample(blurred, source_sampler, shadow_uv).a, inside);
+    let shadow_alpha = mask * params.color.a;
+    let shadow = vec4(params.color.rgb * shadow_alpha, shadow_alpha);
+    let result = source_srgb + shadow * (1.0 - source_srgb.a);
+    let straight = result.rgb / max(result.a, 0.00001);
+    return vec4(srgb_to_linear(straight) * result.a, result.a);
+}
+"#;
+
+pub const MASK_FILTER_WGSL: &str = r#"
+@group(0) @binding(0) var source: texture_2d<f32>;
+@group(0) @binding(1) var mask: texture_2d<f32>;
+@group(0) @binding(2) var source_sampler: sampler;
+struct Params {
+    surface_origin: vec2<f32>,
+    surface_size: vec2<f32>,
+    inverse_x: vec4<f32>,
+    inverse_y: vec4<f32>,
+    paint_rect: vec4<f32>,
+    tile_rect: vec4<f32>,
+    tile_step: vec2<f32>,
+    extra_flags: vec2<u32>,
+    flags: vec4<u32>,
+};
+@group(0) @binding(3) var<uniform> params: Params;
+
+struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
+@vertex fn vs_main(@builtin(vertex_index) index: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+    var uvs = array<vec2<f32>, 3>(vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
+    return VsOut(vec4(positions[index], 0.0, 1.0), uvs[index]);
+}
+@fragment fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
+    let source_color = textureSample(source, source_sampler, input.uv);
+    let world = params.surface_origin + input.uv * params.surface_size;
+    let local = vec2(
+        dot(params.inverse_x.xyz, vec3(world, 1.0)),
+        dot(params.inverse_y.xyz, vec3(world, 1.0))
+    );
+    let paint_offset = local - params.paint_rect.xy;
+    let inside_paint = all(paint_offset >= vec2(0.0))
+        && all(paint_offset <= params.paint_rect.zw);
+    let raw_offset = local - params.tile_rect.xy;
+    let repeated_offset = raw_offset - floor(raw_offset / params.tile_step) * params.tile_step;
+    let offset = vec2(
+        select(raw_offset.x, repeated_offset.x, params.flags.y == 1u),
+        select(raw_offset.y, repeated_offset.y, params.flags.z == 1u)
+    );
+    let inside_tile = all(offset >= vec2(0.0)) && all(offset <= params.tile_rect.zw);
+    var mask_uv = offset / params.tile_rect.zw;
+    mask_uv.y = select(mask_uv.y, 1.0 - mask_uv.y, params.flags.w == 1u);
+    let inside = inside_paint && inside_tile;
+    let mask_color = select(vec4(0.0), textureSample(mask, source_sampler, mask_uv), inside);
+    let luminance = dot(mask_color.rgb, vec3(0.2126, 0.7152, 0.0722)) * mask_color.a;
+    let coverage = select(mask_color.a, luminance, params.flags.x == 1u);
+    return select(source_color * coverage, vec4(coverage), params.extra_flags.x == 1u);
+}
+"#;
+
+/// Combine two already-resolved mask coverage surfaces using CSS mask-composite.
+pub const MASK_COMPOSITE_WGSL: &str = r#"
+@group(0) @binding(0) var accumulated: texture_2d<f32>;
+@group(0) @binding(1) var next_layer: texture_2d<f32>;
+@group(0) @binding(2) var source_sampler: sampler;
+@group(0) @binding(3) var<uniform> operation: vec4<u32>;
+
+struct VsOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
+@vertex fn vs_main(@builtin(vertex_index) index: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+    var uvs = array<vec2<f32>, 3>(vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
+    return VsOut(vec4(positions[index], 0.0, 1.0), uvs[index]);
+}
+@fragment fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
+    let top = textureSample(accumulated, source_sampler, input.uv).a;
+    let below = textureSample(next_layer, source_sampler, input.uv).a;
+    var coverage = top + below - top * below;
+    if operation.x == 1u { coverage = top * (1.0 - below); }
+    if operation.x == 2u { coverage = top * below; }
+    if operation.x == 3u { coverage = top + below - 2.0 * top * below; }
+    return vec4(coverage);
 }
 "#;
 
@@ -572,6 +716,9 @@ fn weight_for(offset: vec2<f32>) -> f32 {
 
 @fragment
 fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
+    if (params.radius <= 0.0) {
+        return textureSample(src_tex, src_smp, inp.uv);
+    }
     let step_uv = max(params.radius, 1.0) * 0.38 * params.texel;
     var acc: vec4<f32> = vec4<f32>(0.0);
     var total: f32 = 0.0;

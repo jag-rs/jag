@@ -134,6 +134,7 @@ pub fn make_surface_config(
 // Scene and display list (Phase 2)
 mod box_shadow;
 mod color; // sRGB conversion helpers for ColorLinPremul
+mod compositor;
 mod display_list;
 mod dpi;
 mod hit_test;
@@ -152,6 +153,7 @@ mod upload;
 pub use box_shadow::{
     ShadowInstance, Y_SAMPLES as BOX_SHADOW_Y_SAMPLES, rounded_box_shadow_coverage,
 };
+pub use compositor::*;
 pub use display_list::*;
 pub use dpi::*;
 pub use hit_test::*;

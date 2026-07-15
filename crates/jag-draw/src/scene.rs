@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Transform2D {
     // Affine 2D: [a, b, c, d, e, f] for matrix [[a c e],[b d f],[0 0 1]]
     pub m: [f32; 6],
@@ -167,6 +167,80 @@ pub struct Stroke {
     pub width: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ColorMatrix {
+    pub rows: [[f32; 4]; 4],
+    pub bias: [f32; 4],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DropShadow {
+    pub offset: [f32; 2],
+    /// CSS drop-shadow standard deviation in logical pixels.
+    pub blur_radius: f32,
+    pub color: SrgbColor,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaskMode {
+    Alpha,
+    Luminance,
+}
+
+/// Porter-Duff operation used to combine a mask layer with the layers below it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaskComposite {
+    Add,
+    Subtract,
+    Intersect,
+    Exclude,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MaskTextureMapping {
+    /// World-to-mask-local affine transform.
+    pub inverse_transform: [f32; 6],
+    pub paint_rect: Rect,
+    pub tile_rect: Rect,
+    pub tile_step: [f32; 2],
+    pub repeat_axes: [bool; 2],
+    /// Decoded images are uploaded top-to-bottom; render targets are not.
+    pub flip_y: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MaskEffect {
+    /// A straight-RGBA resolved mask texture mapped to `rect` in scene space.
+    pub texture_id: crate::display_list::ExternalTextureId,
+    pub mode: MaskMode,
+    pub rect: Rect,
+    pub mapping: Option<MaskTextureMapping>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MaskCompositeLayer {
+    pub mask: MaskEffect,
+    pub composite: MaskComposite,
+    pub text_clip: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MaskGroupEffect {
+    /// Layers are ordered as authored: first is visually on top.
+    pub layers: Vec<MaskCompositeLayer>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum FilterEffect {
+    /// CSS `blur()` standard deviation in logical pixels.
+    Blur(f32),
+    /// A 4x5 matrix applied to unpremultiplied RGBA, then premultiplied again.
+    ColorMatrix(ColorMatrix),
+    DropShadow(DropShadow),
+    Mask(MaskEffect),
+    MaskGroup(MaskGroupEffect),
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct BoxShadowSpec {
     pub offset: [f32; 2],
@@ -175,10 +249,10 @@ pub struct BoxShadowSpec {
     pub color: ColorLinPremul,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct BackdropBlurDraw {
     pub rect: Rect,
-    pub radius: f32,
+    pub effects: Vec<FilterEffect>,
     pub z: i32,
     pub transform: Transform2D,
     pub clip: Option<Rect>,

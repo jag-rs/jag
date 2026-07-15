@@ -24,6 +24,9 @@ mod side_channel_opacity_tests {
             overlay_draws: Vec::new(),
             scrim_draws: Vec::<ScrimDraw>::new(),
             opacity_stack: vec![1.0],
+            generated_mask_textures: Vec::new(),
+            url_mask_textures: Vec::new(),
+            next_generated_mask_texture_id: 0x6000_0000_0000_0000,
         }
     }
 
@@ -169,6 +172,9 @@ mod fill_rect_rounded_clip_tests {
             overlay_draws: Vec::new(),
             scrim_draws: Vec::new(),
             opacity_stack: vec![1.0],
+            generated_mask_textures: Vec::new(),
+            url_mask_textures: Vec::new(),
+            next_generated_mask_texture_id: 0x6000_0000_0000_0000,
         }
     }
 

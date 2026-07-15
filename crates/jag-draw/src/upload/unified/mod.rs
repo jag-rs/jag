@@ -242,6 +242,8 @@ impl UnifiedBuilder {
                     self.opacity_stack.pop();
                 }
             }
+            // Effect groups are flattened to external textures by jag-surface.
+            Command::PushFilter(_) | Command::PopFilter | Command::BackdropFilter(_) => {}
         }
     }
 
@@ -294,6 +296,7 @@ impl UnifiedBuilder {
         mut self,
         allocator: &mut RenderAllocator,
         queue: &wgpu::Queue,
+        compositor_plan: crate::compositor::CompositorPlan,
     ) -> UnifiedSceneData {
         // Flush the final opaque solid batch.
         let index_end = self.indices.len();
@@ -311,6 +314,7 @@ impl UnifiedBuilder {
         );
 
         UnifiedSceneData {
+            compositor_plan,
             gpu_scene,
             solid_batches: self.solid_batches,
             transparent_gpu_scene,
@@ -337,9 +341,10 @@ pub fn upload_display_list_unified(
     queue: &wgpu::Queue,
     list: &DisplayList,
 ) -> Result<UnifiedSceneData> {
+    let compositor_plan = crate::compositor::build_compositor_plan(list)?;
     let mut builder = UnifiedBuilder::new();
     for cmd in &list.commands {
         builder.handle(cmd);
     }
-    Ok(builder.finalize(allocator, queue))
+    Ok(builder.finalize(allocator, queue, compositor_plan))
 }

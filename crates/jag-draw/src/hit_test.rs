@@ -381,8 +381,9 @@ impl HitIndex {
                 Command::DrawImage { .. } => {}
                 Command::DrawSvg { .. } => {}
                 Command::DrawExternalTexture { .. } => {}
+                Command::BackdropFilter(_) => {}
                 Command::PushOpacity(_) => {}
-                Command::PopOpacity => {}
+                Command::PopOpacity | Command::PushFilter(_) | Command::PopFilter => {}
             }
         }
 

@@ -233,7 +233,7 @@ impl Canvas {
         // respect the clip_stack (per-glyph clipping for text, rect clipping
         // for the underline).  A stripped-down DrawHyperlink is still emitted
         // into the display list so hit testing continues to work.
-        if self.text_provider.is_some() && !self.painter.has_active_opacity() {
+        if self.text_provider.is_some() && !self.painter.has_active_effect() {
             // --- visual: text via per-glyph clipped path ---
             self.draw_text_run_styled(
                 hyperlink.pos,
