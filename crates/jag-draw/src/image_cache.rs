@@ -1,3 +1,20 @@
+//! Raster image cache: decode PNG/JPEG/GIF/WebP files into GPU textures and
+//! keep them in an LRU cache with a byte budget (256 MiB by default).
+//!
+//! Decoding notes:
+//! - **Format is detected from the file's content (magic bytes), not its
+//!   extension.** Callers can point at a file whose name doesn't match its
+//!   bytes — e.g. a PNG screenshot cached under a `.jpg` name by an upstream
+//!   media bridge — and it still decodes correctly. `image::open` would pick the
+//!   decoder from the extension and fail silently on such a mismatch; we use
+//!   `decode_image_from_path` (`image::ImageReader` + `with_guessed_format`)
+//!   instead.
+//! - Images whose decoded width or height exceeds the device's
+//!   `max_texture_dimension_2d` are skipped (they cannot be uploaded as a single
+//!   texture).
+//! - Filesystem decodes run off the render thread; results are delivered back
+//!   over an `mpsc` channel and uploaded on a later frame.
+
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
@@ -248,9 +265,9 @@ impl ImageCache {
                 Err(_) => return None,
             }
         } else {
-            match image::open(path) {
-                Ok(img) => img,
-                Err(_) => return None,
+            match decode_image_from_path(path) {
+                Some(img) => img,
+                None => return None,
             }
         };
 
@@ -366,11 +383,27 @@ impl ImageCache {
     }
 }
 
+/// Decode an image file, selecting the decoder from the file's **content**
+/// (magic bytes) rather than its extension. `image::open` picks the decoder from
+/// the path extension, but callers such as the Android photos bridge write some
+/// originals under a `.jpg` name regardless of their real format (e.g. PNG
+/// screenshots). That feeds PNG bytes to the JPEG decoder, which fails, and the
+/// image renders blank with no error. Content sniffing makes decoding robust to
+/// any extension/content mismatch.
+fn decode_image_from_path(path: &Path) -> Option<image::DynamicImage> {
+    image::ImageReader::open(path)
+        .ok()?
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()
+}
+
 fn decode_image_file(path: &Path, max_tex_size: u32) -> Option<(Vec<u8>, u32, u32)> {
     let img = if let Some(bytes) = builtin_image_bytes(path) {
         image::load_from_memory(bytes).ok()?
     } else {
-        image::open(path).ok()?
+        decode_image_from_path(path)?
     };
     let rgba = img.to_rgba8();
     let (width, height) = rgba.dimensions();
@@ -378,4 +411,47 @@ fn decode_image_file(path: &Path, max_tex_size: u32) -> Option<(Vec<u8>, u32, u3
         return None;
     }
     Some((rgba.into_raw(), width, height))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    /// A PNG written under a `.jpg` name — the exact mislabel the Android photos
+    /// bridge produced for screenshots — must still decode, because we select the
+    /// decoder from the content's magic bytes, not the extension. Extension-based
+    /// decoding (`image::open`) feeds PNG bytes to the JPEG decoder and fails,
+    /// which is what rendered such images blank.
+    #[test]
+    fn decodes_png_bytes_written_with_jpg_extension() {
+        let img = image::RgbaImage::from_pixel(3, 2, image::Rgba([255, 0, 0, 255]));
+        let mut png_bytes = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(
+                &mut std::io::Cursor::new(&mut png_bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("encode png");
+        assert_eq!(&png_bytes[..4], b"\x89PNG", "sanity: encoded bytes are PNG");
+
+        let path =
+            std::env::temp_dir().join(format!("jag_ext_mismatch_{}.jpg", std::process::id()));
+        std::fs::File::create(&path)
+            .and_then(|mut f| f.write_all(&png_bytes))
+            .expect("write temp file");
+
+        // Precondition: extension-based decoding fails on the mislabeled file.
+        assert!(
+            image::open(&path).is_err(),
+            "extension-based image::open should fail on PNG-content .jpg"
+        );
+
+        let decoded = decode_image_file(&path, 8192);
+        std::fs::remove_file(&path).ok();
+
+        let (rgba, w, h) = decoded.expect("content-sniffing decode should succeed");
+        assert_eq!((w, h), (3, 2));
+        assert_eq!(rgba.len(), 3 * 2 * 4);
+    }
 }
