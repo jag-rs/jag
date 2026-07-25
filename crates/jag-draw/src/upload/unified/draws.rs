@@ -165,6 +165,7 @@ impl UnifiedBuilder {
             path,
             origin,
             max_size,
+            style,
             z,
             transform,
         } = cmd
@@ -179,6 +180,7 @@ impl UnifiedBuilder {
             path: path.clone(),
             origin: world_origin,
             size: *max_size,
+            style: *style,
             z: *z,
             transform: final_transform,
             opacity: opa,

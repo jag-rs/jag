@@ -47,6 +47,7 @@ pub struct ExtractedSvgDraw {
     pub path: std::path::PathBuf,
     pub origin: [f32; 2],
     pub size: [f32; 2],
+    pub style: Option<crate::SvgStyle>,
     pub z: i32,
     pub transform: Transform2D,
     pub opacity: f32,

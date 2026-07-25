@@ -158,7 +158,7 @@ impl JagSurface {
                     crate::resolve_asset_path(&draw.path),
                     draw.origin,
                     draw.size,
-                    None,
+                    draw.style,
                     draw.z,
                     draw.opacity,
                     Transform2D::identity(),

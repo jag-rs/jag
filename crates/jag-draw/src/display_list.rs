@@ -111,6 +111,7 @@ pub enum Command {
         path: PathBuf,
         origin: [f32; 2],
         max_size: [f32; 2],
+        style: Option<crate::SvgStyle>,
         z: i32,
         transform: Transform2D,
     },

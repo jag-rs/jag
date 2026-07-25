@@ -1,3 +1,4 @@
+use crate::SvgStyle;
 use crate::display_list::{Command, DisplayList, ExternalTextureId, Viewport};
 use crate::scene::*;
 use std::path::PathBuf;
@@ -198,6 +199,7 @@ impl Painter {
                 path: path_buf,
                 origin,
                 max_size,
+                style: None,
                 z,
                 transform: t,
             });
@@ -222,10 +224,33 @@ impl Painter {
 
                 self.push_transform(combined);
                 // Import SVG geometry directly into the display list
-                let _stats = crate::svg_geometry::import_svg_geometry_to_painter(self, path_ref);
+                let _stats = crate::svg_geometry::import_svg_geometry_to_painter(self, path_ref, z);
                 self.pop_transform();
             }
         }
+    }
+
+    /// Queue an SVG with explicit style overrides.
+    ///
+    /// Styled SVGs stay as a display-list command so an enclosing opacity or
+    /// filter scope can composite the SVG atomically with sibling content.
+    pub fn svg_styled<P: Into<PathBuf>>(
+        &mut self,
+        path: P,
+        origin: [f32; 2],
+        max_size: [f32; 2],
+        style: SvgStyle,
+        z: i32,
+    ) {
+        let t = self.current_transform();
+        self.list.commands.push(Command::DrawSvg {
+            path: path.into(),
+            origin,
+            max_size,
+            style: Some(style),
+            z,
+            transform: t,
+        });
     }
 
     /// Queue a raster image (PNG/JPEG/GIF/WebP) to be drawn at origin with the given pixel size.
