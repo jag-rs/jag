@@ -134,6 +134,36 @@ mod side_channel_opacity_tests {
     }
 
     #[test]
+    fn simple_svg_effect_scope_applies_parent_transform_once() {
+        let mut canvas = test_canvas();
+        canvas.push_transform(jag_draw::Transform2D::translate(100.0, 50.0));
+        canvas.push_opacity(1.0);
+        let svg = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../images/send.svg");
+
+        canvas.draw_svg(svg, [10.0, 20.0], [24.0, 24.0], 7);
+
+        let transform = canvas
+            .display_list()
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                Command::FillPath { transform, .. } | Command::StrokePath { transform, .. } => {
+                    Some(*transform)
+                }
+                _ => None,
+            })
+            .expect("simple SVG should import vector path commands");
+        assert_eq!(
+            transform.m[4], 110.0,
+            "parent translation must not be composed twice"
+        );
+        assert_eq!(
+            transform.m[5], 70.0,
+            "parent translation must not be composed twice"
+        );
+    }
+
+    #[test]
     fn svg_side_channel_captures_rounded_clip() {
         let mut canvas = test_canvas();
         canvas.push_clip_rounded_rect(RoundedRect {

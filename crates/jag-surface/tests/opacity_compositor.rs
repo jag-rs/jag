@@ -274,6 +274,56 @@ fn overlapping_and_nested_descendants_composite_each_group_once() {
 }
 
 #[test]
+fn transformed_opacity_group_preserves_rounded_rect_corners() {
+    let Some(mut surface) = test_surface() else {
+        return;
+    };
+    let mut canvas = surface.begin_frame(24, 24);
+    canvas.clear(ColorLinPremul::from_srgba_u8([255, 0, 0, 255]));
+    canvas.push_opacity(1.0);
+    canvas.push_transform(jag_draw::Transform2D::translate(4.0, 4.0));
+    canvas.push_clip_rect(jag_draw::Rect {
+        x: 0.0,
+        y: 0.0,
+        w: 16.0,
+        h: 16.0,
+    });
+    canvas.rounded_rect(
+        jag_draw::RoundedRect {
+            rect: jag_draw::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 16.0,
+                h: 16.0,
+            },
+            radii: jag_draw::RoundedRadii {
+                tl: 6.0,
+                tr: 6.0,
+                br: 6.0,
+                bl: 6.0,
+            },
+        },
+        Brush::Solid(ColorLinPremul::from_srgba_u8([0, 0, 255, 255])),
+        1,
+    );
+    canvas.pop_clip();
+    canvas.pop_transform();
+    canvas.pop_opacity();
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    let corner = pixel(&pixels, width, 4, 4);
+    let center = pixel(&pixels, width, 12, 12);
+    assert!(
+        corner[0] > 240 && corner[2] < 10,
+        "rounded corner must expose the red parent: {corner:?}"
+    );
+    assert!(
+        center[2] > 240 && center[0] < 10,
+        "rounded rect center must stay blue: {center:?}"
+    );
+}
+
+#[test]
 fn svg_descendant_is_atomic_with_its_opacity_group() {
     let Some(mut surface) = test_surface() else {
         return;

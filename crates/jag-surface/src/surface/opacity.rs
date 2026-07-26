@@ -6,6 +6,8 @@ use jag_draw::{Command, DisplayList, ExternalTextureId, Rect, Transform2D, Viewp
 
 use super::JagSurface;
 
+pub(super) const SYNTHETIC_EXTERNAL_TEXTURE_ID_START: u64 = 0x7000_0000_0000_0000;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct LayerGeometry {
     origin: [f32; 2],
@@ -107,6 +109,14 @@ fn transformed_rect_bounds(rect: Rect, transform: Transform2D) -> Rect {
 }
 
 impl JagSurface {
+    pub(super) fn reset_synthetic_external_texture_ids(&mut self) {
+        // Effect layers are rebuilt as part of a full frame. Reusing the same
+        // deterministic ID range replaces last frame's texture views instead
+        // of retaining one new registration per effect per repaint. Cached
+        // scroll-only frames do not enter this path and keep their views.
+        self.next_synthetic_external_texture_id = SYNTHETIC_EXTERNAL_TEXTURE_ID_START;
+    }
+
     fn allocate_synthetic_external_texture_id(&mut self) -> ExternalTextureId {
         let id = ExternalTextureId(self.next_synthetic_external_texture_id);
         self.next_synthetic_external_texture_id =

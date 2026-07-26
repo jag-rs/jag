@@ -145,6 +145,7 @@ impl JagSurface {
 
         // Build final display list from painter
         let mut list = canvas.painter.finish();
+        self.reset_synthetic_external_texture_ids();
         let width = canvas.viewport.width.max(1);
         let height = canvas.viewport.height.max(1);
 

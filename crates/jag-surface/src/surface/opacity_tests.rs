@@ -6,6 +6,50 @@
 use super::*;
 
 #[test]
+fn rebuilt_frames_reuse_effect_texture_ids() {
+    let instance = wgpu::Instance::default();
+    let Some(adapter) =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+    else {
+        eprintln!("skipping effect texture ID test: no GPU adapter available");
+        return;
+    };
+    let Ok((device, queue)) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+    else {
+        eprintln!("skipping effect texture ID test: GPU device unavailable");
+        return;
+    };
+    let mut surface = JagSurface::new(
+        Arc::new(device),
+        Arc::new(queue),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    );
+    surface.set_frame_cache_enabled(false);
+
+    let render_effect_frame = |surface: &mut JagSurface| {
+        let mut canvas = surface.begin_frame(8, 8);
+        canvas.push_opacity(1.0);
+        canvas.fill_rect(
+            0.0,
+            0.0,
+            8.0,
+            8.0,
+            jag_draw::Brush::Solid(jag_draw::ColorLinPremul::from_srgba_u8([255; 4])),
+            1,
+        );
+        canvas.pop_opacity();
+        surface.end_frame_headless(canvas).unwrap();
+        surface.next_synthetic_external_texture_id
+    };
+
+    let after_first = render_effect_frame(&mut surface);
+    let after_second = render_effect_frame(&mut surface);
+    assert_eq!(after_first, SYNTHETIC_EXTERNAL_TEXTURE_ID_START + 1);
+    assert_eq!(after_second, after_first);
+}
+
+#[test]
 fn layer_bounds_align_outward_to_device_pixels() {
     let geometry = layer_geometry(
         Rect {

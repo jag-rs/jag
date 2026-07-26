@@ -216,13 +216,10 @@ impl Painter {
                 let scale = scale_x.min(scale_y).max(0.0);
 
                 // Apply transform: current * translate(origin) * scale
-                let current = self.current_transform();
                 let translate_scale = crate::Transform2D {
                     m: [scale, 0.0, 0.0, scale, origin[0], origin[1]],
                 };
-                let combined = current.concat(translate_scale);
-
-                self.push_transform(combined);
+                self.push_transform(translate_scale);
                 // Import SVG geometry directly into the display list
                 let _stats = crate::svg_geometry::import_svg_geometry_to_painter(self, path_ref, z);
                 self.pop_transform();
