@@ -28,7 +28,7 @@ impl JagSurface {
             enable_smaa: false,
             ui_scale: 1.0,
             overlay: None,
-            next_synthetic_external_texture_id: 0x7000_0000_0000_0000,
+            next_synthetic_external_texture_id: super::opacity::SYNTHETIC_EXTERNAL_TEXTURE_ID_START,
             frame_cache: None,
             frame_cache_enabled: true,
             pending_image_loads: false,

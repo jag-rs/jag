@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod side_channel_opacity_tests {
     use super::super::{Canvas, ImageFitMode, ScrimDraw};
-    use jag_draw::{ColorLinPremul, Painter, Rect, RoundedRadii, RoundedRect, Viewport};
+    use jag_draw::{ColorLinPremul, Command, Painter, Rect, RoundedRadii, RoundedRect, Viewport};
 
     fn test_canvas() -> Canvas {
         let viewport = Viewport {
@@ -31,15 +31,21 @@ mod side_channel_opacity_tests {
     }
 
     #[test]
-    fn svg_side_channel_captures_effective_parent_opacity() {
+    fn svg_effect_scope_routes_draw_into_display_list() {
         let mut canvas = test_canvas();
         canvas.push_opacity(0.5);
         canvas.push_opacity(0.25);
 
         canvas.draw_svg("icon.svg", [10.0, 20.0], [16.0, 16.0], 7);
 
-        assert_eq!(canvas.svg_draws.len(), 1);
-        assert_eq!(canvas.svg_draws[0].5, 0.125);
+        assert!(canvas.svg_draws.is_empty());
+        assert!(
+            canvas
+                .display_list()
+                .commands
+                .iter()
+                .any(|command| matches!(command, Command::DrawSvg { style: None, .. }))
+        );
     }
 
     #[test]
@@ -60,15 +66,23 @@ mod side_channel_opacity_tests {
     }
 
     #[test]
-    fn side_channel_opacity_clamps_each_pushed_layer() {
+    fn styled_svg_effect_scope_preserves_style_in_display_list() {
         let mut canvas = test_canvas();
         canvas.push_opacity(0.5);
         canvas.push_opacity(2.0);
 
-        canvas.draw_svg("icon.svg", [10.0, 20.0], [16.0, 16.0], 7);
+        let style = jag_draw::SvgStyle::new().with_stroke(ColorLinPremul {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 1.0,
+        });
+        canvas.draw_svg_styled("icon.svg", [10.0, 20.0], [16.0, 16.0], style, 7);
 
-        assert_eq!(canvas.svg_draws.len(), 1);
-        assert_eq!(canvas.svg_draws[0].5, 0.5);
+        assert!(canvas.svg_draws.is_empty());
+        assert!(canvas.display_list().commands.iter().any(|command| {
+            matches!(command, Command::DrawSvg { style: Some(actual), .. } if *actual == style)
+        }));
     }
 
     #[test]
@@ -76,6 +90,7 @@ mod side_channel_opacity_tests {
         let mut canvas = test_canvas();
         canvas.push_opacity(0.5);
         canvas.push_opacity(0.25);
+        canvas.pop_opacity();
         canvas.pop_opacity();
 
         canvas.draw_svg_styled(
@@ -92,11 +107,11 @@ mod side_channel_opacity_tests {
         );
 
         assert_eq!(canvas.svg_draws.len(), 1);
-        assert_eq!(canvas.svg_draws[0].5, 0.5);
+        assert_eq!(canvas.svg_draws[0].5, 1.0);
     }
 
     #[test]
-    fn clipping_does_not_drop_side_channel_opacity() {
+    fn clipped_svg_effect_scope_stays_in_display_list() {
         let mut canvas = test_canvas();
         canvas.push_clip_rect(Rect {
             x: 0.0,
@@ -108,8 +123,44 @@ mod side_channel_opacity_tests {
 
         canvas.draw_svg("icon.svg", [4.0, 4.0], [16.0, 16.0], 7);
 
-        assert_eq!(canvas.svg_draws.len(), 1);
-        assert_eq!(canvas.svg_draws[0].5, 0.75);
+        assert!(canvas.svg_draws.is_empty());
+        assert!(
+            canvas
+                .display_list()
+                .commands
+                .iter()
+                .any(|command| matches!(command, Command::DrawSvg { .. }))
+        );
+    }
+
+    #[test]
+    fn simple_svg_effect_scope_applies_parent_transform_once() {
+        let mut canvas = test_canvas();
+        canvas.push_transform(jag_draw::Transform2D::translate(100.0, 50.0));
+        canvas.push_opacity(1.0);
+        let svg = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../images/send.svg");
+
+        canvas.draw_svg(svg, [10.0, 20.0], [24.0, 24.0], 7);
+
+        let transform = canvas
+            .display_list()
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                Command::FillPath { transform, .. } | Command::StrokePath { transform, .. } => {
+                    Some(*transform)
+                }
+                _ => None,
+            })
+            .expect("simple SVG should import vector path commands");
+        assert_eq!(
+            transform.m[4], 110.0,
+            "parent translation must not be composed twice"
+        );
+        assert_eq!(
+            transform.m[5], 70.0,
+            "parent translation must not be composed twice"
+        );
     }
 
     #[test]

@@ -14,6 +14,7 @@ impl Canvas {
         max_size: [f32; 2],
         z: i32,
     ) {
+        let path = path.into();
         // Skip draws entirely outside the active clip rect.
         if let Some(clip) = self.clip_rect_local() {
             let bounds = Rect {
@@ -26,11 +27,15 @@ impl Canvas {
                 return;
             }
         }
+        if self.painter.has_active_effect() {
+            self.painter.svg(path, origin, max_size, z);
+            return;
+        }
         let device_clip = self.clip_stack.last().copied().flatten();
         let rounded_clip = self.rounded_clip_stack.last().cloned().flatten();
         let transform = self.painter.current_transform();
         self.svg_draws.push((
-            path.into(),
+            path,
             origin,
             max_size,
             None,
@@ -51,6 +56,7 @@ impl Canvas {
         style: jag_draw::SvgStyle,
         z: i32,
     ) {
+        let path = path.into();
         // Skip draws entirely outside the active clip rect.
         if let Some(clip) = self.clip_rect_local() {
             let bounds = Rect {
@@ -63,12 +69,15 @@ impl Canvas {
                 return;
             }
         }
+        if self.painter.has_active_effect() {
+            self.painter.svg_styled(path, origin, max_size, style, z);
+            return;
+        }
         let device_clip = self.clip_stack.last().copied().flatten();
         let rounded_clip = self.rounded_clip_stack.last().cloned().flatten();
-        let path_buf = path.into();
         let transform = self.painter.current_transform();
         self.svg_draws.push((
-            path_buf,
+            path,
             origin,
             max_size,
             Some(style),

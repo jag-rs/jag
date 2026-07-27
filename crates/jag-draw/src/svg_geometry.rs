@@ -51,6 +51,7 @@ fn import_path_fill(
     node_transform: usvg::Transform,
     p: &usvg::Path,
     color: crate::scene::ColorLinPremul,
+    z: i32,
     stats: &mut SvgImportStats,
 ) {
     use crate::scene::{Path, PathCmd};
@@ -80,7 +81,7 @@ fn import_path_fill(
     let path = Path { cmds, fill_rule };
     let t = transform2d_from_usvg(node_transform);
     painter.push_transform(t);
-    painter.fill_path(path, color, 0);
+    painter.fill_path(path, color, z);
     painter.pop_transform();
     stats.paths += 1;
 }
@@ -180,6 +181,7 @@ fn paint_from_fill(fill: &usvg::Fill) -> Option<crate::scene::Brush> {
 pub fn import_svg_geometry_to_painter(
     painter: &mut crate::painter::Painter,
     path: &Path,
+    z: i32,
 ) -> Option<SvgImportStats> {
     let data = std::fs::read(path).ok()?;
     let mut opt = usvg::Options::default();
@@ -192,6 +194,7 @@ pub fn import_svg_geometry_to_painter(
     fn walk(
         group: &usvg::Group,
         painter: &mut crate::painter::Painter,
+        z: i32,
         stats: &mut SvgImportStats,
     ) {
         for node in group.children() {
@@ -203,11 +206,11 @@ pub fn import_svg_geometry_to_painter(
                             if let Some(rect) = detect_axis_aligned_rect(p) {
                                 let t = transform2d_from_usvg(p.abs_transform());
                                 painter.push_transform(t);
-                                painter.rect(rect, crate::scene::Brush::Solid(col), 0);
+                                painter.rect(rect, crate::scene::Brush::Solid(col), z);
                                 painter.pop_transform();
                                 stats.rects += 1;
                             } else {
-                                import_path_fill(painter, p.abs_transform(), p, col, stats);
+                                import_path_fill(painter, p.abs_transform(), p, col, z, stats);
                             }
                         } else {
                             // Unsupported paint servers (gradients/patterns) are skipped for geometry import.
@@ -228,7 +231,7 @@ pub fn import_svg_geometry_to_painter(
                                         width: st.width().get() as f32,
                                     },
                                     crate::scene::Brush::Solid(col),
-                                    0,
+                                    z,
                                 );
                                 painter.pop_transform();
                                 stats.strokes += 1;
@@ -271,7 +274,7 @@ pub fn import_svg_geometry_to_painter(
                                         width: st.width().get() as f32,
                                     },
                                     col,
-                                    0,
+                                    z,
                                 );
                                 painter.pop_transform();
                                 stats.strokes += 1;
@@ -283,12 +286,12 @@ pub fn import_svg_geometry_to_painter(
                 }
                 usvg::Node::Group(g) => {
                     // Render group contents normally.
-                    walk(g, painter, stats);
+                    walk(g, painter, z, stats);
                 }
                 usvg::Node::Image(_img) => {
                     // Only traverse subroots for embedded SVG images.
                     // This avoids drawing clipPath/mask/pattern definition subtrees.
-                    node.subroots(|subroot| walk(subroot, painter, stats));
+                    node.subroots(|subroot| walk(subroot, painter, z, stats));
                 }
                 usvg::Node::Text(_) => {
                     // Text-as-geometry not supported yet.
@@ -298,7 +301,7 @@ pub fn import_svg_geometry_to_painter(
     }
 
     let root = tree.root();
-    walk(root, painter, &mut stats);
+    walk(root, painter, z, &mut stats);
 
     Some(stats)
 }

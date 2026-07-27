@@ -274,6 +274,146 @@ fn overlapping_and_nested_descendants_composite_each_group_once() {
 }
 
 #[test]
+fn transformed_opacity_group_preserves_rounded_rect_corners() {
+    let Some(mut surface) = test_surface() else {
+        return;
+    };
+    let mut canvas = surface.begin_frame(24, 24);
+    canvas.clear(ColorLinPremul::from_srgba_u8([255, 0, 0, 255]));
+    canvas.push_opacity(1.0);
+    canvas.push_transform(jag_draw::Transform2D::translate(4.0, 4.0));
+    canvas.push_clip_rect(jag_draw::Rect {
+        x: 0.0,
+        y: 0.0,
+        w: 16.0,
+        h: 16.0,
+    });
+    canvas.rounded_rect(
+        jag_draw::RoundedRect {
+            rect: jag_draw::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 16.0,
+                h: 16.0,
+            },
+            radii: jag_draw::RoundedRadii {
+                tl: 6.0,
+                tr: 6.0,
+                br: 6.0,
+                bl: 6.0,
+            },
+        },
+        Brush::Solid(ColorLinPremul::from_srgba_u8([0, 0, 255, 255])),
+        1,
+    );
+    canvas.pop_clip();
+    canvas.pop_transform();
+    canvas.pop_opacity();
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    let corner = pixel(&pixels, width, 4, 4);
+    let center = pixel(&pixels, width, 12, 12);
+    assert!(
+        corner[0] > 240 && corner[2] < 10,
+        "rounded corner must expose the red parent: {corner:?}"
+    );
+    assert!(
+        center[2] > 240 && center[0] < 10,
+        "rounded rect center must stay blue: {center:?}"
+    );
+}
+
+#[test]
+fn svg_descendant_is_atomic_with_its_opacity_group() {
+    let Some(mut surface) = test_surface() else {
+        return;
+    };
+    let svg = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../images/send.svg");
+    let mut canvas = surface.begin_frame(32, 32);
+    canvas.clear(ColorLinPremul::default());
+    canvas.push_opacity(0.5);
+    canvas.fill_rect(
+        0.0,
+        0.0,
+        32.0,
+        32.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([0, 0, 255, 255])),
+        1,
+    );
+    canvas.draw_svg_styled(
+        svg,
+        [4.0, 4.0],
+        [24.0, 24.0],
+        jag_draw::SvgStyle::new().with_stroke(ColorLinPremul::from_srgba_u8([255; 4])),
+        3,
+    );
+    canvas.pop_opacity();
+    canvas.fill_rect(
+        0.0,
+        0.0,
+        32.0,
+        32.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255, 0, 0, 255])),
+        2,
+    );
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    for y in 1..31 {
+        for x in 1..31 {
+            let actual = pixel(&pixels, width, x, y);
+            assert!(
+                actual[0] > 250 && actual[1] < 5 && actual[2] < 5 && actual[3] > 250,
+                "opacity-group SVG escaped above its sibling at ({x},{y}): {actual:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn vector_svg_opacity_group_preserves_z_near_bottom_at_device_scale() {
+    let Some(mut surface) = test_surface() else {
+        return;
+    };
+    let scale = 2.0;
+    surface.set_logical_pixels(true);
+    surface.set_dpi_scale(scale);
+    let svg = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../images/send.svg");
+    let mut canvas = surface.begin_frame(physical(400.0, scale), physical(128.0, scale));
+    canvas.clear(ColorLinPremul::from_srgba_u8([255; 4]));
+    canvas.push_opacity(0.5);
+    canvas.fill_rect(
+        289.0,
+        90.0,
+        77.0,
+        32.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([23, 23, 23, 255])),
+        10,
+    );
+    canvas.draw_svg(svg, [301.0, 98.0], [16.0, 16.0], 12);
+    canvas.pop_opacity();
+    canvas.fill_rect(
+        289.0,
+        90.0,
+        77.0,
+        32.0,
+        Brush::Solid(ColorLinPremul::from_srgba_u8([255; 4])),
+        5,
+    );
+
+    let (width, _, pixels) = surface.end_frame_headless(canvas).unwrap();
+    let background = pixel(
+        &pixels,
+        width,
+        physical(295.0, scale),
+        physical(106.0, scale),
+    );
+    assert!(
+        background[0] < 230 && background[1] < 230 && background[2] < 230,
+        "bottom opacity group disappeared at {scale}x: {background:?}"
+    );
+}
+
+#[test]
 fn transformed_clip_bounds_nested_effect_layers_in_world_space() {
     let instance = wgpu::Instance::default();
     let Some(adapter) =
