@@ -9,7 +9,7 @@ Part of the [jag](https://crates.io/crates/jag) toolkit.
 - Display list batching with GPU upload
 - Text rendering with system fonts (harfrust + swash), subpixel rendering
 - SVG rendering (usvg/resvg)
-- Image loading and caching
+- Image loading and caching (format sniffed from content, not file extension)
 - Rounded rectangles, gradients, shadows
 - Hit-testing via color-encoded regions
 
