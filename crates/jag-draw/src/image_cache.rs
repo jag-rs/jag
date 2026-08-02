@@ -265,10 +265,7 @@ impl ImageCache {
                 Err(_) => return None,
             }
         } else {
-            match decode_image_from_path(path) {
-                Some(img) => img,
-                None => return None,
-            }
+            decode_image_from_path(path)?
         };
 
         let rgba = img.to_rgba8();
