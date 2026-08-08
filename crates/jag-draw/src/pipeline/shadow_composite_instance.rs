@@ -32,10 +32,11 @@ impl ShadowCompositeInstanceRenderer {
         target_format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shadow-instance-composite-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SHADOW_INSTANCE_COMPOSITE_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "shadow-instance-composite-shader",
+            jag_shaders::SHADOW_INSTANCE_COMPOSITE_WGSL,
+        );
 
         // Group 0: same viewport-uniform layout as the linear shadow renderer.
         let vp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -68,11 +69,11 @@ impl ShadowCompositeInstanceRenderer {
             }],
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("shadow-composite-pipeline-layout"),
-            bind_group_layouts: &[&vp_bgl, &dst_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "shadow-composite-pipeline-layout",
+            &[&vp_bgl, &dst_bgl],
+        );
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("shadow-composite-pipeline"),

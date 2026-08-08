@@ -39,6 +39,7 @@ pub use wgpu;
 mod gpu_init;
 pub use gpu_init::*;
 
+mod gpu_bindings;
 #[doc(hidden)]
 pub mod gpu_texture;
 mod gpu_transfer;

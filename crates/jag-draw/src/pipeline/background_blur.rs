@@ -9,10 +9,11 @@ pub struct BackgroundRenderer {
 
 impl BackgroundRenderer {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("background-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::BACKGROUND_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "background-shader",
+            jag_shaders::BACKGROUND_WGSL,
+        );
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bg-bgl"),
             entries: &[
@@ -38,11 +39,8 @@ impl BackgroundRenderer {
                 },
             ],
         });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("bg-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout =
+            crate::gpu_bindings::create_pipeline_layout(&device, "bg-pipeline-layout", &[&bgl]);
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("bg-pipeline"),
             layout: Some(&layout),
@@ -94,10 +92,11 @@ pub struct BlurRenderer {
 
 impl BlurRenderer {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shadow-blur-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SHADOW_BLUR_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "shadow-blur-shader",
+            jag_shaders::SHADOW_BLUR_WGSL,
+        );
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("shadow-blur-bgl"),
             entries: &[
@@ -129,11 +128,11 @@ impl BlurRenderer {
                 },
             ],
         });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("shadow-blur-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "shadow-blur-pipeline-layout",
+            &[&bgl],
+        );
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("shadow-blur-pipeline"),
             layout: Some(&layout),
@@ -254,10 +253,11 @@ pub struct BackdropBlurRenderer {
 
 impl BackdropBlurRenderer {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("backdrop-blur-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::BACKDROP_BLUR_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "backdrop-blur-shader",
+            jag_shaders::BACKDROP_BLUR_WGSL,
+        );
         let vp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("backdrop-blur-vp-bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -302,11 +302,11 @@ impl BackdropBlurRenderer {
                 },
             ],
         });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("backdrop-blur-pipeline-layout"),
-            bind_group_layouts: &[&vp_bgl, &bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "backdrop-blur-pipeline-layout",
+            &[&vp_bgl, &bgl],
+        );
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("backdrop-blur-pipeline"),
             layout: Some(&layout),
@@ -431,10 +431,11 @@ pub struct ShadowCompositeRenderer {
 
 impl ShadowCompositeRenderer {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shadow-composite-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SHADOW_COMPOSITE_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "shadow-composite-shader",
+            jag_shaders::SHADOW_COMPOSITE_WGSL,
+        );
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("shadow-composite-bgl"),
             entries: &[
@@ -466,11 +467,11 @@ impl ShadowCompositeRenderer {
                 },
             ],
         });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("shadow-composite-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "shadow-composite-pipeline-layout",
+            &[&bgl],
+        );
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("shadow-composite-pipeline"),
             layout: Some(&layout),

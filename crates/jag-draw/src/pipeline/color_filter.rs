@@ -10,10 +10,11 @@ pub struct ColorFilterRenderer {
 
 impl ColorFilterRenderer {
     pub fn new(device: Arc<wgpu::Device>, format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("color-filter-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::COLOR_FILTER_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "color-filter-shader",
+            jag_shaders::COLOR_FILTER_WGSL,
+        );
         let entries = [
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -46,11 +47,11 @@ impl ColorFilterRenderer {
             label: Some("color-filter-layout"),
             entries: &entries,
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("color-filter-pipeline-layout"),
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "color-filter-pipeline-layout",
+            &[&layout],
+        );
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("color-filter-pipeline"),
             layout: Some(&pipeline_layout),

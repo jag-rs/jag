@@ -13,10 +13,8 @@ pub struct TextRenderer {
 
 impl TextRenderer {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("text-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::TEXT_WGSL.into()),
-        });
+        let shader =
+            crate::gpu_bindings::create_wgsl_shader(&device, "text-shader", jag_shaders::TEXT_WGSL);
 
         // Viewport uniform group (matches solids layout)
         let vp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -71,11 +69,11 @@ impl TextRenderer {
             ],
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("text-pipeline-layout"),
-            bind_group_layouts: &[&vp_bgl, &z_bgl, &tex_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "text-pipeline-layout",
+            &[&vp_bgl, &z_bgl, &tex_bgl],
+        );
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("text-pipeline"),
@@ -221,10 +219,11 @@ pub struct ImageRenderer {
 
 impl ImageRenderer {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("image-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::IMAGE_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "image-shader",
+            jag_shaders::IMAGE_WGSL,
+        );
 
         // Optional debug/escape hatch: allow disabling depth testing for images.
         // When JAG_IMAGE_NO_DEPTH=1, raster images (including WebView textures)
@@ -304,11 +303,11 @@ impl ImageRenderer {
             }],
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("image-pipeline-layout"),
-            bind_group_layouts: &[&vp_bgl, &z_bgl, &tex_bgl, &params_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "image-pipeline-layout",
+            &[&vp_bgl, &z_bgl, &tex_bgl, &params_bgl],
+        );
 
         let depth_stencil = if disable_depth {
             None

@@ -25,10 +25,11 @@ pub struct MaskFilterRenderer {
 
 impl MaskFilterRenderer {
     pub fn new(device: Arc<wgpu::Device>, format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mask-filter-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::MASK_FILTER_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "mask-filter-shader",
+            jag_shaders::MASK_FILTER_WGSL,
+        );
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -62,11 +63,11 @@ impl MaskFilterRenderer {
                 },
             ],
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("mask-filter-pipeline-layout"),
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "mask-filter-pipeline-layout",
+            &[&layout],
+        );
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("mask-filter-pipeline"),
             layout: Some(&pipeline_layout),
@@ -89,10 +90,11 @@ impl MaskFilterRenderer {
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
         });
-        let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mask-composite-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::MASK_COMPOSITE_WGSL.into()),
-        });
+        let composite_shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "mask-composite-shader",
+            jag_shaders::MASK_COMPOSITE_WGSL,
+        );
         let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("mask-composite-pipeline"),
             layout: Some(&pipeline_layout),

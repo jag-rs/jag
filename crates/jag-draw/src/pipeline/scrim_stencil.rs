@@ -8,10 +8,11 @@ pub struct ScrimStencilMaskRenderer {
 
 impl ScrimStencilMaskRenderer {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("scrim-stencil-mask-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SOLID_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "scrim-stencil-mask-shader",
+            jag_shaders::SOLID_WGSL,
+        );
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("scrim-stencil-mask-vp-bgl"),
@@ -27,11 +28,11 @@ impl ScrimStencilMaskRenderer {
             }],
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("scrim-stencil-mask-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "scrim-stencil-mask-pipeline-layout",
+            &[&bgl],
+        );
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("scrim-stencil-mask-pipeline"),
@@ -128,10 +129,11 @@ pub struct ScrimStencilRenderer {
 
 impl ScrimStencilRenderer {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("scrim-stencil-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SOLID_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "scrim-stencil-shader",
+            jag_shaders::SOLID_WGSL,
+        );
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("scrim-stencil-vp-bgl"),
@@ -147,11 +149,11 @@ impl ScrimStencilRenderer {
             }],
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("scrim-stencil-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "scrim-stencil-pipeline-layout",
+            &[&bgl],
+        );
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("scrim-stencil-pipeline"),

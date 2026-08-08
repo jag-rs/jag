@@ -25,10 +25,11 @@ impl ShadowInstanceRenderer {
         target_format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shadow-instance-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SHADOW_INSTANCE_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "shadow-instance-shader",
+            jag_shaders::SHADOW_INSTANCE_WGSL,
+        );
 
         // Same viewport-uniform layout as the solid renderer (group 0, binding 0).
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -45,11 +46,8 @@ impl ShadowInstanceRenderer {
             }],
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("shadow-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout =
+            crate::gpu_bindings::create_pipeline_layout(&device, "shadow-pipeline-layout", &[&bgl]);
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("shadow-pipeline"),

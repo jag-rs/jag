@@ -44,10 +44,11 @@ impl BasicSolidRenderer {
         depth_write_enabled: bool,
         depth_compare: wgpu::CompareFunction,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("solid-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SOLID_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "solid-shader",
+            jag_shaders::SOLID_WGSL,
+        );
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("solid-vp-bgl"),
@@ -77,11 +78,8 @@ impl BasicSolidRenderer {
             }],
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("solid-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout =
+            crate::gpu_bindings::create_pipeline_layout(&device, "solid-pipeline-layout", &[&bgl]);
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("solid-pipeline"),
@@ -192,10 +190,11 @@ pub struct OverlaySolidRenderer {
 
 impl OverlaySolidRenderer {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("overlay-solid-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SOLID_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "overlay-solid-shader",
+            jag_shaders::SOLID_WGSL,
+        );
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("overlay-solid-vp-bgl"),
@@ -211,11 +210,11 @@ impl OverlaySolidRenderer {
             }],
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("overlay-solid-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "overlay-solid-pipeline-layout",
+            &[&bgl],
+        );
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("overlay-solid-pipeline"),
@@ -296,10 +295,11 @@ pub struct ScrimSolidRenderer {
 
 impl ScrimSolidRenderer {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("scrim-solid-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SOLID_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "scrim-solid-shader",
+            jag_shaders::SOLID_WGSL,
+        );
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("scrim-solid-vp-bgl"),
@@ -315,11 +315,11 @@ impl ScrimSolidRenderer {
             }],
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("scrim-solid-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "scrim-solid-pipeline-layout",
+            &[&bgl],
+        );
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("scrim-solid-pipeline"),

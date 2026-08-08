@@ -10,10 +10,11 @@ pub struct DropShadowFilterRenderer {
 
 impl DropShadowFilterRenderer {
     pub fn new(device: Arc<wgpu::Device>, format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("drop-shadow-filter-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::DROP_SHADOW_FILTER_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "drop-shadow-filter-shader",
+            jag_shaders::DROP_SHADOW_FILTER_WGSL,
+        );
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -47,11 +48,11 @@ impl DropShadowFilterRenderer {
                 },
             ],
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("drop-shadow-filter-pipeline-layout"),
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "drop-shadow-filter-pipeline-layout",
+            &[&layout],
+        );
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("drop-shadow-filter-pipeline"),
             layout: Some(&pipeline_layout),

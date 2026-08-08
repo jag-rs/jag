@@ -8,10 +8,11 @@ pub struct Compositor {
 
 impl Compositor {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("compositor-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::COMPOSITOR_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "compositor-shader",
+            jag_shaders::COMPOSITOR_WGSL,
+        );
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("compositor-bgl"),
@@ -35,11 +36,11 @@ impl Compositor {
             ],
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("compositor-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "compositor-pipeline-layout",
+            &[&bgl],
+        );
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("compositor-pipeline"),
@@ -118,10 +119,8 @@ pub struct Blitter {
 
 impl Blitter {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("blit-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::BLIT_WGSL.into()),
-        });
+        let shader =
+            crate::gpu_bindings::create_wgsl_shader(&device, "blit-shader", jag_shaders::BLIT_WGSL);
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("blit-bgl"),
@@ -145,11 +144,8 @@ impl Blitter {
             ],
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("blit-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout =
+            crate::gpu_bindings::create_pipeline_layout(&device, "blit-pipeline-layout", &[&bgl]);
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("blit-pipeline"),

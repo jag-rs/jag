@@ -13,10 +13,8 @@ pub struct SmaaRenderer {
 
 impl SmaaRenderer {
     pub fn new(device: Arc<wgpu::Device>, output_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("smaa-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SMAA_WGSL.into()),
-        });
+        let shader =
+            crate::gpu_bindings::create_wgsl_shader(&device, "smaa-shader", jag_shaders::SMAA_WGSL);
 
         let edge_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("smaa-edge-bgl"),
@@ -130,21 +128,18 @@ impl SmaaRenderer {
             ],
         });
 
-        let edge_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("smaa-edge-layout"),
-            bind_group_layouts: &[&edge_bgl],
-            push_constant_ranges: &[],
-        });
-        let blend_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("smaa-blend-layout"),
-            bind_group_layouts: &[&blend_bgl],
-            push_constant_ranges: &[],
-        });
-        let resolve_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("smaa-resolve-layout"),
-            bind_group_layouts: &[&resolve_bgl],
-            push_constant_ranges: &[],
-        });
+        let edge_layout =
+            crate::gpu_bindings::create_pipeline_layout(&device, "smaa-edge-layout", &[&edge_bgl]);
+        let blend_layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "smaa-blend-layout",
+            &[&blend_bgl],
+        );
+        let resolve_layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "smaa-resolve-layout",
+            &[&resolve_bgl],
+        );
 
         let edge_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("smaa-edge-pipeline"),
