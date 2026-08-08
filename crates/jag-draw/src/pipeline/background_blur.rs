@@ -14,9 +14,10 @@ impl BackgroundRenderer {
             "background-shader",
             jag_shaders::BACKGROUND_WGSL,
         );
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("bg-bgl"),
-            entries: &[
+        let bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "bg-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -38,7 +39,7 @@ impl BackgroundRenderer {
                     count: None,
                 },
             ],
-        });
+        );
         let layout =
             crate::gpu_bindings::create_pipeline_layout(&device, "bg-pipeline-layout", &[&bgl]);
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -97,9 +98,10 @@ impl BlurRenderer {
             "shadow-blur-shader",
             jag_shaders::SHADOW_BLUR_WGSL,
         );
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("shadow-blur-bgl"),
-            entries: &[
+        let bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "shadow-blur-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -127,7 +129,7 @@ impl BlurRenderer {
                     count: None,
                 },
             ],
-        });
+        );
         let layout = crate::gpu_bindings::create_pipeline_layout(
             &device,
             "shadow-blur-pipeline-layout",
@@ -258,9 +260,10 @@ impl BackdropBlurRenderer {
             "backdrop-blur-shader",
             jag_shaders::BACKDROP_BLUR_WGSL,
         );
-        let vp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("backdrop-blur-vp-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let vp_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "backdrop-blur-vp-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -270,10 +273,11 @@ impl BackdropBlurRenderer {
                 },
                 count: None,
             }],
-        });
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("backdrop-blur-bgl"),
-            entries: &[
+        );
+        let bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "backdrop-blur-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -301,7 +305,7 @@ impl BackdropBlurRenderer {
                     count: None,
                 },
             ],
-        });
+        );
         let layout = crate::gpu_bindings::create_pipeline_layout(
             &device,
             "backdrop-blur-pipeline-layout",
@@ -436,9 +440,10 @@ impl ShadowCompositeRenderer {
             "shadow-composite-shader",
             jag_shaders::SHADOW_COMPOSITE_WGSL,
         );
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("shadow-composite-bgl"),
-            entries: &[
+        let bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "shadow-composite-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -466,7 +471,7 @@ impl ShadowCompositeRenderer {
                     count: None,
                 },
             ],
-        });
+        );
         let layout = crate::gpu_bindings::create_pipeline_layout(
             &device,
             "shadow-composite-pipeline-layout",

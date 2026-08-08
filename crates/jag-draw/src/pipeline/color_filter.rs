@@ -43,10 +43,8 @@ impl ColorFilterRenderer {
                 count: None,
             },
         ];
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("color-filter-layout"),
-            entries: &entries,
-        });
+        let layout =
+            crate::gpu_bindings::create_bind_group_layout(&device, "color-filter-layout", &entries);
         let pipeline_layout = crate::gpu_bindings::create_pipeline_layout(
             &device,
             "color-filter-pipeline-layout",

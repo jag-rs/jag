@@ -16,9 +16,10 @@ impl SmaaRenderer {
         let shader =
             crate::gpu_bindings::create_wgsl_shader(&device, "smaa-shader", jag_shaders::SMAA_WGSL);
 
-        let edge_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("smaa-edge-bgl"),
-            entries: &[
+        let edge_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "smaa-edge-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -46,11 +47,12 @@ impl SmaaRenderer {
                     count: None,
                 },
             ],
-        });
+        );
 
-        let blend_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("smaa-blend-bgl"),
-            entries: &[
+        let blend_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "smaa-blend-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -78,11 +80,12 @@ impl SmaaRenderer {
                     count: None,
                 },
             ],
-        });
+        );
 
-        let resolve_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("smaa-resolve-bgl"),
-            entries: &[
+        let resolve_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "smaa-resolve-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -126,7 +129,7 @@ impl SmaaRenderer {
                     count: None,
                 },
             ],
-        });
+        );
 
         let edge_layout =
             crate::gpu_bindings::create_pipeline_layout(&device, "smaa-edge-layout", &[&edge_bgl]);

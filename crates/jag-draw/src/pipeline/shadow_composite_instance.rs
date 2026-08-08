@@ -39,9 +39,10 @@ impl ShadowCompositeInstanceRenderer {
         );
 
         // Group 0: same viewport-uniform layout as the linear shadow renderer.
-        let vp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("shadow-composite-vp-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let vp_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "shadow-composite-vp-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -51,13 +52,14 @@ impl ShadowCompositeInstanceRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
         // Group 1: the destination snapshot. Sampled via `textureLoad`, so no
         // sampler is needed and the texture is non-filterable.
-        let dst_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("shadow-composite-dst-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let dst_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "shadow-composite-dst-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
@@ -67,7 +69,7 @@ impl ShadowCompositeInstanceRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
         let layout = crate::gpu_bindings::create_pipeline_layout(
             &device,

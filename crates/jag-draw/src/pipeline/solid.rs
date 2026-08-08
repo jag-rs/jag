@@ -50,9 +50,10 @@ impl BasicSolidRenderer {
             jag_shaders::SOLID_WGSL,
         );
 
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("solid-vp-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "solid-vp-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -62,11 +63,12 @@ impl BasicSolidRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
-        let z_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("solid-z-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let z_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "solid-z-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -76,7 +78,7 @@ impl BasicSolidRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
         let layout =
             crate::gpu_bindings::create_pipeline_layout(&device, "solid-pipeline-layout", &[&bgl]);
@@ -196,9 +198,10 @@ impl OverlaySolidRenderer {
             jag_shaders::SOLID_WGSL,
         );
 
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("overlay-solid-vp-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "overlay-solid-vp-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -208,7 +211,7 @@ impl OverlaySolidRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
         let layout = crate::gpu_bindings::create_pipeline_layout(
             &device,
@@ -301,9 +304,10 @@ impl ScrimSolidRenderer {
             jag_shaders::SOLID_WGSL,
         );
 
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("scrim-solid-vp-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "scrim-solid-vp-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -313,7 +317,7 @@ impl ScrimSolidRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
         let layout = crate::gpu_bindings::create_pipeline_layout(
             &device,

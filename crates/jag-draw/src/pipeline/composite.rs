@@ -14,9 +14,10 @@ impl Compositor {
             jag_shaders::COMPOSITOR_WGSL,
         );
 
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("compositor-bgl"),
-            entries: &[
+        let bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "compositor-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -34,7 +35,7 @@ impl Compositor {
                     count: None,
                 },
             ],
-        });
+        );
 
         let layout = crate::gpu_bindings::create_pipeline_layout(
             &device,
@@ -122,9 +123,10 @@ impl Blitter {
         let shader =
             crate::gpu_bindings::create_wgsl_shader(&device, "blit-shader", jag_shaders::BLIT_WGSL);
 
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("blit-bgl"),
-            entries: &[
+        let bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "blit-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -142,7 +144,7 @@ impl Blitter {
                     count: None,
                 },
             ],
-        });
+        );
 
         let layout =
             crate::gpu_bindings::create_pipeline_layout(&device, "blit-pipeline-layout", &[&bgl]);

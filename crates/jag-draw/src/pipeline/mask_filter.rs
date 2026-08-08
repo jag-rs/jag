@@ -40,9 +40,10 @@ impl MaskFilterRenderer {
             },
             count: None,
         };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("mask-filter-layout"),
-            entries: &[
+        let layout = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "mask-filter-layout",
+            &[
                 texture_entry(0),
                 texture_entry(1),
                 wgpu::BindGroupLayoutEntry {
@@ -62,7 +63,7 @@ impl MaskFilterRenderer {
                     count: None,
                 },
             ],
-        });
+        );
         let pipeline_layout = crate::gpu_bindings::create_pipeline_layout(
             &device,
             "mask-filter-pipeline-layout",

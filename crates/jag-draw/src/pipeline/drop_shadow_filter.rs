@@ -25,9 +25,10 @@ impl DropShadowFilterRenderer {
             },
             count: None,
         };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("drop-shadow-filter-layout"),
-            entries: &[
+        let layout = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "drop-shadow-filter-layout",
+            &[
                 texture_entry(0),
                 texture_entry(1),
                 wgpu::BindGroupLayoutEntry {
@@ -47,7 +48,7 @@ impl DropShadowFilterRenderer {
                     count: None,
                 },
             ],
-        });
+        );
         let pipeline_layout = crate::gpu_bindings::create_pipeline_layout(
             &device,
             "drop-shadow-filter-pipeline-layout",

@@ -23,6 +23,17 @@ pub(crate) fn create_pipeline_layout(
     })
 }
 
+pub(crate) fn create_bind_group_layout(
+    device: &wgpu::Device,
+    label: &str,
+    entries: &[wgpu::BindGroupLayoutEntry],
+) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -35,7 +46,11 @@ mod tests {
                 continue;
             }
             let source = std::fs::read_to_string(&path).expect("read jag-draw pipeline source");
-            for prohibited in [".create_shader_module(", ".create_pipeline_layout("] {
+            for prohibited in [
+                ".create_shader_module(",
+                ".create_pipeline_layout(",
+                ".create_bind_group_layout(",
+            ] {
                 assert!(
                     !source.contains(prohibited),
                     "{} bypasses the binding-resource seam with {prohibited}",

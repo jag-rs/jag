@@ -14,9 +14,10 @@ impl ScrimStencilMaskRenderer {
             jag_shaders::SOLID_WGSL,
         );
 
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("scrim-stencil-mask-vp-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "scrim-stencil-mask-vp-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -26,7 +27,7 @@ impl ScrimStencilMaskRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
         let layout = crate::gpu_bindings::create_pipeline_layout(
             &device,
@@ -135,9 +136,10 @@ impl ScrimStencilRenderer {
             jag_shaders::SOLID_WGSL,
         );
 
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("scrim-stencil-vp-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "scrim-stencil-vp-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -147,7 +149,7 @@ impl ScrimStencilRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
         let layout = crate::gpu_bindings::create_pipeline_layout(
             &device,

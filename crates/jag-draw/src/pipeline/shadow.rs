@@ -32,9 +32,10 @@ impl ShadowInstanceRenderer {
         );
 
         // Same viewport-uniform layout as the solid renderer (group 0, binding 0).
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("shadow-vp-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "shadow-vp-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -44,7 +45,7 @@ impl ShadowInstanceRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
         let layout =
             crate::gpu_bindings::create_pipeline_layout(&device, "shadow-pipeline-layout", &[&bgl]);

@@ -17,9 +17,10 @@ impl TextRenderer {
             crate::gpu_bindings::create_wgsl_shader(&device, "text-shader", jag_shaders::TEXT_WGSL);
 
         // Viewport uniform group (matches solids layout)
-        let vp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("text-vp-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let vp_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "text-vp-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -29,12 +30,13 @@ impl TextRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
         // Z-index uniform
-        let z_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("text-z-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let z_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "text-z-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -44,12 +46,13 @@ impl TextRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
         // Texture + sampler (color is now per-vertex)
-        let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("text-tex-bgl"),
-            entries: &[
+        let tex_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "text-tex-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -67,7 +70,7 @@ impl TextRenderer {
                     count: None,
                 },
             ],
-        });
+        );
 
         let layout = crate::gpu_bindings::create_pipeline_layout(
             &device,
@@ -234,9 +237,10 @@ impl ImageRenderer {
             .unwrap_or(false);
 
         // Viewport uniform group (matches solids layout)
-        let vp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("image-vp-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let vp_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "image-vp-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -246,12 +250,13 @@ impl ImageRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
         // Z-index uniform
-        let z_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("image-z-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let z_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "image-z-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -261,12 +266,13 @@ impl ImageRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
         // Texture + sampler
-        let tex_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("image-tex-bgl"),
-            entries: &[
+        let tex_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "image-tex-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -284,14 +290,15 @@ impl ImageRenderer {
                     count: None,
                 },
             ],
-        });
+        );
 
         // Per-draw image params (ImageParams uniform):
         // 12 floats = 48 bytes: [opacity, premultiplied, clip_enabled, pad,
         //                        clip_rect(4), clip_radii(4)]
-        let params_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("image-params-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let params_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "image-params-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
@@ -301,7 +308,7 @@ impl ImageRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
         let layout = crate::gpu_bindings::create_pipeline_layout(
             &device,
