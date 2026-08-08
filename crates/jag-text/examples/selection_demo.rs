@@ -13,7 +13,7 @@ fn main() {
     println!("Test 1: Basic Selection");
     println!("-----------------------");
     let text = "Hello, World!";
-    let layout = TextLayout::new(text, &font, font_size);
+    let _layout = TextLayout::new(text, &font, font_size);
 
     let sel = Selection::new(0, 5);
     println!("Text: \"{}\"", text);
@@ -207,7 +207,7 @@ fn main() {
     // Test 9: Selection Collapse
     println!("\n\nTest 9: Selection Collapse");
     println!("--------------------------");
-    let mut sel = Selection::new(5, 15);
+    let sel = Selection::new(5, 15);
     println!("Original selection: {:?}", sel.range());
 
     let mut sel_copy = sel;
@@ -285,7 +285,7 @@ fn main() {
     println!("\n\nTest 12: Selection with Emoji");
     println!("-----------------------------");
     let text = "Hello 👨‍👩‍👧‍👦 World";
-    let layout = TextLayout::new(text, &font, font_size);
+    let _layout = TextLayout::new(text, &font, font_size);
 
     println!("Text: \"{}\"", text);
     println!("Text length: {} bytes\n", text.len());

@@ -36,7 +36,7 @@ mod tests {
     fn clone_and_copy() {
         let a = TextAlign::Center;
         let b = a;
-        let c = a.clone();
+        let c = a;
         assert_eq!(a, b);
         assert_eq!(a, c);
     }

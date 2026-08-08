@@ -3,18 +3,13 @@ use unicode_segmentation::UnicodeSegmentation;
 /// Cursor affinity determines which side of a character the cursor is on.
 /// This is important for BiDi text and when a cursor position is ambiguous
 /// (e.g., at line boundaries).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CursorAffinity {
     /// Cursor is on the left/upstream side of the character.
     Upstream,
     /// Cursor is on the right/downstream side of the character.
+    #[default]
     Downstream,
-}
-
-impl Default for CursorAffinity {
-    fn default() -> Self {
-        Self::Downstream
-    }
 }
 
 /// Represents a cursor position in text with support for grapheme boundaries

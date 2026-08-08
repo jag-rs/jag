@@ -2030,6 +2030,16 @@ impl TextLayout {
     /// - Unix line endings (LF -> LF, unchanged)
     ///
     /// This ensures consistent behavior across platforms.
+    ///
+    /// Only called from the desktop clipboard paths (`paste_from_clipboard`,
+    /// `paste_replace_selection`), which are `#[cfg(not(target_os =
+    /// "android"))]`; the Android variants of those functions are stubs that
+    /// never reach this helper. It is still exercised directly by
+    /// `test_normalize_clipboard_text` below, which is not cfg-gated, so the
+    /// function itself must remain compiled on every target — only the
+    /// dead-code lint is silenced where Android build/check runs
+    /// `--lib`-only and the real callers are absent.
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     fn normalize_clipboard_text(text: &str) -> String {
         // Replace CRLF with LF first (Windows)
         let text = text.replace("\r\n", "\n");
@@ -3184,9 +3194,9 @@ mod tests {
         let result = layout.cut_to_clipboard(&selection, &font, 16.0, None, WrapMode::NoWrap);
 
         // If clipboard is available, text should be deleted
-        if result.is_ok() {
+        if let Ok(cut_len) = result {
             assert_eq!(layout.text(), "Hello ");
-            assert_eq!(result.unwrap(), 6);
+            assert_eq!(cut_len, 6);
         }
     }
 
@@ -3773,7 +3783,7 @@ mod tests {
 
         // Selection should no longer be collapsed
         assert!(!extended.is_collapsed());
-        assert!(extended.len() > 0);
+        assert!(!extended.is_empty());
     }
 
     #[test]
@@ -3918,7 +3928,7 @@ mod tests {
 
         // Should span multiple lines
         assert!(!extended.is_collapsed());
-        assert!(extended.len() > 0);
+        assert!(!extended.is_empty());
 
         // Should include text from multiple lines
         let selected_text = extended.text(layout.text());

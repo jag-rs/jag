@@ -26,20 +26,15 @@ pub struct RoundedRectClip {
 }
 
 /// How an image should fit within its bounds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ImageFitMode {
     /// Stretch to fill (may distort aspect ratio)
     Fill,
     /// Fit inside maintaining aspect ratio (letterbox/pillarbox)
+    #[default]
     Contain,
     /// Fill maintaining aspect ratio (may crop edges)
     Cover,
-}
-
-impl Default for ImageFitMode {
-    fn default() -> Self {
-        Self::Contain
-    }
 }
 
 /// Builder for a single frame’s draw commands. Wraps `Painter` and adds canvas helpers.

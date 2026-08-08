@@ -487,8 +487,10 @@ mod tests {
 
     #[test]
     fn text_area_keyboard_enter() {
-        let mut ta = TextArea::default();
-        ta.focused = true;
+        let mut ta = TextArea {
+            focused: true,
+            ..TextArea::default()
+        };
         ta.set_text("hello");
         ta.cursor_position = 5;
         let evt = KeyboardEvent {
@@ -503,12 +505,14 @@ mod tests {
 
     #[test]
     fn text_area_scroll() {
-        let mut ta = TextArea::default();
-        ta.rect = Rect {
-            x: 0.0,
-            y: 0.0,
-            w: 300.0,
-            h: 100.0,
+        let mut ta = TextArea {
+            rect: Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 300.0,
+                h: 100.0,
+            },
+            ..TextArea::default()
         };
         let evt = ScrollEvent {
             x: 50.0,

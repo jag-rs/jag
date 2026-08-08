@@ -524,8 +524,10 @@ mod tests {
 
     #[test]
     fn input_box_password_display() {
-        let mut ib = InputBox::default();
-        ib.input_type = "password".to_string();
+        let mut ib = InputBox {
+            input_type: "password".to_string(),
+            ..InputBox::default()
+        };
         ib.set_text("secret");
         let display = ib.display_text();
         assert_eq!(display.chars().count(), 6);
@@ -546,16 +548,20 @@ mod tests {
 
     #[test]
     fn input_box_disabled_no_edit() {
-        let mut ib = InputBox::default();
-        ib.disabled = true;
+        let mut ib = InputBox {
+            disabled: true,
+            ..InputBox::default()
+        };
         ib.insert_text("nope");
         assert!(ib.text.is_empty());
     }
 
     #[test]
     fn input_box_keyboard_typing() {
-        let mut ib = InputBox::default();
-        ib.focused = true;
+        let mut ib = InputBox {
+            focused: true,
+            ..InputBox::default()
+        };
         let evt = KeyboardEvent {
             key: KeyCode::Other(65),
             state: ElementState::Pressed,
