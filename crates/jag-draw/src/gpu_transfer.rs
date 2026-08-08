@@ -77,6 +77,7 @@ pub(crate) fn create_transient_upload(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn upload_sizes_are_nonzero_and_copy_aligned() {
@@ -97,5 +98,32 @@ mod tests {
         let data = [1, 2, 3];
         assert_eq!(initial_contents(&data), data);
         assert_eq!(initial_contents(&[]), EMPTY_BUFFER_CONTENTS);
+    }
+
+    #[test]
+    fn transient_pass_manager_geometry_cannot_bypass_transfer_boundary() {
+        let pass_manager = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("pass_manager");
+        let mut checked_files = 0;
+        for entry in fs::read_dir(pass_manager).expect("read pass-manager sources") {
+            let path = entry.expect("read pass-manager entry").path();
+            if path.extension().and_then(|value| value.to_str()) != Some("rs")
+                || path.file_name().and_then(|value| value.to_str()) == Some("setup.rs")
+            {
+                continue;
+            }
+            let source = fs::read_to_string(&path).expect("read pass-manager source");
+            assert!(
+                !source.contains("create_buffer(") && !source.contains("create_buffer_init("),
+                "{} bypasses the transient transfer boundary",
+                path.display()
+            );
+            checked_files += 1;
+        }
+        assert!(
+            checked_files > 10,
+            "pass-manager source scan was incomplete"
+        );
     }
 }

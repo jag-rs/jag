@@ -6,6 +6,7 @@
 //! resource vectors so they outlive the render pass. No logic changed.
 
 use super::{PassManager, TextQuadVtx, glyph_mask_for_atlas};
+use crate::gpu_transfer::create_transient_upload;
 
 type TextResource = (
     i32,
@@ -209,24 +210,18 @@ impl PassManager {
                     ]);
                 }
 
-                // Create vertex buffer for this group
-                let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("text-vertex-buffer-group"),
-                    size: (vertices.len() * std::mem::size_of::<TextQuadVtx>()) as u64,
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-
-                // Create index buffer for this group
-                let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("text-index-buffer-group"),
-                    size: (indices.len() * std::mem::size_of::<u16>()) as u64,
-                    usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-
-                queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&vertices));
-                queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&indices));
+                let vbuf = create_transient_upload(
+                    &self.device,
+                    "text-vertex-buffer-group",
+                    bytemuck::cast_slice(&vertices),
+                    wgpu::BufferUsages::VERTEX,
+                );
+                let ibuf = create_transient_upload(
+                    &self.device,
+                    "text-index-buffer-group",
+                    bytemuck::cast_slice(&indices),
+                    wgpu::BufferUsages::INDEX,
+                );
 
                 // Create z bind group for this text group
                 // Pass z_index as float directly - shader will convert to depth
@@ -431,24 +426,18 @@ impl PassManager {
                     ]);
                 }
 
-                // Create vertex buffer for this group
-                let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("text-vertex-buffer-group-off"),
-                    size: (vertices.len() * std::mem::size_of::<TextQuadVtx>()) as u64,
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-
-                // Create index buffer for this group
-                let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("text-index-buffer-group-off"),
-                    size: (indices.len() * std::mem::size_of::<u16>()) as u64,
-                    usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-
-                queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&vertices));
-                queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&indices));
+                let vbuf = create_transient_upload(
+                    &self.device,
+                    "text-vertex-buffer-group-off",
+                    bytemuck::cast_slice(&vertices),
+                    wgpu::BufferUsages::VERTEX,
+                );
+                let ibuf = create_transient_upload(
+                    &self.device,
+                    "text-index-buffer-group-off",
+                    bytemuck::cast_slice(&indices),
+                    wgpu::BufferUsages::INDEX,
+                );
 
                 // Create z bind group for this text group
                 // Pass z_index as float directly - shader will convert to depth
