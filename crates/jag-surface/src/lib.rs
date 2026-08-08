@@ -8,6 +8,7 @@
 
 mod canvas;
 mod canvas_ext;
+mod gpu_readback;
 mod readback;
 pub mod shapes;
 mod surface;

@@ -3,6 +3,7 @@ use anyhow::Result;
 use jag_draw::{ColorLinPremul, Command, wgpu};
 
 use crate::canvas::Canvas;
+use crate::gpu_readback::ReadbackBuffer;
 
 use super::{JagSurface, apply_transform_to_point, calculate_image_fit};
 
@@ -369,16 +370,11 @@ impl JagSurface {
 
         // Copy rendered texture to a CPU-readable buffer
         let bytes_per_pixel = 4u32;
-        let unpadded_bytes_per_row = width * bytes_per_pixel;
-        let padded_bytes_per_row = (unpadded_bytes_per_row + 255) & !255;
-        let buffer_size = (padded_bytes_per_row * height) as u64;
-
-        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("headless-readback"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let bytes_per_row = width
+            .checked_mul(bytes_per_pixel)
+            .ok_or_else(|| anyhow::anyhow!("headless readback row size overflow"))?;
+        let readback =
+            ReadbackBuffer::new(&self.device, "headless-readback", bytes_per_row, height)?;
 
         encoder.copy_texture_to_buffer(
             wgpu::ImageCopyTexture {
@@ -388,10 +384,10 @@ impl JagSurface {
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::ImageCopyBuffer {
-                buffer: &readback,
+                buffer: readback.buffer(),
                 layout: wgpu::ImageDataLayout {
                     offset: 0,
-                    bytes_per_row: Some(padded_bytes_per_row),
+                    bytes_per_row: Some(readback.padded_bytes_per_row()),
                     rows_per_image: Some(height),
                 },
             },
@@ -405,27 +401,7 @@ impl JagSurface {
         // Submit and wait
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        let (tx, rx) = std::sync::mpsc::channel();
-        readback
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                result.expect("failed to map readback buffer");
-                tx.send(()).expect("failed to signal readback");
-            });
-        self.device.poll(wgpu::Maintain::Wait);
-        rx.recv()
-            .map_err(|e| anyhow::anyhow!("readback recv: {}", e))?;
-
-        // Extract tightly-packed RGBA pixels (strip row padding)
-        let mapped = readback.slice(..).get_mapped_range();
-        let mut pixels = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
-        for row in 0..height {
-            let start = (row * padded_bytes_per_row) as usize;
-            let end = start + (width * bytes_per_pixel) as usize;
-            pixels.extend_from_slice(&mapped[start..end]);
-        }
-        drop(mapped);
-        readback.unmap();
+        let pixels = readback.map_tightly_packed(&self.device)?;
 
         Ok((width, height, pixels))
     }
