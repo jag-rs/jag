@@ -113,10 +113,11 @@ impl DropShadowFilterRenderer {
             bytemuck::cast_slice(&params),
             wgpu::BufferUsages::UNIFORM,
         );
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("drop-shadow-filter-group"),
-            layout: &self.layout,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "drop-shadow-filter-group",
+            &self.layout,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(source),
@@ -134,7 +135,7 @@ impl DropShadowFilterRenderer {
                     resource: buffer.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub fn record<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, group: &'a wgpu::BindGroup) {

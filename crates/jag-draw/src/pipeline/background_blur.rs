@@ -186,10 +186,11 @@ impl BlurRenderer {
         device: &wgpu::Device,
         tex_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow-blur-bg"),
-            layout: &self.bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "shadow-blur-bg",
+            &self.bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(tex_view),
@@ -203,7 +204,7 @@ impl BlurRenderer {
                     resource: self.param_buffer.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub fn bind_group_with_params(
@@ -218,10 +219,11 @@ impl BlurRenderer {
             bytemuck::bytes_of(params),
             wgpu::BufferUsages::UNIFORM,
         );
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("blur-pass-bg"),
-            layout: &self.bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "blur-pass-bg",
+            &self.bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(tex_view),
@@ -235,7 +237,7 @@ impl BlurRenderer {
                     resource: buffer.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub fn record<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, bg: &'a wgpu::BindGroup) {
@@ -388,10 +390,11 @@ impl BackdropBlurRenderer {
         device: &wgpu::Device,
         tex_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("backdrop-blur-bg"),
-            layout: &self.bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "backdrop-blur-bg",
+            &self.bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(tex_view),
@@ -405,7 +408,7 @@ impl BackdropBlurRenderer {
                     resource: self.param_buffer.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub fn record<'a>(
@@ -528,10 +531,11 @@ impl ShadowCompositeRenderer {
         device: &wgpu::Device,
         tex_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow-composite-bg"),
-            layout: &self.bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "shadow-composite-bg",
+            &self.bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(tex_view),
@@ -545,7 +549,7 @@ impl ShadowCompositeRenderer {
                     resource: self.color_buffer.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub fn record<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, bg: &'a wgpu::BindGroup) {

@@ -103,10 +103,11 @@ impl ColorFilterRenderer {
             bytemuck::cast_slice(&data),
             wgpu::BufferUsages::UNIFORM,
         );
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("color-filter-group"),
-            layout: &self.layout,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "color-filter-group",
+            &self.layout,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(source),
@@ -120,7 +121,7 @@ impl ColorFilterRenderer {
                     resource: buffer.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub fn record<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, group: &'a wgpu::BindGroup) {

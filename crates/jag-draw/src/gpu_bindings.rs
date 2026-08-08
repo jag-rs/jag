@@ -34,6 +34,19 @@ pub(crate) fn create_bind_group_layout(
     })
 }
 
+pub(crate) fn create_bind_group(
+    device: &wgpu::Device,
+    label: &str,
+    layout: &wgpu::BindGroupLayout,
+    entries: &[wgpu::BindGroupEntry<'_>],
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(label),
+        layout,
+        entries,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -50,6 +63,7 @@ mod tests {
                 ".create_shader_module(",
                 ".create_pipeline_layout(",
                 ".create_bind_group_layout(",
+                ".create_bind_group(",
             ] {
                 assert!(
                     !source.contains(prohibited),

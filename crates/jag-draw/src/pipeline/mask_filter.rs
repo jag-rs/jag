@@ -144,10 +144,11 @@ impl MaskFilterRenderer {
             bytemuck::bytes_of(&params),
             wgpu::BufferUsages::UNIFORM,
         );
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("mask-filter-group"),
-            layout: &self.layout,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "mask-filter-group",
+            &self.layout,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(source),
@@ -165,7 +166,7 @@ impl MaskFilterRenderer {
                     resource: buffer.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub(crate) fn composite_group(
@@ -188,10 +189,11 @@ impl MaskFilterRenderer {
             bytemuck::bytes_of(&params),
             wgpu::BufferUsages::UNIFORM,
         );
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("mask-composite-group"),
-            layout: &self.layout,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "mask-composite-group",
+            &self.layout,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(accumulated),
@@ -209,7 +211,7 @@ impl MaskFilterRenderer {
                     resource: buffer.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub(crate) fn params(

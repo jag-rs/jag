@@ -160,14 +160,15 @@ impl TextRenderer {
         device: &wgpu::Device,
         vp_buffer: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("text-vp-bg"),
-            layout: &self.vp_bgl,
-            entries: &[wgpu::BindGroupEntry {
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "text-vp-bg",
+            &self.vp_bgl,
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: vp_buffer.as_entire_binding(),
             }],
-        })
+        )
     }
 
     pub fn tex_bind_group(
@@ -175,10 +176,11 @@ impl TextRenderer {
         device: &wgpu::Device,
         tex_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("text-tex-bg"),
-            layout: &self.tex_bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "text-tex-bg",
+            &self.tex_bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(tex_view),
@@ -188,7 +190,7 @@ impl TextRenderer {
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
                 },
             ],
-        })
+        )
     }
 
     pub fn record<'a>(
@@ -392,14 +394,15 @@ impl ImageRenderer {
         device: &wgpu::Device,
         vp_buffer: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("image-vp-bg"),
-            layout: &self.vp_bgl,
-            entries: &[wgpu::BindGroupEntry {
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "image-vp-bg",
+            &self.vp_bgl,
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: vp_buffer.as_entire_binding(),
             }],
-        })
+        )
     }
 
     pub fn tex_bind_group(
@@ -407,10 +410,11 @@ impl ImageRenderer {
         device: &wgpu::Device,
         tex_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("image-tex-bg"),
-            layout: &self.tex_bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "image-tex-bg",
+            &self.tex_bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(tex_view),
@@ -420,7 +424,7 @@ impl ImageRenderer {
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
                 },
             ],
-        })
+        )
     }
 
     /// Create the image-params uniform bind group.
@@ -469,14 +473,15 @@ impl ImageRenderer {
             bytemuck::cast_slice(&params),
             wgpu::BufferUsages::UNIFORM,
         );
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("image-params-bg"),
-            layout: &self.params_bgl,
-            entries: &[wgpu::BindGroupEntry {
+        let bind_group = crate::gpu_bindings::create_bind_group(
+            &device,
+            "image-params-bg",
+            &self.params_bgl,
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: buffer.as_entire_binding(),
             }],
-        });
+        );
         (bind_group, buffer)
     }
 

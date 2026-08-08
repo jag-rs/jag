@@ -252,10 +252,11 @@ impl SmaaRenderer {
         color_view: &wgpu::TextureView,
         params: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("smaa-edge-bg"),
-            layout: &self.edge_bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "smaa-edge-bg",
+            &self.edge_bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(color_view),
@@ -269,7 +270,7 @@ impl SmaaRenderer {
                     resource: params.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub fn blend_bind_group(
@@ -278,10 +279,11 @@ impl SmaaRenderer {
         edge_view: &wgpu::TextureView,
         params: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("smaa-blend-bg"),
-            layout: &self.blend_bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "smaa-blend-bg",
+            &self.blend_bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(edge_view),
@@ -295,7 +297,7 @@ impl SmaaRenderer {
                     resource: params.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub fn resolve_bind_group(
@@ -305,10 +307,11 @@ impl SmaaRenderer {
         weight_view: &wgpu::TextureView,
         params: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("smaa-resolve-bg"),
-            layout: &self.resolve_bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "smaa-resolve-bg",
+            &self.resolve_bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(color_view),
@@ -330,7 +333,7 @@ impl SmaaRenderer {
                     resource: params.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub fn record_edges<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, bg: &'a wgpu::BindGroup) {

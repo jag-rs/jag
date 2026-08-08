@@ -89,10 +89,11 @@ impl Compositor {
         device: &wgpu::Device,
         tex_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("compositor-bg"),
-            layout: &self.bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "compositor-bg",
+            &self.bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(tex_view),
@@ -102,7 +103,7 @@ impl Compositor {
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
                 },
             ],
-        })
+        )
     }
 
     pub fn record<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, bg: &'a wgpu::BindGroup) {
@@ -196,10 +197,11 @@ impl Blitter {
         device: &wgpu::Device,
         tex_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("blit-bg"),
-            layout: &self.bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "blit-bg",
+            &self.bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(tex_view),
@@ -209,7 +211,7 @@ impl Blitter {
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
                 },
             ],
-        })
+        )
     }
 
     pub fn record<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, bg: &'a wgpu::BindGroup) {
