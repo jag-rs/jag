@@ -1,3 +1,4 @@
+use crate::gpu_texture::{Texture2dSpec, create_texture_2d, upload_texture_2d};
 use crate::scene::ColorLinPremul;
 use crate::svg_fontdb::{render_svg_to_pixmap, svg_font_db};
 use std::collections::{HashMap, VecDeque};
@@ -302,39 +303,17 @@ impl SvgRasterCache {
         let h = pixmap.height();
         let rgba = pixmap.take();
 
-        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("svg-raster"),
-            size: wgpu::Extent3d {
+        let tex = create_texture_2d(
+            &self.device,
+            "svg-raster",
+            Texture2dSpec {
                 width: w,
                 height: h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &rgba,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(w * 4),
-                rows_per_image: Some(h),
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             },
         );
+        upload_texture_2d(queue, &tex, [0, 0], [w, h], w * 4, &rgba);
 
         let bytes = (w as usize) * (h as usize) * 4;
         let tex_arc = Arc::new(tex);

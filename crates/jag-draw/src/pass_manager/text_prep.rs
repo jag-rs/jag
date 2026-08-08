@@ -6,6 +6,7 @@
 //! resource vectors so they outlive the render pass. No logic changed.
 
 use super::{PassManager, TextQuadVtx, glyph_mask_for_atlas};
+use crate::gpu_texture::upload_texture_2d;
 use crate::gpu_transfer::create_transient_upload;
 
 type TextResource = (
@@ -106,28 +107,13 @@ impl PassManager {
                     atlas_max_x = atlas_max_x.max(atlas_cursor_x + w);
                     atlas_max_y = atlas_max_y.max(atlas_cursor_y + h);
 
-                    queue.write_texture(
-                        wgpu::ImageCopyTexture {
-                            texture: &self.text_mask_atlas,
-                            mip_level: 0,
-                            origin: wgpu::Origin3d {
-                                x: atlas_cursor_x,
-                                y: atlas_cursor_y,
-                                z: 0,
-                            },
-                            aspect: wgpu::TextureAspect::All,
-                        },
+                    upload_texture_2d(
+                        queue,
+                        &self.text_mask_atlas,
+                        [atlas_cursor_x, atlas_cursor_y],
+                        [w, h],
+                        w * 4,
                         data.as_ref(),
-                        wgpu::ImageDataLayout {
-                            offset: 0,
-                            bytes_per_row: Some(w * 4),
-                            rows_per_image: Some(h),
-                        },
-                        wgpu::Extent3d {
-                            width: w,
-                            height: h,
-                            depth_or_array_layers: 1,
-                        },
                     );
 
                     let u0 = atlas_cursor_x as f32 / 4096.0;
@@ -379,24 +365,13 @@ impl PassManager {
                 let upload_height = atlas_max_y.min(4096);
                 let upload_len = (upload_height as usize) * atlas_row_stride;
                 if self.text_atlas_upload.len() >= upload_len {
-                    queue.write_texture(
-                        wgpu::ImageCopyTexture {
-                            texture: &self.text_mask_atlas,
-                            mip_level: 0,
-                            origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
-                            aspect: wgpu::TextureAspect::All,
-                        },
+                    upload_texture_2d(
+                        queue,
+                        &self.text_mask_atlas,
+                        [0, 0],
+                        [4096, upload_height],
+                        atlas_row_stride as u32,
                         &self.text_atlas_upload[..upload_len],
-                        wgpu::ImageDataLayout {
-                            offset: 0,
-                            bytes_per_row: Some((atlas_row_stride) as u32),
-                            rows_per_image: Some(upload_height),
-                        },
-                        wgpu::Extent3d {
-                            width: 4096,
-                            height: upload_height,
-                            depth_or_array_layers: 1,
-                        },
                     );
                 }
             }

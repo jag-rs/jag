@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::gpu_texture::{Texture2dSpec, create_default_texture_view, create_texture_2d};
 use crate::gpu_transfer::allocate_buffer_resource;
 
 #[derive(Debug)]
@@ -67,22 +68,18 @@ impl RenderAllocator {
     pub fn allocate_texture(&mut self, key: TexKey) -> OwnedTexture {
         let entry = self.texture_pool.entry(key).or_default();
         let texture = entry.pop().unwrap_or_else(|| {
-            self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("alloc:tex"),
-                size: wgpu::Extent3d {
+            create_texture_2d(
+                &self.device,
+                "alloc:tex",
+                Texture2dSpec {
                     width: key.width,
                     height: key.height,
-                    depth_or_array_layers: 1,
+                    format: key.format,
+                    usage: key.usage,
                 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: key.format,
-                usage: key.usage,
-                view_formats: &[],
-            })
+            )
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = create_default_texture_view(&texture);
         OwnedTexture { texture, view, key }
     }
 

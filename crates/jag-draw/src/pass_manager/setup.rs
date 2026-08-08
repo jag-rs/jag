@@ -143,25 +143,21 @@ impl PassManager {
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
         // Text pipeline GPU resources
-        let text_mask_atlas = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("text-mask-atlas"),
-            size: wgpu::Extent3d {
+        let text_mask_atlas = crate::gpu_texture::create_texture_2d(
+            &device,
+            "text-mask-atlas",
+            crate::gpu_texture::Texture2dSpec {
                 width: 4096,
                 height: 4096,
-                depth_or_array_layers: 1,
+                // Use RGBA8 so we can store RGB subpixel coverage masks directly.
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            // Use RGBA8 so we can store RGB subpixel coverage masks directly.
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
+        );
         let text_mask_atlas_view =
-            text_mask_atlas.create_view(&wgpu::TextureViewDescriptor::default());
+            crate::gpu_texture::create_default_texture_view(&text_mask_atlas);
         let text_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("text-mask-bgl"),
             layout: &text.tex_bgl,
