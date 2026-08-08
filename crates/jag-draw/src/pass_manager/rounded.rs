@@ -3,6 +3,7 @@
 
 use super::PassManager;
 use crate::allocator::RenderAllocator;
+use crate::gpu_transfer::create_transient_upload;
 use crate::scene::RoundedRect;
 
 impl PassManager {
@@ -153,24 +154,18 @@ impl PassManager {
         // Create GPU buffers
         let vsize = (vertices.len() * std::mem::size_of::<Vtx>()) as u64;
         let isize = (indices.len() * std::mem::size_of::<u16>()) as u64;
-        let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rounded-rect-fill-vbuf"),
-            size: vsize.max(4),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rounded-rect-fill-ibuf"),
-            size: isize.max(4),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        if vsize > 0 {
-            queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&vertices));
-        }
-        if isize > 0 {
-            queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&indices));
-        }
+        let vbuf = create_transient_upload(
+            &self.device,
+            "rounded-rect-fill-vbuf",
+            bytemuck::cast_slice(&vertices),
+            wgpu::BufferUsages::VERTEX,
+        );
+        let ibuf = create_transient_upload(
+            &self.device,
+            "rounded-rect-fill-ibuf",
+            bytemuck::cast_slice(&indices),
+            wgpu::BufferUsages::INDEX,
+        );
         let gpu = crate::upload::GpuScene {
             vertex: crate::allocator::OwnedBuffer {
                 buffer: vbuf,

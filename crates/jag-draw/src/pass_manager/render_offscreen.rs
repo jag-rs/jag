@@ -7,8 +7,8 @@
 
 use super::{PassManager, set_scissor_for_clip, transformed_quad_points};
 use crate::allocator::RenderAllocator;
+use crate::gpu_transfer::create_transient_upload;
 use crate::upload::GpuScene;
-use wgpu::util::DeviceExt;
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 impl PassManager {
@@ -225,13 +225,12 @@ impl PassManager {
         // Limitation: all overlapping shadows read the same pre-shadow
         // snapshot, so they do not accumulate against each other. Accepted.
         if !self.shadow_instances.is_empty() {
-            let shadow_buf = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("shadow-instances"),
-                    contents: bytemuck::cast_slice(&self.shadow_instances),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
+            let shadow_buf = create_transient_upload(
+                &self.device,
+                "shadow-instances",
+                bytemuck::cast_slice(&self.shadow_instances),
+                wgpu::BufferUsages::VERTEX,
+            );
             let shadow_vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("shadow-composite-vp-bg-offscreen"),
                 layout: self.shadow_composite.viewport_bgl(),

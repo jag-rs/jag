@@ -3,8 +3,8 @@
 
 use super::{PassManager, apply_transform_to_point, set_scissor_for_clip};
 use crate::allocator::{RenderAllocator, TexKey};
+use crate::gpu_transfer::create_transient_upload;
 use crate::scene::RoundedRect;
-use wgpu::util::DeviceExt;
 
 impl PassManager {
     /// Draw a full scrim but cut out a rounded-rect hole via stencil.
@@ -160,31 +160,23 @@ impl PassManager {
             indices.extend_from_slice(&[0, (vertices.len() - 1) as u16, 1]);
         }
 
-        // Ensure index byte length is 4-byte aligned for write_buffer
+        // Preserve the copy-aligned index layout used by the draw path.
         if indices.len() % 2 != 0 {
             indices.push(*indices.last().unwrap_or(&0));
         }
 
-        let vsize = (vertices.len() * std::mem::size_of::<Vtx>()) as u64;
-        let isize = (indices.len() * std::mem::size_of::<u16>()) as u64;
-        let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("scrim-hole-vbuf"),
-            size: vsize.max(4),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("scrim-hole-ibuf"),
-            size: isize.max(4),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        if vsize > 0 {
-            queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&vertices));
-        }
-        if isize > 0 {
-            queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&indices));
-        }
+        let vbuf = create_transient_upload(
+            &self.device,
+            "scrim-hole-vbuf",
+            bytemuck::cast_slice(&vertices),
+            wgpu::BufferUsages::VERTEX,
+        );
+        let ibuf = create_transient_upload(
+            &self.device,
+            "scrim-hole-ibuf",
+            bytemuck::cast_slice(&indices),
+            wgpu::BufferUsages::INDEX,
+        );
 
         let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scrim-stencil-vp-bg"),
@@ -247,20 +239,18 @@ impl PassManager {
             },
         ];
         let quad_idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
-        let qvbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("scrim-fullscreen-vbuf"),
-            size: (quad.len() * std::mem::size_of::<Vtx>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let qibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("scrim-fullscreen-ibuf"),
-            size: (quad_idx.len() * std::mem::size_of::<u16>()) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&qvbuf, 0, bytemuck::cast_slice(&quad));
-        queue.write_buffer(&qibuf, 0, bytemuck::cast_slice(&quad_idx));
+        let qvbuf = create_transient_upload(
+            &self.device,
+            "scrim-fullscreen-vbuf",
+            bytemuck::cast_slice(&quad),
+            wgpu::BufferUsages::VERTEX,
+        );
+        let qibuf = create_transient_upload(
+            &self.device,
+            "scrim-fullscreen-ibuf",
+            bytemuck::cast_slice(&quad_idx),
+            wgpu::BufferUsages::INDEX,
+        );
 
         let vp_bg_scrim = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scrim-stencil-vp-bg-scrim"),
@@ -443,20 +433,18 @@ impl PassManager {
             BackdropVtx { pos: p3, z },
         ];
         let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
-        let vbuf = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("backdrop-blur-vbuf"),
-                contents: bytemuck::cast_slice(&verts),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        let ibuf = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("backdrop-blur-ibuf"),
-                contents: bytemuck::cast_slice(&idx),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        let vbuf = create_transient_upload(
+            &self.device,
+            "backdrop-blur-vbuf",
+            bytemuck::cast_slice(&verts),
+            wgpu::BufferUsages::VERTEX,
+        );
+        let ibuf = create_transient_upload(
+            &self.device,
+            "backdrop-blur-ibuf",
+            bytemuck::cast_slice(&idx),
+            wgpu::BufferUsages::INDEX,
+        );
 
         let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("backdrop-blur-vp-bg"),

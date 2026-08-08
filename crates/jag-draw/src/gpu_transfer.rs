@@ -1,8 +1,10 @@
 use thiserror::Error;
+use wgpu::util::DeviceExt;
 
 use crate::allocator::{BufKey, OwnedBuffer, RenderAllocator};
 
 const MIN_BUFFER_SIZE: u64 = wgpu::COPY_BUFFER_ALIGNMENT;
+const EMPTY_BUFFER_CONTENTS: [u8; MIN_BUFFER_SIZE as usize] = [0; MIN_BUFFER_SIZE as usize];
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub(crate) enum BufferTransferError {
@@ -46,6 +48,32 @@ pub(crate) fn allocate_pooled_upload(
     Ok(buffer)
 }
 
+fn initial_contents(contents: &[u8]) -> &[u8] {
+    if contents.is_empty() {
+        &EMPTY_BUFFER_CONTENTS
+    } else {
+        contents
+    }
+}
+
+/// Create a labeled, non-pooled draw buffer with complete initial contents.
+///
+/// `DeviceExt` owns backend copy padding on both the current and selected wgpu
+/// families. This wrapper additionally keeps empty geometry nonzero and
+/// preserves `COPY_DST` for callers that replace the initial contents later.
+pub(crate) fn create_transient_upload(
+    device: &wgpu::Device,
+    label: &str,
+    contents: &[u8],
+    usage: wgpu::BufferUsages,
+) -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents: initial_contents(contents),
+        usage: usage | wgpu::BufferUsages::COPY_DST,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -62,5 +90,12 @@ mod tests {
                 alignment: wgpu::COPY_BUFFER_ALIGNMENT,
             })
         );
+    }
+
+    #[test]
+    fn transient_initial_contents_preserve_data_and_fill_empty_buffers() {
+        let data = [1, 2, 3];
+        assert_eq!(initial_contents(&data), data);
+        assert_eq!(initial_contents(&[]), EMPTY_BUFFER_CONTENTS);
     }
 }

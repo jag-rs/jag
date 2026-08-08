@@ -6,6 +6,7 @@
 //! pass. No logic changed during extraction.
 
 use super::{ImageQuadVtx, PassManager};
+use crate::gpu_transfer::create_transient_upload;
 
 type ImageResource = (
     wgpu::Buffer,
@@ -79,20 +80,18 @@ impl PassManager {
             ];
             let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
-            let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("image-vbuf-unified"),
-                size: (verts.len() * std::mem::size_of::<ImageQuadVtx>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("image-ibuf-unified"),
-                size: (idx.len() * std::mem::size_of::<u16>()) as u64,
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&verts));
-            queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&idx));
+            let vbuf = create_transient_upload(
+                &self.device,
+                "image-vbuf-unified",
+                bytemuck::cast_slice(&verts),
+                wgpu::BufferUsages::VERTEX,
+            );
+            let ibuf = create_transient_upload(
+                &self.device,
+                "image-ibuf-unified",
+                bytemuck::cast_slice(&idx),
+                wgpu::BufferUsages::INDEX,
+            );
 
             let vp_bg_img = self.image.vp_bind_group(&self.device, &self.vp_buffer);
             // Pass z_index as float directly - shader will convert to depth
@@ -138,20 +137,18 @@ impl PassManager {
             ];
             let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
-            let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("svg-vbuf-unified"),
-                size: (verts.len() * std::mem::size_of::<ImageQuadVtx>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("svg-ibuf-unified"),
-                size: (idx.len() * std::mem::size_of::<u16>()) as u64,
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&verts));
-            queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&idx));
+            let vbuf = create_transient_upload(
+                &self.device,
+                "svg-vbuf-unified",
+                bytemuck::cast_slice(&verts),
+                wgpu::BufferUsages::VERTEX,
+            );
+            let ibuf = create_transient_upload(
+                &self.device,
+                "svg-ibuf-unified",
+                bytemuck::cast_slice(&idx),
+                wgpu::BufferUsages::INDEX,
+            );
 
             let vp_bg_svg = self.image.vp_bind_group(&self.device, &self.vp_buffer);
             // Pass z_index as float directly - shader will convert to depth
@@ -200,20 +197,18 @@ impl PassManager {
             ];
             let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
-            let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("ext-tex-vbuf-unified"),
-                size: (verts.len() * std::mem::size_of::<ImageQuadVtx>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("ext-tex-ibuf-unified"),
-                size: (idx.len() * std::mem::size_of::<u16>()) as u64,
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&verts));
-            queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&idx));
+            let vbuf = create_transient_upload(
+                &self.device,
+                "ext-tex-vbuf-unified",
+                bytemuck::cast_slice(&verts),
+                wgpu::BufferUsages::VERTEX,
+            );
+            let ibuf = create_transient_upload(
+                &self.device,
+                "ext-tex-ibuf-unified",
+                bytemuck::cast_slice(&idx),
+                wgpu::BufferUsages::INDEX,
+            );
 
             let vp_bg_ext = self.image.vp_bind_group(&self.device, &self.vp_buffer);
             let (z_bg_ext, z_buf_ext) = self.create_group_z_bind_group(etd.z as f32, queue);
@@ -258,20 +253,18 @@ impl PassManager {
             ];
             let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
-            let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("image-vbuf-unified-offscreen"),
-                size: (verts.len() * std::mem::size_of::<ImageQuadVtx>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("image-ibuf-unified-offscreen"),
-                size: (idx.len() * std::mem::size_of::<u16>()) as u64,
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&verts));
-            queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&idx));
+            let vbuf = create_transient_upload(
+                &self.device,
+                "image-vbuf-unified-offscreen",
+                bytemuck::cast_slice(&verts),
+                wgpu::BufferUsages::VERTEX,
+            );
+            let ibuf = create_transient_upload(
+                &self.device,
+                "image-ibuf-unified-offscreen",
+                bytemuck::cast_slice(&idx),
+                wgpu::BufferUsages::INDEX,
+            );
 
             let vp_bg_img = self
                 .image_offscreen
@@ -322,20 +315,18 @@ impl PassManager {
             ];
             let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
-            let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("svg-vbuf-unified-offscreen"),
-                size: (verts.len() * std::mem::size_of::<ImageQuadVtx>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("svg-ibuf-unified-offscreen"),
-                size: (idx.len() * std::mem::size_of::<u16>()) as u64,
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&verts));
-            queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&idx));
+            let vbuf = create_transient_upload(
+                &self.device,
+                "svg-vbuf-unified-offscreen",
+                bytemuck::cast_slice(&verts),
+                wgpu::BufferUsages::VERTEX,
+            );
+            let ibuf = create_transient_upload(
+                &self.device,
+                "svg-ibuf-unified-offscreen",
+                bytemuck::cast_slice(&idx),
+                wgpu::BufferUsages::INDEX,
+            );
 
             let vp_bg_svg = self
                 .image_offscreen
@@ -391,20 +382,18 @@ impl PassManager {
             ];
             let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
-            let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("ext-tex-vbuf-unified-offscreen"),
-                size: (verts.len() * std::mem::size_of::<ImageQuadVtx>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("ext-tex-ibuf-unified-offscreen"),
-                size: (idx.len() * std::mem::size_of::<u16>()) as u64,
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&verts));
-            queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&idx));
+            let vbuf = create_transient_upload(
+                &self.device,
+                "ext-tex-vbuf-unified-offscreen",
+                bytemuck::cast_slice(&verts),
+                wgpu::BufferUsages::VERTEX,
+            );
+            let ibuf = create_transient_upload(
+                &self.device,
+                "ext-tex-ibuf-unified-offscreen",
+                bytemuck::cast_slice(&idx),
+                wgpu::BufferUsages::INDEX,
+            );
 
             let vp_bg_ext = self
                 .image_offscreen

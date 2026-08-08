@@ -2,6 +2,7 @@
 //! former monolithic `pass_manager.rs`; no logic changed.
 
 use super::PassManager;
+use crate::gpu_transfer::create_transient_upload;
 use crate::scene::{BoxShadowSpec, RoundedRadii, RoundedRect};
 
 impl PassManager {
@@ -196,27 +197,21 @@ impl PassManager {
             let i2 = base + 1 + ((i + 1) % ring_len);
             indices.extend_from_slice(&[i0, i1, i2]);
         }
-        // Create GPU buffers directly
+        // Create GPU buffers through the shared transient transfer boundary.
         let vsize = (vertices.len() * std::mem::size_of::<Vtx>()) as u64;
         let isize = (indices.len() * std::mem::size_of::<u16>()) as u64;
-        let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("shadow-mask-vbuf"),
-            size: vsize.max(4),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("shadow-mask-ibuf"),
-            size: isize.max(4),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        if vsize > 0 {
-            queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&vertices));
-        }
-        if isize > 0 {
-            queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&indices));
-        }
+        let vbuf = create_transient_upload(
+            &self.device,
+            "shadow-mask-vbuf",
+            bytemuck::cast_slice(&vertices),
+            wgpu::BufferUsages::VERTEX,
+        );
+        let ibuf = create_transient_upload(
+            &self.device,
+            "shadow-mask-ibuf",
+            bytemuck::cast_slice(&indices),
+            wgpu::BufferUsages::INDEX,
+        );
         let gpu = crate::upload::GpuScene {
             vertex: crate::allocator::OwnedBuffer {
                 buffer: vbuf,
@@ -424,24 +419,18 @@ impl PassManager {
 
             let vsize = (cutout_vertices.len() * std::mem::size_of::<Vtx>()) as u64;
             let isize = (cutout_indices.len() * std::mem::size_of::<u16>()) as u64;
-            let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("shadow-cutout-vbuf"),
-                size: vsize.max(4),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("shadow-cutout-ibuf"),
-                size: isize.max(4),
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            if vsize > 0 {
-                queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&cutout_vertices));
-            }
-            if isize > 0 {
-                queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&cutout_indices));
-            }
+            let vbuf = create_transient_upload(
+                &self.device,
+                "shadow-cutout-vbuf",
+                bytemuck::cast_slice(&cutout_vertices),
+                wgpu::BufferUsages::VERTEX,
+            );
+            let ibuf = create_transient_upload(
+                &self.device,
+                "shadow-cutout-ibuf",
+                bytemuck::cast_slice(&cutout_indices),
+                wgpu::BufferUsages::INDEX,
+            );
             let cutout_gpu = crate::upload::GpuScene {
                 vertex: crate::allocator::OwnedBuffer {
                     buffer: vbuf,

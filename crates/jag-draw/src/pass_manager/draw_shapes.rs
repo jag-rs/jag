@@ -2,6 +2,7 @@
 //! former monolithic `pass_manager.rs`; no logic changed.
 
 use super::PassManager;
+use crate::gpu_transfer::create_transient_upload;
 
 impl PassManager {
     /// Render an image texture to the target at origin with size (in pixels, y-down).
@@ -67,26 +68,18 @@ impl PassManager {
             },
         ];
         let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
-        let vsize = (verts.len() * std::mem::size_of::<QuadVtx>()) as u64;
-        let isize = (idx.len() * std::mem::size_of::<u16>()) as u64;
-        let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("image-vbuf"),
-            size: vsize.max(4),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("image-ibuf"),
-            size: isize.max(4),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        if vsize > 0 {
-            queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&verts));
-        }
-        if isize > 0 {
-            queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&idx));
-        }
+        let vbuf = create_transient_upload(
+            &self.device,
+            "image-vbuf",
+            bytemuck::cast_slice(&verts),
+            wgpu::BufferUsages::VERTEX,
+        );
+        let ibuf = create_transient_upload(
+            &self.device,
+            "image-ibuf",
+            bytemuck::cast_slice(&idx),
+            wgpu::BufferUsages::INDEX,
+        );
 
         let vp_bg = self.image.vp_bind_group(&self.device, &self.vp_buffer);
         let z_bg = self.create_z_bind_group(0.0, queue);
@@ -222,26 +215,18 @@ impl PassManager {
         ];
         let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
-        let vsize = (verts.len() * std::mem::size_of::<OverlayVtx>()) as u64;
-        let isize = (idx.len() * std::mem::size_of::<u16>()) as u64;
-        let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("overlay-rect-vbuf"),
-            size: vsize.max(4),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("overlay-rect-ibuf"),
-            size: isize.max(4),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        if vsize > 0 {
-            queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&verts));
-        }
-        if isize > 0 {
-            queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&idx));
-        }
+        let vbuf = create_transient_upload(
+            &self.device,
+            "overlay-rect-vbuf",
+            bytemuck::cast_slice(&verts),
+            wgpu::BufferUsages::VERTEX,
+        );
+        let ibuf = create_transient_upload(
+            &self.device,
+            "overlay-rect-ibuf",
+            bytemuck::cast_slice(&idx),
+            wgpu::BufferUsages::INDEX,
+        );
 
         let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("overlay-vp-bg"),
@@ -355,26 +340,18 @@ impl PassManager {
         ];
         let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
-        let vsize = (verts.len() * std::mem::size_of::<ScrimVtx>()) as u64;
-        let isize = (idx.len() * std::mem::size_of::<u16>()) as u64;
-        let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("scrim-rect-vbuf"),
-            size: vsize.max(4),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("scrim-rect-ibuf"),
-            size: isize.max(4),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        if vsize > 0 {
-            queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&verts));
-        }
-        if isize > 0 {
-            queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&idx));
-        }
+        let vbuf = create_transient_upload(
+            &self.device,
+            "scrim-rect-vbuf",
+            bytemuck::cast_slice(&verts),
+            wgpu::BufferUsages::VERTEX,
+        );
+        let ibuf = create_transient_upload(
+            &self.device,
+            "scrim-rect-ibuf",
+            bytemuck::cast_slice(&idx),
+            wgpu::BufferUsages::INDEX,
+        );
 
         let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("scrim-vp-bg"),
