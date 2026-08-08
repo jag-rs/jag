@@ -2,6 +2,7 @@
 //! former monolithic `pass_manager.rs`; no logic changed.
 
 use super::{Background, PassManager, PassTargets};
+use crate::gpu_texture::{Texture2dSpec, create_default_texture_view, create_texture_2d};
 use crate::upload::GpuScene;
 
 impl PassManager {
@@ -15,21 +16,17 @@ impl PassManager {
         queue: &wgpu::Queue,
     ) {
         // Depth attachment for offscreen rendering (1x)
-        let depth_tex = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("solid-depth-offscreen"),
-            size: wgpu::Extent3d {
+        let depth_tex = create_texture_2d(
+            &self.device,
+            "solid-depth-offscreen",
+            Texture2dSpec {
                 width: targets.color.key.width,
                 height: targets.color.key.height,
-                depth_or_array_layers: 1,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        );
+        let depth_view = create_default_texture_view(&depth_tex);
 
         let _z_bg = self.create_z_bind_group(0.0, queue);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

@@ -317,24 +317,11 @@ impl PassManager {
             format: target.key.format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
-        encoder.copy_texture_to_texture(
-            wgpu::ImageCopyTexture {
-                texture: &target.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::ImageCopyTexture {
-                texture: &snapshot.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::Extent3d {
-                width: width.max(1),
-                height: height.max(1),
-                depth_or_array_layers: 1,
-            },
+        crate::gpu_texture::copy_texture_2d(
+            encoder,
+            &target.texture,
+            &snapshot.texture,
+            [width.max(1), height.max(1)],
         );
 
         let mut filtered_views = Vec::with_capacity(draw.effects.len());

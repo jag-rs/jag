@@ -1,4 +1,5 @@
 use super::PassManager;
+use crate::gpu_texture::{Texture2dSpec, create_default_texture_view, create_texture_2d};
 use anyhow::{Context, Result};
 
 impl PassManager {
@@ -16,21 +17,18 @@ impl PassManager {
             .external_textures
             .get(&mask.texture_id)
             .context("mask texture is not registered")?;
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("mask-filter-output"),
-            size: wgpu::Extent3d {
+        let texture = create_texture_2d(
+            &self.device,
+            "mask-filter-output",
+            Texture2dSpec {
                 width,
                 height,
-                depth_or_array_layers: 1,
+                format: self.surface_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.surface_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        );
+        let view = create_default_texture_view(&texture);
         let params =
             crate::pipeline::MaskFilterRenderer::params(surface_origin, surface_size, mask, false);
         let group = self
@@ -144,23 +142,18 @@ impl PassManager {
     }
 
     fn new_filter_target(&self, width: u32, height: u32, label: &'static str) -> wgpu::TextureView {
-        self.device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
+        let texture = create_texture_2d(
+            &self.device,
+            label,
+            Texture2dSpec {
+                width,
+                height,
                 format: self.surface_format,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
-            .create_view(&wgpu::TextureViewDescriptor::default())
+            },
+        );
+        create_default_texture_view(&texture)
     }
 
     fn record_mask_pass(
@@ -212,21 +205,18 @@ impl PassManager {
             blur_radius: shadow.blur_radius * physical_scale,
             ..shadow
         };
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("drop-shadow-filter-output"),
-            size: wgpu::Extent3d {
+        let texture = create_texture_2d(
+            &self.device,
+            "drop-shadow-filter-output",
+            Texture2dSpec {
                 width,
                 height,
-                depth_or_array_layers: 1,
+                format: self.surface_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.surface_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        );
+        let view = create_default_texture_view(&texture);
         let group = self.drop_shadow_filter.bind_group(
             &self.device,
             source,
@@ -261,21 +251,18 @@ impl PassManager {
         height: u32,
         matrix: crate::ColorMatrix,
     ) -> wgpu::TextureView {
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("color-filter-output"),
-            size: wgpu::Extent3d {
+        let texture = create_texture_2d(
+            &self.device,
+            "color-filter-output",
+            Texture2dSpec {
                 width,
                 height,
-                depth_or_array_layers: 1,
+                format: self.surface_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.surface_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        );
+        let view = create_default_texture_view(&texture);
         let group = self.color_filter.bind_group(&self.device, source, matrix);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("color-filter-pass"),
@@ -308,26 +295,22 @@ impl PassManager {
         let sigma = sigma
             * crate::dpi::logical_multiplier(self.logical_pixels, self.scale_factor, self.ui_scale);
         let make_target = |label| {
-            self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
+            create_texture_2d(
+                &self.device,
+                label,
+                Texture2dSpec {
                     width,
                     height,
-                    depth_or_array_layers: 1,
+                    format: self.surface_format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
                 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: self.surface_format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
+            )
         };
         let ping = make_target("filter-blur-ping");
         let output = make_target("filter-blur-output");
-        let ping_view = ping.create_view(&wgpu::TextureViewDescriptor::default());
-        let output_view = output.create_view(&wgpu::TextureViewDescriptor::default());
+        let ping_view = create_default_texture_view(&ping);
+        let output_view = create_default_texture_view(&output);
         let texel = [1.0 / width as f32, 1.0 / height as f32];
 
         let horizontal = self.blur_rgba.bind_group_with_params(

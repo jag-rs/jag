@@ -305,7 +305,7 @@ impl PassManager {
         let (tex, w, h) = self
             .svg_cache
             .get_or_rasterize(path, scale, svg_style, queue)?;
-        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = crate::gpu_texture::create_default_texture_view(&tex);
         Some((view, w, h))
     }
 
@@ -317,7 +317,7 @@ impl PassManager {
         queue: &wgpu::Queue,
     ) -> Option<(wgpu::TextureView, u32, u32)> {
         let (tex, w, h) = self.image_cache.get_or_load(path, queue)?;
-        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = crate::gpu_texture::create_default_texture_view(&tex);
         Some((view, w, h))
     }
 
@@ -327,7 +327,7 @@ impl PassManager {
         path: &std::path::Path,
     ) -> Option<(wgpu::TextureView, u32, u32)> {
         let (tex, w, h) = self.image_cache.get(path)?;
-        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = crate::gpu_texture::create_default_texture_view(&tex);
         Some((view, w, h))
     }
 

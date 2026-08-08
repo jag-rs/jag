@@ -2,6 +2,7 @@
 //! former monolithic `pass_manager.rs`; no logic changed.
 
 use super::PassManager;
+use crate::gpu_texture::{Texture2dSpec, create_default_texture_view, create_texture_2d};
 use crate::gpu_transfer::create_transient_upload;
 use crate::scene::{BoxShadowSpec, RoundedRadii, RoundedRect};
 
@@ -25,26 +26,22 @@ impl PassManager {
         let sigma = if blur > 0.0 { blur } else { 0.5 };
         let spread = spec.spread.max(0.0);
         let create_tex = |label: &str| -> wgpu::Texture {
-            self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
+            create_texture_2d(
+                &self.device,
+                label,
+                Texture2dSpec {
                     width: width.max(1),
                     height: height.max(1),
-                    depth_or_array_layers: 1,
+                    format: wgpu::TextureFormat::R8Unorm,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
                 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::R8Unorm,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
+            )
         };
         let mask_tex = create_tex("shadow-mask");
         let ping_tex = create_tex("shadow-ping");
-        let mask_view = mask_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let ping_view = ping_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let mask_view = create_default_texture_view(&mask_tex);
+        let ping_view = create_default_texture_view(&ping_tex);
 
         // Viewport for full target size (y-down)
         let logical =

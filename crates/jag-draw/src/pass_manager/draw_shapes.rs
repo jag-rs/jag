@@ -2,6 +2,7 @@
 //! former monolithic `pass_manager.rs`; no logic changed.
 
 use super::PassManager;
+use crate::gpu_texture::{Texture2dSpec, create_default_texture_view, create_texture_2d};
 use crate::gpu_transfer::create_transient_upload;
 
 impl PassManager {
@@ -87,21 +88,17 @@ impl PassManager {
         let (params_bg, _params_buf) = self.image.params_bind_group(&self.device, 1.0, false);
 
         // Create depth texture for image rendering (1x)
-        let depth_tex = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("image-depth"),
-            size: wgpu::Extent3d {
+        let depth_tex = create_texture_2d(
+            &self.device,
+            "image-depth",
+            Texture2dSpec {
                 width,
                 height,
-                depth_or_array_layers: 1,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        );
+        let depth_view = create_default_texture_view(&depth_tex);
 
         let depth_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
             view: &depth_view,

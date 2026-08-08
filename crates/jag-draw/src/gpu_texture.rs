@@ -72,6 +72,33 @@ pub(crate) fn upload_texture_2d(
     );
 }
 
+pub(crate) fn copy_texture_2d(
+    encoder: &mut wgpu::CommandEncoder,
+    source: &wgpu::Texture,
+    destination: &wgpu::Texture,
+    size: [u32; 2],
+) {
+    encoder.copy_texture_to_texture(
+        wgpu::ImageCopyTexture {
+            texture: source,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::ImageCopyTexture {
+            texture: destination,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::Extent3d {
+            width: size[0],
+            height: size[1],
+            depth_or_array_layers: 1,
+        },
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,30 +123,38 @@ mod tests {
     }
 
     #[test]
-    fn migrated_texture_owners_cannot_bypass_resource_seam() {
-        for (name, source) in [
-            ("allocator.rs", include_str!("allocator.rs")),
-            ("image_cache.rs", include_str!("image_cache.rs")),
-            ("svg.rs", include_str!("svg.rs")),
-            (
-                "pass_manager/text_prep.rs",
-                include_str!("pass_manager/text_prep.rs"),
-            ),
-        ] {
-            for prohibited in [".create_texture(", ".create_view(", ".write_texture("] {
-                assert!(
-                    !source.contains(prohibited),
-                    "{name} bypasses the texture-resource seam with {prohibited}"
-                );
+    fn jag_draw_texture_operations_cannot_bypass_resource_seam() {
+        let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut pending = vec![source_root];
+        let mut checked_files = 0;
+        while let Some(directory) = pending.pop() {
+            for entry in std::fs::read_dir(directory).expect("read jag-draw source directory") {
+                let path = entry.expect("read jag-draw source entry").path();
+                if path.is_dir() {
+                    pending.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|value| value.to_str()) != Some("rs")
+                    || path.file_name().and_then(|value| value.to_str()) == Some("gpu_texture.rs")
+                {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).expect("read jag-draw source");
+                for prohibited in [
+                    ".create_texture(",
+                    ".create_view(",
+                    ".write_texture(",
+                    "copy_texture_to_texture(",
+                ] {
+                    assert!(
+                        !source.contains(prohibited),
+                        "{} bypasses the texture-resource seam with {prohibited}",
+                        path.display()
+                    );
+                }
+                checked_files += 1;
             }
         }
-
-        let setup = include_str!("pass_manager/setup.rs");
-        for prohibited in [".create_texture(", ".write_texture("] {
-            assert!(
-                !setup.contains(prohibited),
-                "pass_manager/setup.rs bypasses text-atlas ownership with {prohibited}"
-            );
-        }
+        assert!(checked_files > 40, "jag-draw source scan was incomplete");
     }
 }

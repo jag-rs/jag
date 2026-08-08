@@ -246,24 +246,11 @@ impl PassManager {
                 format: self.offscreen_format,
                 usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
             });
-            encoder.copy_texture_to_texture(
-                wgpu::ImageCopyTexture {
-                    texture: &targets.color.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::ImageCopyTexture {
-                    texture: &snapshot.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d {
-                    width: width.max(1),
-                    height: height.max(1),
-                    depth_or_array_layers: 1,
-                },
+            crate::gpu_texture::copy_texture_2d(
+                encoder,
+                &targets.color.texture,
+                &snapshot.texture,
+                [width.max(1), height.max(1)],
             );
             let shadow_dst_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("shadow-composite-dst-bg"),
