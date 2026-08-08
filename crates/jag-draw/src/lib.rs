@@ -36,6 +36,9 @@ use anyhow::Result;
 /// Re-export wgpu for downstream crates while avoiding direct dependency leakage.
 pub use wgpu;
 
+mod gpu_init;
+pub use gpu_init::*;
+
 mod allocator;
 pub use allocator::{OwnedBuffer, OwnedTexture, RenderAllocator};
 
@@ -82,52 +85,6 @@ impl GraphicsEngine {
         // No-op for now.
         let _ = (&self.device, &self.queue);
         Ok(())
-    }
-}
-
-/// Choose an sRGB surface format when available; otherwise, pick the first format.
-pub fn choose_srgb_surface_format(
-    adapter: &wgpu::Adapter,
-    surface: &wgpu::Surface,
-) -> wgpu::TextureFormat {
-    let caps = surface.get_capabilities(adapter);
-    caps.formats
-        .iter()
-        .copied()
-        .find(|f| f.is_srgb())
-        .unwrap_or(caps.formats[0])
-}
-
-/// Create a surface configuration for the given size, favoring FIFO present mode when present.
-pub fn make_surface_config(
-    adapter: &wgpu::Adapter,
-    surface: &wgpu::Surface,
-    width: u32,
-    height: u32,
-) -> wgpu::SurfaceConfiguration {
-    let caps = surface.get_capabilities(adapter);
-    let format = choose_srgb_surface_format(adapter, surface);
-    let present_mode = caps
-        .present_modes
-        .iter()
-        .copied()
-        .find(|m| *m == wgpu::PresentMode::Fifo)
-        .unwrap_or(caps.present_modes[0]);
-    let alpha_mode = caps
-        .alpha_modes
-        .iter()
-        .copied()
-        .find(|m| *m == wgpu::CompositeAlphaMode::Opaque)
-        .unwrap_or(caps.alpha_modes[0]);
-    wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format,
-        width,
-        height,
-        present_mode,
-        alpha_mode,
-        view_formats: vec![],
-        desired_maximum_frame_latency: 1,
     }
 }
 

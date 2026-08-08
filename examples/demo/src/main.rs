@@ -4,9 +4,7 @@
 
 use std::sync::Arc;
 
-use jag_draw::{
-    Brush, ColorLinPremul, JagTextProvider, Rect, SubpixelOrientation, make_surface_config,
-};
+use jag_draw::{Brush, ColorLinPremul, DesktopGpu, JagTextProvider, Rect, SubpixelOrientation};
 use jag_surface::JagSurface;
 use jag_ui::elements::{Button, Checkbox, Element, Text};
 use jag_ui::{DefaultTheme, ElementState, EventHandler, EventResult, MouseButton, MouseClickEvent};
@@ -23,28 +21,12 @@ fn main() -> anyhow::Result<()> {
     let window: &'static Window = Box::leak(Box::new(window));
 
     // --- GPU init ---
-    let instance = jag_draw::wgpu::Instance::default();
-    let surface = instance.create_surface(window)?;
-    let adapter = pollster::block_on(instance.request_adapter(
-        &jag_draw::wgpu::RequestAdapterOptions {
-            power_preference: jag_draw::wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: Some(&surface),
-        },
-    ))
-    .expect("No suitable GPU adapter found");
-
-    let (device, queue) = pollster::block_on(
-        adapter.request_device(&jag_draw::wgpu::DeviceDescriptor::default(), None),
-    )?;
-
     let mut size = window.inner_size();
+    let mut gpu = pollster::block_on(DesktopGpu::new(window, size.width, size.height))?;
     let scale_factor = window.scale_factor() as f32;
-    let mut config = make_surface_config(&adapter, &surface, size.width, size.height);
-    surface.configure(&device, &config);
 
     // --- JagSurface wrapper ---
-    let mut surf = JagSurface::new(Arc::new(device), Arc::new(queue), config.format);
+    let mut surf = JagSurface::new(gpu.device(), gpu.queue(), gpu.config().format);
     surf.set_use_intermediate(true);
     surf.set_direct(true);
     surf.set_logical_pixels(true);
@@ -104,11 +86,7 @@ fn main() -> anyhow::Result<()> {
             WindowEvent::CloseRequested => elwt.exit(),
             WindowEvent::Resized(new_size) => {
                 size = new_size;
-                if size.width > 0 && size.height > 0 {
-                    config.width = size.width;
-                    config.height = size.height;
-                    surface.configure(surf.device().as_ref(), &config);
-                }
+                gpu.resize(size.width, size.height);
                 window.request_redraw();
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -160,7 +138,7 @@ fn main() -> anyhow::Result<()> {
                 if size.width == 0 || size.height == 0 {
                     return;
                 }
-                let frame = match surface.get_current_texture() {
+                let frame = match gpu.surface().get_current_texture() {
                     Ok(f) => f,
                     Err(_) => {
                         window.request_redraw();
