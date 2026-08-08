@@ -79,8 +79,18 @@ impl PassManager {
             center_radius_stop: [0.5, 0.5, 1.0, count as f32],
             flags: [1.0, if debug_flag { 1.0 } else { 0.0 }, 0.0, 0.0],
         };
-        queue.write_buffer(&self.bg_param_buffer, 0, bytemuck::bytes_of(&params));
-        queue.write_buffer(&self.bg_stops_buffer, 0, bytemuck::cast_slice(&stops));
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_param_buffer,
+            0,
+            bytemuck::bytes_of(&params),
+        );
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_stops_buffer,
+            0,
+            bytemuck::cast_slice(&stops),
+        );
         let bg_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bg-bind-linear"),
             layout: self.bg.bgl(),
@@ -214,8 +224,18 @@ impl PassManager {
             center_radius_stop: [adj_center[0], adj_center[1], adj_radius, count as f32],
             flags: [2.0, if debug_flag { 1.0 } else { 0.0 }, aspect_ratio, 0.0],
         };
-        queue.write_buffer(&self.bg_param_buffer, 0, bytemuck::bytes_of(&params));
-        queue.write_buffer(&self.bg_stops_buffer, 0, bytemuck::cast_slice(&stops));
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_param_buffer,
+            0,
+            bytemuck::bytes_of(&params),
+        );
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_stops_buffer,
+            0,
+            bytemuck::cast_slice(&stops),
+        );
         let bg_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bg-bind-radial"),
             layout: self.bg.bgl(),

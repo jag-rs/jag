@@ -1,5 +1,6 @@
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
+
+use crate::gpu_transfer::initialize_buffer_resource;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -134,11 +135,12 @@ impl MaskFilterRenderer {
         mask: &wgpu::TextureView,
         params: MaskParams,
     ) -> wgpu::BindGroup {
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mask-filter-params"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let buffer = initialize_buffer_resource(
+            device,
+            "mask-filter-params",
+            bytemuck::bytes_of(&params),
+            wgpu::BufferUsages::UNIFORM,
+        );
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("mask-filter-group"),
             layout: &self.layout,
@@ -177,11 +179,12 @@ impl MaskFilterRenderer {
             crate::MaskComposite::Intersect => 2,
             crate::MaskComposite::Exclude => 3,
         };
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mask-composite-operation"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let buffer = initialize_buffer_resource(
+            device,
+            "mask-composite-operation",
+            bytemuck::bytes_of(&params),
+            wgpu::BufferUsages::UNIFORM,
+        );
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("mask-composite-group"),
             layout: &self.layout,

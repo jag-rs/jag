@@ -1,5 +1,6 @@
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
+
+use crate::gpu_transfer::initialize_buffer_resource;
 
 pub struct DropShadowFilterRenderer {
     pipeline: wgpu::RenderPipeline,
@@ -104,11 +105,12 @@ impl DropShadowFilterRenderer {
             color.b as f32 / 255.0,
             color.a as f32 / 255.0,
         ];
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("drop-shadow-filter-params"),
-            contents: bytemuck::cast_slice(&params),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let buffer = initialize_buffer_resource(
+            device,
+            "drop-shadow-filter-params",
+            bytemuck::cast_slice(&params),
+            wgpu::BufferUsages::UNIFORM,
+        );
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("drop-shadow-filter-group"),
             layout: &self.layout,

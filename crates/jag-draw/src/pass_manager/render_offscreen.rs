@@ -151,11 +151,9 @@ impl PassManager {
             .text_offscreen
             .vp_bind_group(&self.device, &self.vp_buffer);
 
-        let (image_z_vals_off, image_resources_off) =
-            self.prep_image_offscreen(&image_views_off, queue);
-        let (svg_z_vals_off, svg_resources_off) = self.prep_svg_offscreen(&svg_views_off, queue);
-        let (ext_z_vals_off, ext_resources_off) =
-            self.prep_ext_offscreen(external_texture_draws, queue);
+        let (image_z_vals_off, image_resources_off) = self.prep_image_offscreen(&image_views_off);
+        let (svg_z_vals_off, svg_resources_off) = self.prep_svg_offscreen(&svg_views_off);
+        let (ext_z_vals_off, ext_resources_off) = self.prep_ext_offscreen(external_texture_draws);
 
         let depth_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
             view: self.depth_view(),

@@ -215,8 +215,18 @@ impl PassManager {
             },
         ];
 
-        queue.write_buffer(&self.bg_param_buffer, 0, bytemuck::bytes_of(&params));
-        queue.write_buffer(&self.bg_stops_buffer, 0, bytemuck::cast_slice(&stops));
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_param_buffer,
+            0,
+            bytemuck::bytes_of(&params),
+        );
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_stops_buffer,
+            0,
+            bytemuck::cast_slice(&stops),
+        );
         let bg_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bg-bind"),
             layout: self.bg.bgl(),
@@ -282,8 +292,18 @@ impl PassManager {
             color: [color.r, color.g, color.b, color.a],
         }];
         // Write uniforms (only first stop used for solid mode)
-        queue.write_buffer(&self.bg_param_buffer, 0, bytemuck::bytes_of(&params));
-        queue.write_buffer(&self.bg_stops_buffer, 0, bytemuck::cast_slice(&stops));
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_param_buffer,
+            0,
+            bytemuck::bytes_of(&params),
+        );
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_stops_buffer,
+            0,
+            bytemuck::cast_slice(&stops),
+        );
         let bg_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bg-bind-solid"),
             layout: self.bg.bgl(),
@@ -365,8 +385,18 @@ impl PassManager {
                 color: [c1.r, c1.g, c1.b, c1.a],
             },
         ];
-        queue.write_buffer(&self.bg_param_buffer, 0, bytemuck::bytes_of(&params));
-        queue.write_buffer(&self.bg_stops_buffer, 0, bytemuck::cast_slice(&stops));
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_param_buffer,
+            0,
+            bytemuck::bytes_of(&params),
+        );
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_stops_buffer,
+            0,
+            bytemuck::cast_slice(&stops),
+        );
         let bg_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bg-bind"),
             layout: self.bg.bgl(),

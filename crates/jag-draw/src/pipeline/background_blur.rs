@@ -1,5 +1,6 @@
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
+
+use crate::gpu_transfer::{allocate_buffer_resource, initialize_buffer_resource};
 
 pub struct BackgroundRenderer {
     pipeline: wgpu::RenderPipeline,
@@ -165,12 +166,12 @@ impl BlurRenderer {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
-        let param_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("shadow-blur-params"),
-            size: 32, // vec2 + vec2 + sigma + pad -> round up to 32
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let param_buffer = allocate_buffer_resource(
+            &device,
+            "shadow-blur-params",
+            32, // vec2 + vec2 + sigma + pad -> round up to 32
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         Self {
             pipeline,
             bgl,
@@ -210,11 +211,12 @@ impl BlurRenderer {
         tex_view: &wgpu::TextureView,
         params: &[f32; 8],
     ) -> wgpu::BindGroup {
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("blur-pass-params"),
-            contents: bytemuck::bytes_of(params),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let buffer = initialize_buffer_resource(
+            device,
+            "blur-pass-params",
+            bytemuck::bytes_of(params),
+            wgpu::BufferUsages::UNIFORM,
+        );
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("blur-pass-bg"),
             layout: &self.bgl,
@@ -358,12 +360,12 @@ impl BackdropBlurRenderer {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
-        let param_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("backdrop-blur-params"),
-            size: 32,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let param_buffer = allocate_buffer_resource(
+            &device,
+            "backdrop-blur-params",
+            32,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         Self {
             pipeline,
             vp_bgl,
@@ -501,12 +503,12 @@ impl ShadowCompositeRenderer {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
-        let color_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("shadow-color"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let color_buffer = allocate_buffer_resource(
+            &device,
+            "shadow-color",
+            16,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         Self {
             pipeline,
             bgl,

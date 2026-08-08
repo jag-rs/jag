@@ -37,7 +37,7 @@ impl PassManager {
             0.0,
         ];
         // debug log removed
-        queue.write_buffer(&self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
+        crate::gpu_transfer::upload_buffer(queue, &self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
 
         #[repr(C)]
         #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -169,7 +169,7 @@ impl PassManager {
             0.0,
             0.0,
         ];
-        queue.write_buffer(&self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
+        crate::gpu_transfer::upload_buffer(queue, &self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
 
         #[repr(C)]
         #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -293,7 +293,7 @@ impl PassManager {
             0.0,
             0.0,
         ];
-        queue.write_buffer(&self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
+        crate::gpu_transfer::upload_buffer(queue, &self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
 
         #[repr(C)]
         #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]

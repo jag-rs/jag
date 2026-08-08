@@ -1,5 +1,6 @@
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
+
+use crate::gpu_transfer::initialize_buffer_resource;
 
 pub struct ColorFilterRenderer {
     pipeline: wgpu::RenderPipeline,
@@ -97,11 +98,12 @@ impl ColorFilterRenderer {
             matrix.rows[3],
             matrix.bias,
         ];
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("color-filter-params"),
-            contents: bytemuck::cast_slice(&data),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let buffer = initialize_buffer_resource(
+            device,
+            "color-filter-params",
+            bytemuck::cast_slice(&data),
+            wgpu::BufferUsages::UNIFORM,
+        );
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("color-filter-group"),
             layout: &self.layout,

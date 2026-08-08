@@ -2,6 +2,7 @@
 //! former monolithic `pass_manager.rs`; no logic changed.
 
 use super::PassManager;
+use crate::gpu_transfer::{allocate_buffer_resource, initialize_buffer_resource, upload_buffer};
 use crate::pipeline::{
     BackdropBlurRenderer, BackgroundRenderer, BasicSolidRenderer, Blitter, BlurRenderer,
     ColorFilterRenderer, Compositor, DropShadowFilterRenderer, MaskFilterRenderer,
@@ -110,37 +111,37 @@ impl PassManager {
         let svg_cache = crate::svg::SvgRasterCache::new(device.clone());
         let image_cache = crate::image_cache::ImageCache::new(device.clone());
         let bg = BackgroundRenderer::new(device.clone(), target_format);
-        let vp_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("viewport-uniform"),
-            size: 32, // [scale.x, scale.y, translate.x, translate.y, scroll.x, scroll.y, pad, pad]
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let vp_buffer = allocate_buffer_resource(
+            &device,
+            "viewport-uniform",
+            32, // [scale.x, scale.y, translate.x, translate.y, scroll.x, scroll.y, pad, pad]
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         // Z-index uniform buffer for dynamic depth control (Phase 2)
-        let z_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("z-index-uniform"),
-            size: 4, // Single f32 value
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let bg_param_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("background-params"),
-            size: 64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let bg_stops_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("background-stops"),
-            size: 256, // 8 stops x 32 bytes
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let smaa_param_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("smaa-params"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let z_index_buffer = allocate_buffer_resource(
+            &device,
+            "z-index-uniform",
+            4, // Single f32 value
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let bg_param_buffer = allocate_buffer_resource(
+            &device,
+            "background-params",
+            64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let bg_stops_buffer = allocate_buffer_resource(
+            &device,
+            "background-stops",
+            256, // 8 stops x 32 bytes
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let smaa_param_buffer = allocate_buffer_resource(
+            &device,
+            "smaa-params",
+            16,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         // Text pipeline GPU resources
         let text_mask_atlas = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("text-mask-atlas"),
@@ -259,7 +260,7 @@ impl PassManager {
     /// Create a z-index bind group for the given z-index value.
     /// This is used for dynamic depth control in Phase 2.
     pub fn create_z_bind_group(&self, z_index: f32, queue: &wgpu::Queue) -> wgpu::BindGroup {
-        queue.write_buffer(&self.z_index_buffer, 0, bytemuck::bytes_of(&z_index));
+        upload_buffer(queue, &self.z_index_buffer, 0, bytemuck::bytes_of(&z_index));
         self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("z-index-bg"),
             layout: self.solid_direct.z_index_bgl(),
@@ -276,15 +277,13 @@ impl PassManager {
     pub(crate) fn create_group_z_bind_group(
         &self,
         z_index: f32,
-        queue: &wgpu::Queue,
     ) -> (wgpu::BindGroup, wgpu::Buffer) {
-        let z_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("z-index-group-buffer"),
-            size: std::mem::size_of::<f32>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&z_buf, 0, bytemuck::bytes_of(&z_index));
+        let z_buf = initialize_buffer_resource(
+            &self.device,
+            "z-index-group-buffer",
+            bytemuck::bytes_of(&z_index),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("z-index-bg-group"),
             layout: self.solid_direct.z_index_bgl(),

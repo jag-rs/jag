@@ -65,7 +65,7 @@ impl PassManager {
             0.0,
         ];
         // debug log removed
-        queue.write_buffer(&self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
+        crate::gpu_transfer::upload_buffer(queue, &self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
 
         let shadow_radii = RoundedRadii {
             tl: (rrect.radii.tl + spread).max(0.0),
@@ -281,7 +281,12 @@ impl PassManager {
             sigma,
             _pad: 0.0,
         };
-        queue.write_buffer(&self.blur_r8.param_buffer, 0, bytemuck::bytes_of(&bp_h));
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.blur_r8.param_buffer,
+            0,
+            bytemuck::bytes_of(&bp_h),
+        );
         let bg_h = self.blur_r8.bind_group(&self.device, &mask_view);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -308,7 +313,12 @@ impl PassManager {
             sigma,
             _pad: 0.0,
         };
-        queue.write_buffer(&self.blur_r8.param_buffer, 0, bytemuck::bytes_of(&bp_v));
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.blur_r8.param_buffer,
+            0,
+            bytemuck::bytes_of(&bp_v),
+        );
         let bg_v = self.blur_r8.bind_group(&self.device, &ping_view);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -479,7 +489,12 @@ impl PassManager {
         let scol = ShadowColor {
             color: [c.r, c.g, c.b, c.a],
         };
-        queue.write_buffer(&self.shadow_comp.color_buffer, 0, bytemuck::bytes_of(&scol));
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.shadow_comp.color_buffer,
+            0,
+            bytemuck::bytes_of(&scol),
+        );
         let bg = self.shadow_comp.bind_group(&self.device, &mask_view);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

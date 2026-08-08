@@ -1,5 +1,6 @@
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
+
+use crate::gpu_transfer::{allocate_buffer_resource, initialize_buffer_resource};
 
 pub struct TextRenderer {
     pub pipeline: wgpu::RenderPipeline,
@@ -136,12 +137,12 @@ impl TextRenderer {
             ..Default::default()
         });
 
-        let color_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("text-color"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let color_buffer = allocate_buffer_resource(
+            &device,
+            "text-color",
+            16,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
 
         Self {
             pipeline,
@@ -456,11 +457,12 @@ impl ImageRenderer {
             clip_radii[2],
             clip_radii[3],
         ];
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("image-params-buffer"),
-            contents: bytemuck::cast_slice(&params),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let buffer = initialize_buffer_resource(
+            device,
+            "image-params-buffer",
+            bytemuck::cast_slice(&params),
+            wgpu::BufferUsages::UNIFORM,
+        );
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("image-params-bg"),
             layout: &self.params_bgl,

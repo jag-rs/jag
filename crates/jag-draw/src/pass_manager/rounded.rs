@@ -38,7 +38,7 @@ impl PassManager {
             0.0,
         ];
         // debug log removed
-        queue.write_buffer(&self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
+        crate::gpu_transfer::upload_buffer(queue, &self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
 
         // Tessellate rounded rect fill
         #[repr(C)]
@@ -249,7 +249,12 @@ impl PassManager {
             0.0,
             0.0,
         ];
-        queue.write_buffer(&self.smaa_param_buffer, 0, bytemuck::bytes_of(&texel_size));
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.smaa_param_buffer,
+            0,
+            bytemuck::bytes_of(&texel_size),
+        );
 
         let edges = self
             .smaa_edges

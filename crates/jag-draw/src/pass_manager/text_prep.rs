@@ -226,7 +226,7 @@ impl PassManager {
                 // Create z bind group for this text group
                 // Pass z_index as float directly - shader will convert to depth
                 // eprintln!("    💎 z={} (passing as z-index to shader)", z_index);
-                let (z_bg, z_buf) = self.create_group_z_bind_group(z_index as f32, queue);
+                let (z_bg, z_buf) = self.create_group_z_bind_group(z_index as f32);
 
                 text_resources.push((z_index, vbuf, ibuf, indices.len() as u32, z_bg, z_buf, clip));
             }
@@ -441,7 +441,7 @@ impl PassManager {
 
                 // Create z bind group for this text group
                 // Pass z_index as float directly - shader will convert to depth
-                let (z_bg, z_buf) = self.create_group_z_bind_group(z_index as f32, queue);
+                let (z_bg, z_buf) = self.create_group_z_bind_group(z_index as f32);
 
                 text_resources.push((z_index, vbuf, ibuf, indices.len() as u32, z_bg, z_buf, clip));
             }

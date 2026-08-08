@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::gpu_transfer::allocate_buffer_resource;
+
 #[derive(Debug)]
 pub struct OwnedTexture {
     pub texture: wgpu::Texture,
@@ -98,12 +100,7 @@ impl RenderAllocator {
         };
         let entry = self.buffer_pool.entry(key).or_default();
         let buffer = entry.pop().unwrap_or_else(|| {
-            self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("alloc:buf"),
-                size: key.size,
-                usage: key.usage,
-                mapped_at_creation: false,
-            })
+            allocate_buffer_resource(&self.device, "alloc:buf", key.size, key.usage)
         });
         OwnedBuffer { buffer, key }
     }

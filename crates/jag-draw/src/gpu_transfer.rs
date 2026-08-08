@@ -10,6 +10,8 @@ const EMPTY_BUFFER_CONTENTS: [u8; MIN_BUFFER_SIZE as usize] = [0; MIN_BUFFER_SIZ
 pub(crate) enum BufferTransferError {
     #[error("buffer upload length {byte_len} is not aligned to {alignment} bytes")]
     UnalignedUpload { byte_len: usize, alignment: u64 },
+    #[error("buffer upload offset {offset} is not aligned to {alignment} bytes")]
+    UnalignedOffset { offset: u64, alignment: u64 },
     #[error("buffer upload length does not fit in a 64-bit GPU buffer size")]
     SizeOverflow,
 }
@@ -25,6 +27,54 @@ fn checked_upload_size(byte_len: usize) -> Result<u64, BufferTransferError> {
     u64::try_from(byte_len)
         .map(|size| size.max(MIN_BUFFER_SIZE))
         .map_err(|_| BufferTransferError::SizeOverflow)
+}
+
+fn checked_write(offset: u64, byte_len: usize) -> Result<(), BufferTransferError> {
+    let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
+    if offset % alignment != 0 {
+        return Err(BufferTransferError::UnalignedOffset { offset, alignment });
+    }
+    checked_upload_size(byte_len).map(|_| ())
+}
+
+pub(crate) fn allocate_buffer_resource(
+    device: &wgpu::Device,
+    label: &str,
+    size: u64,
+    usage: wgpu::BufferUsages,
+) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: size.max(MIN_BUFFER_SIZE),
+        usage,
+        mapped_at_creation: false,
+    })
+}
+
+pub(crate) fn initialize_buffer_resource(
+    device: &wgpu::Device,
+    label: &str,
+    contents: &[u8],
+    usage: wgpu::BufferUsages,
+) -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents: initial_contents(contents),
+        usage,
+    })
+}
+
+pub(crate) fn upload_buffer(
+    queue: &wgpu::Queue,
+    buffer: &wgpu::Buffer,
+    offset: u64,
+    contents: &[u8],
+) {
+    checked_write(offset, contents.len())
+        .unwrap_or_else(|error| panic!("invalid GPU buffer write: {error}"));
+    if !contents.is_empty() {
+        queue.write_buffer(buffer, offset, contents);
+    }
 }
 
 /// Allocate a pooled draw buffer and upload its complete initial contents.
@@ -43,7 +93,7 @@ pub(crate) fn allocate_pooled_upload(
         usage: usage | wgpu::BufferUsages::COPY_DST,
     });
     if !contents.is_empty() {
-        queue.write_buffer(&buffer.buffer, 0, contents);
+        upload_buffer(queue, &buffer.buffer, 0, contents);
     }
     Ok(buffer)
 }
@@ -67,11 +117,12 @@ pub(crate) fn create_transient_upload(
     contents: &[u8],
     usage: wgpu::BufferUsages,
 ) -> wgpu::Buffer {
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(label),
-        contents: initial_contents(contents),
-        usage: usage | wgpu::BufferUsages::COPY_DST,
-    })
+    initialize_buffer_resource(
+        device,
+        label,
+        contents,
+        usage | wgpu::BufferUsages::COPY_DST,
+    )
 }
 
 #[cfg(test)]
@@ -91,6 +142,13 @@ mod tests {
                 alignment: wgpu::COPY_BUFFER_ALIGNMENT,
             })
         );
+        assert_eq!(
+            checked_write(2, 4),
+            Err(BufferTransferError::UnalignedOffset {
+                offset: 2,
+                alignment: wgpu::COPY_BUFFER_ALIGNMENT,
+            })
+        );
     }
 
     #[test]
@@ -101,29 +159,38 @@ mod tests {
     }
 
     #[test]
-    fn transient_pass_manager_geometry_cannot_bypass_transfer_boundary() {
-        let pass_manager = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src")
-            .join("pass_manager");
+    fn jag_draw_buffer_operations_cannot_bypass_transfer_boundary() {
+        let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut pending = vec![source_root];
         let mut checked_files = 0;
-        for entry in fs::read_dir(pass_manager).expect("read pass-manager sources") {
-            let path = entry.expect("read pass-manager entry").path();
-            if path.extension().and_then(|value| value.to_str()) != Some("rs")
-                || path.file_name().and_then(|value| value.to_str()) == Some("setup.rs")
-            {
-                continue;
+        while let Some(directory) = pending.pop() {
+            for entry in fs::read_dir(directory).expect("read jag-draw source directory") {
+                let path = entry.expect("read jag-draw source entry").path();
+                if path.is_dir() {
+                    pending.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|value| value.to_str()) != Some("rs")
+                    || path.file_name().and_then(|value| value.to_str()) == Some("gpu_transfer.rs")
+                {
+                    continue;
+                }
+                let source = fs::read_to_string(&path).expect("read jag-draw source");
+                for prohibited in [
+                    ".create_buffer(",
+                    "create_buffer_init(",
+                    ".write_buffer(",
+                    "copy_buffer_to_buffer(",
+                ] {
+                    assert!(
+                        !source.contains(prohibited),
+                        "{} bypasses the buffer transfer boundary with {prohibited}",
+                        path.display()
+                    );
+                }
+                checked_files += 1;
             }
-            let source = fs::read_to_string(&path).expect("read pass-manager source");
-            assert!(
-                !source.contains("create_buffer(") && !source.contains("create_buffer_init("),
-                "{} bypasses the transient transfer boundary",
-                path.display()
-            );
-            checked_files += 1;
         }
-        assert!(
-            checked_files > 10,
-            "pass-manager source scan was incomplete"
-        );
+        assert!(checked_files > 40, "jag-draw source scan was incomplete");
     }
 }

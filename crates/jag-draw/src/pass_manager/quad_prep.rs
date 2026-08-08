@@ -55,7 +55,6 @@ impl PassManager {
     pub(super) fn prep_image_direct(
         &self,
         image_views: &[ImageViewEntry<'_>],
-        queue: &wgpu::Queue,
     ) -> (Vec<i32>, Vec<ImageResource>) {
         let mut image_resources: Vec<ImageResource> = Vec::new();
         let mut image_z_vals: Vec<i32> = Vec::new();
@@ -95,7 +94,7 @@ impl PassManager {
 
             let vp_bg_img = self.image.vp_bind_group(&self.device, &self.vp_buffer);
             // Pass z_index as float directly - shader will convert to depth
-            let (z_bg_img, z_buf_img) = self.create_group_z_bind_group(*z_val as f32, queue);
+            let (z_bg_img, z_buf_img) = self.create_group_z_bind_group(*z_val as f32);
             let tex_bg = self.image.tex_bind_group(&self.device, tex_view);
             let (params_bg, params_buf) =
                 self.image
@@ -112,7 +111,6 @@ impl PassManager {
     pub(super) fn prep_svg_direct(
         &self,
         svg_views: &[SvgViewEntry<'_>],
-        queue: &wgpu::Queue,
     ) -> (Vec<i32>, Vec<ImageResource>) {
         let mut svg_z_vals: Vec<i32> = Vec::new();
         let mut svg_resources: Vec<ImageResource> = Vec::new();
@@ -152,7 +150,7 @@ impl PassManager {
 
             let vp_bg_svg = self.image.vp_bind_group(&self.device, &self.vp_buffer);
             // Pass z_index as float directly - shader will convert to depth
-            let (z_bg_svg, z_buf_svg) = self.create_group_z_bind_group(*z_val as f32, queue);
+            let (z_bg_svg, z_buf_svg) = self.create_group_z_bind_group(*z_val as f32);
             let tex_bg = self.image.tex_bind_group(&self.device, view_scaled);
             let (params_bg, params_buf) =
                 self.image
@@ -169,7 +167,6 @@ impl PassManager {
     pub(super) fn prep_ext_direct(
         &self,
         external_texture_draws: &[crate::upload::ExtractedExternalTextureDraw],
-        queue: &wgpu::Queue,
     ) -> (Vec<i32>, Vec<ExtResource>) {
         let mut ext_z_vals: Vec<i32> = Vec::new();
         let mut ext_resources: Vec<ExtResource> = Vec::new();
@@ -211,7 +208,7 @@ impl PassManager {
             );
 
             let vp_bg_ext = self.image.vp_bind_group(&self.device, &self.vp_buffer);
-            let (z_bg_ext, z_buf_ext) = self.create_group_z_bind_group(etd.z as f32, queue);
+            let (z_bg_ext, z_buf_ext) = self.create_group_z_bind_group(etd.z as f32);
             let tex_bg = self.image.tex_bind_group(&self.device, tex_view);
             let (params_bg, params_buf) =
                 self.image
@@ -228,7 +225,6 @@ impl PassManager {
     pub(super) fn prep_image_offscreen(
         &self,
         image_views_off: &[ImageViewEntry<'_>],
-        queue: &wgpu::Queue,
     ) -> (Vec<i32>, Vec<ImageResource>) {
         let mut image_z_vals_off: Vec<i32> = Vec::new();
         let mut image_resources_off: Vec<ImageResource> = Vec::new();
@@ -270,7 +266,7 @@ impl PassManager {
                 .image_offscreen
                 .vp_bind_group(&self.device, &self.vp_buffer);
             // Pass z_index as float directly - shader will convert to depth
-            let (z_bg_img, z_buf_img) = self.create_group_z_bind_group(*z_val as f32, queue);
+            let (z_bg_img, z_buf_img) = self.create_group_z_bind_group(*z_val as f32);
             let tex_bg = self.image_offscreen.tex_bind_group(&self.device, tex_view);
             let (params_bg, params_buf) = self.image_offscreen.params_bind_group_clipped(
                 &self.device,
@@ -290,7 +286,6 @@ impl PassManager {
     pub(super) fn prep_svg_offscreen(
         &self,
         svg_views_off: &[SvgViewEntry<'_>],
-        queue: &wgpu::Queue,
     ) -> (Vec<i32>, Vec<ImageResource>) {
         let mut svg_z_vals_off: Vec<i32> = Vec::new();
         let mut svg_resources_off: Vec<ImageResource> = Vec::new();
@@ -332,7 +327,7 @@ impl PassManager {
                 .image_offscreen
                 .vp_bind_group(&self.device, &self.vp_buffer);
             // Pass z_index as float directly - shader will convert to depth
-            let (z_bg_svg, z_buf_svg) = self.create_group_z_bind_group(*z_val as f32, queue);
+            let (z_bg_svg, z_buf_svg) = self.create_group_z_bind_group(*z_val as f32);
             let tex_bg = self
                 .image_offscreen
                 .tex_bind_group(&self.device, view_scaled);
@@ -354,7 +349,6 @@ impl PassManager {
     pub(super) fn prep_ext_offscreen(
         &self,
         external_texture_draws: &[crate::upload::ExtractedExternalTextureDraw],
-        queue: &wgpu::Queue,
     ) -> (Vec<i32>, Vec<ExtResource>) {
         let mut ext_z_vals_off: Vec<i32> = Vec::new();
         let mut ext_resources_off: Vec<ExtResource> = Vec::new();
@@ -398,7 +392,7 @@ impl PassManager {
             let vp_bg_ext = self
                 .image_offscreen
                 .vp_bind_group(&self.device, &self.vp_buffer);
-            let (z_bg_ext, z_buf_ext) = self.create_group_z_bind_group(etd.z as f32, queue);
+            let (z_bg_ext, z_buf_ext) = self.create_group_z_bind_group(etd.z as f32);
             let tex_bg = self.image_offscreen.tex_bind_group(&self.device, tex_view);
             let (params_bg, params_buf) = self.image_offscreen.params_bind_group(
                 &self.device,

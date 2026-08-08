@@ -162,9 +162,9 @@ impl PassManager {
         // Create text bind groups before render pass so they live long enough
         let vp_bg_text = self.text.vp_bind_group(&self.device, &self.vp_buffer);
 
-        let (image_z_vals, image_resources) = self.prep_image_direct(&image_views, queue);
-        let (svg_z_vals, svg_resources) = self.prep_svg_direct(&svg_views, queue);
-        let (ext_z_vals, ext_resources) = self.prep_ext_direct(external_texture_draws, queue);
+        let (image_z_vals, image_resources) = self.prep_image_direct(&image_views);
+        let (svg_z_vals, svg_resources) = self.prep_svg_direct(&svg_views);
+        let (ext_z_vals, ext_resources) = self.prep_ext_direct(external_texture_draws);
 
         // Build depth attachment after all mutable borrows on self are finished
         let depth_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
