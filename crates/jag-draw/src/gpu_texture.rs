@@ -1,7 +1,7 @@
 //! Version-insulated creation, view, and upload operations for 2D textures.
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct Texture2dSpec {
+pub struct Texture2dSpec {
     pub width: u32,
     pub height: u32,
     pub format: wgpu::TextureFormat,
@@ -18,11 +18,7 @@ impl Texture2dSpec {
     }
 }
 
-pub(crate) fn create_texture_2d(
-    device: &wgpu::Device,
-    label: &str,
-    spec: Texture2dSpec,
-) -> wgpu::Texture {
+pub fn create_texture_2d(device: &wgpu::Device, label: &str, spec: Texture2dSpec) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: spec.extent(),
@@ -35,11 +31,11 @@ pub(crate) fn create_texture_2d(
     })
 }
 
-pub(crate) fn create_default_texture_view(texture: &wgpu::Texture) -> wgpu::TextureView {
+pub fn create_default_texture_view(texture: &wgpu::Texture) -> wgpu::TextureView {
     texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-pub(crate) fn upload_texture_2d(
+pub fn upload_texture_2d(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
     origin: [u32; 2],
@@ -72,7 +68,7 @@ pub(crate) fn upload_texture_2d(
     );
 }
 
-pub(crate) fn copy_texture_2d(
+pub fn copy_texture_2d(
     encoder: &mut wgpu::CommandEncoder,
     source: &wgpu::Texture,
     destination: &wgpu::Texture,
@@ -90,6 +86,36 @@ pub(crate) fn copy_texture_2d(
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::Extent3d {
+            width: size[0],
+            height: size[1],
+            depth_or_array_layers: 1,
+        },
+    );
+}
+
+pub fn copy_texture_to_buffer_2d(
+    encoder: &mut wgpu::CommandEncoder,
+    source: &wgpu::Texture,
+    destination: &wgpu::Buffer,
+    padded_bytes_per_row: u32,
+    size: [u32; 2],
+) {
+    encoder.copy_texture_to_buffer(
+        wgpu::ImageCopyTexture {
+            texture: source,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::ImageCopyBuffer {
+            buffer: destination,
+            layout: wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bytes_per_row),
+                rows_per_image: Some(size[1]),
+            },
         },
         wgpu::Extent3d {
             width: size[0],

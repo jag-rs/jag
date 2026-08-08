@@ -217,21 +217,18 @@ impl JagSurface {
 
         let width = geometry.pixel_size[0];
         let height = geometry.pixel_size[1];
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("effect-group-layer"),
-            size: wgpu::Extent3d {
+        let texture = crate::gpu_texture::create_texture_2d(
+            &self.device,
+            "effect-group-layer",
+            crate::gpu_texture::Texture2dSpec {
                 width,
                 height,
-                depth_or_array_layers: 1,
+                format: self.surface_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.surface_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let layer_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        );
+        let layer_view = crate::gpu_texture::create_default_texture_view(&texture);
 
         let mut encoder = self
             .device
@@ -306,7 +303,7 @@ impl JagSurface {
         self.queue.submit(std::iter::once(encoder.finish()));
 
         let tex_id = self.allocate_synthetic_external_texture_id();
-        self.pass.register_external_texture(tex_id, layer_view);
+        crate::gpu_texture::register_external_texture(&mut self.pass, tex_id, layer_view);
         Ok(tex_id)
     }
 

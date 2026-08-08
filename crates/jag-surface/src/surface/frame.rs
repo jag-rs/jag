@@ -96,9 +96,7 @@ impl JagSurface {
         list.sort_by_z();
 
         // Create target view
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let view = crate::gpu_texture::create_default_texture_view(&frame.texture);
         let scene_view = if use_intermediate {
             self.pass
                 .ensure_intermediate_texture(&mut self.allocator, width, height);
@@ -107,13 +105,9 @@ impl JagSurface {
                 .intermediate_texture
                 .as_ref()
                 .expect("intermediate render target not allocated");
-            scene_target
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default())
+            crate::gpu_texture::create_default_texture_view(&scene_target.texture)
         } else {
-            frame
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default())
+            crate::gpu_texture::create_default_texture_view(&frame.texture)
         };
 
         // Command encoder
@@ -253,21 +247,17 @@ impl JagSurface {
             if need_new_texture && has_new_pixels {
                 // Create texture with BGRA format to match CEF's native output
                 // This eliminates CPU-side BGRA->RGBA conversion
-                let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("cef-webview-texture"),
-                    size: wgpu::Extent3d {
+                let texture = crate::gpu_texture::create_texture_2d(
+                    &self.device,
+                    "cef-webview-texture",
+                    crate::gpu_texture::Texture2dSpec {
                         width: raw_draw.src_width,
                         height: raw_draw.src_height,
-                        depth_or_array_layers: 1,
+                        // BGRA format matches CEF native output - no conversion needed
+                        format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                     },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    // BGRA format matches CEF native output - no conversion needed
-                    format: wgpu::TextureFormat::Bgra8UnormSrgb,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                    view_formats: &[],
-                });
+                );
 
                 // Store in image cache for reuse
                 self.pass.store_loaded_image(
@@ -284,24 +274,12 @@ impl JagSurface {
                     // Always upload full frame - CEF provides complete buffer even for partial updates.
                     // The dirty_rects are informational but the buffer is always complete.
                     // This ensures no flickering from partial/stale data.
-                    self.queue.write_texture(
-                        wgpu::ImageCopyTexture {
-                            texture: &tex,
-                            mip_level: 0,
-                            origin: wgpu::Origin3d::ZERO,
-                            aspect: wgpu::TextureAspect::All,
-                        },
+                    crate::gpu_texture::upload_texture_2d(
+                        &self.queue,
+                        &tex,
+                        [raw_draw.src_width, raw_draw.src_height],
+                        raw_draw.src_width * 4,
                         &raw_draw.pixels,
-                        wgpu::ImageDataLayout {
-                            offset: 0,
-                            bytes_per_row: Some(raw_draw.src_width * 4),
-                            rows_per_image: Some(raw_draw.src_height),
-                        },
-                        wgpu::Extent3d {
-                            width: raw_draw.src_width,
-                            height: raw_draw.src_height,
-                            depth_or_array_layers: 1,
-                        },
                     );
                 }
             }

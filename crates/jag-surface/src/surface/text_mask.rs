@@ -140,21 +140,18 @@ impl JagSurface {
             Option<jag_draw::Rect>,
         )],
     ) -> wgpu::TextureView {
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("mask-text-coverage"),
-            size: wgpu::Extent3d {
+        let texture = crate::gpu_texture::create_texture_2d(
+            &self.device,
+            "mask-text-coverage",
+            crate::gpu_texture::Texture2dSpec {
                 width,
                 height,
-                depth_or_array_layers: 1,
+                format: self.surface_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.surface_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        );
+        let view = crate::gpu_texture::create_default_texture_view(&texture);
         let white = jag_draw::ColorLinPremul::from_srgba_u8([255; 4]);
         let glyphs = glyphs
             .iter()

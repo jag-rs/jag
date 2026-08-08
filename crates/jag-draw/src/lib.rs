@@ -39,7 +39,8 @@ pub use wgpu;
 mod gpu_init;
 pub use gpu_init::*;
 
-mod gpu_texture;
+#[doc(hidden)]
+pub mod gpu_texture;
 mod gpu_transfer;
 
 mod allocator;

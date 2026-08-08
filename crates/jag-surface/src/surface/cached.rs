@@ -43,9 +43,7 @@ impl JagSurface {
         // Set the scroll delta as GPU uniform
         self.pass.set_scroll_offset(scroll_delta);
 
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let view = crate::gpu_texture::create_default_texture_view(&frame.texture);
         let scene_view = if use_intermediate {
             self.pass
                 .ensure_intermediate_texture(&mut self.allocator, width, height);
@@ -54,13 +52,9 @@ impl JagSurface {
                 .intermediate_texture
                 .as_ref()
                 .expect("intermediate render target not allocated");
-            scene_target
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default())
+            crate::gpu_texture::create_default_texture_view(&scene_target.texture)
         } else {
-            frame
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default())
+            crate::gpu_texture::create_default_texture_view(&frame.texture)
         };
 
         let mut encoder = self
@@ -321,21 +315,17 @@ impl JagSurface {
         }
 
         // Create offscreen render target
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("headless-render-target"),
-            size: wgpu::Extent3d {
+        let texture = crate::gpu_texture::create_texture_2d(
+            &self.device,
+            "headless-render-target",
+            crate::gpu_texture::Texture2dSpec {
                 width,
                 height,
-                depth_or_array_layers: 1,
+                format: self.surface_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.surface_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        );
+        let texture_view = crate::gpu_texture::create_default_texture_view(&texture);
 
         // Command encoder
         let mut encoder = self
@@ -376,26 +366,12 @@ impl JagSurface {
         let readback =
             ReadbackBuffer::new(&self.device, "headless-readback", bytes_per_row, height)?;
 
-        encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::ImageCopyBuffer {
-                buffer: readback.buffer(),
-                layout: wgpu::ImageDataLayout {
-                    offset: 0,
-                    bytes_per_row: Some(readback.padded_bytes_per_row()),
-                    rows_per_image: Some(height),
-                },
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
+        crate::gpu_texture::copy_texture_to_buffer_2d(
+            &mut encoder,
+            &texture,
+            readback.buffer(),
+            readback.padded_bytes_per_row(),
+            [width, height],
         );
 
         // Submit and wait

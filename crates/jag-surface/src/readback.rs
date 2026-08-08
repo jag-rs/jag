@@ -14,7 +14,7 @@ use anyhow::Result;
 
 use jag_draw::wgpu;
 
-use crate::{JagSurface, gpu_readback::ReadbackBuffer};
+use crate::{JagSurface, gpu_readback::ReadbackBuffer, gpu_texture};
 
 /// Copy the most-recently rendered intermediate texture into a tightly
 /// packed RGBA byte buffer (same layout as `end_frame_headless` returns).
@@ -56,26 +56,12 @@ pub fn grab_last_frame_rgba(surface: &mut JagSurface) -> Result<(u32, u32, Vec<u
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("grab-last-frame-encoder"),
     });
-    encoder.copy_texture_to_buffer(
-        wgpu::ImageCopyTexture {
-            texture: &intermediate.texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::ImageCopyBuffer {
-            buffer: readback.buffer(),
-            layout: wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(readback.padded_bytes_per_row()),
-                rows_per_image: Some(height),
-            },
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
+    gpu_texture::copy_texture_to_buffer_2d(
+        &mut encoder,
+        &intermediate.texture,
+        readback.buffer(),
+        readback.padded_bytes_per_row(),
+        [width, height],
     );
     queue.submit(std::iter::once(encoder.finish()));
 
