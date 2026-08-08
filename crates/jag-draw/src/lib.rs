@@ -39,6 +39,8 @@ pub use wgpu;
 mod gpu_init;
 pub use gpu_init::*;
 
+mod gpu_transfer;
+
 mod allocator;
 pub use allocator::{OwnedBuffer, OwnedTexture, RenderAllocator};
 

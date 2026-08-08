@@ -1,7 +1,8 @@
 use anyhow::Result;
 
-use crate::allocator::{BufKey, RenderAllocator};
+use crate::allocator::RenderAllocator;
 use crate::display_list::{Command, DisplayList};
+use crate::gpu_transfer::allocate_pooled_upload;
 use crate::scene::Brush;
 
 use super::gradients::{
@@ -338,22 +339,18 @@ pub fn upload_display_list(
     }
 
     // Allocate GPU buffers and upload
-    let vsize = (vertices.len() * std::mem::size_of::<Vertex>()) as u64;
-    let isize = (indices.len() * std::mem::size_of::<u16>()) as u64;
-    let vbuf = allocator.allocate_buffer(BufKey {
-        size: vsize.max(4),
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-    });
-    let ibuf = allocator.allocate_buffer(BufKey {
-        size: isize.max(4),
-        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-    });
-    if vsize > 0 {
-        queue.write_buffer(&vbuf.buffer, 0, bytemuck::cast_slice(&vertices));
-    }
-    if isize > 0 {
-        queue.write_buffer(&ibuf.buffer, 0, bytemuck::cast_slice(&indices));
-    }
+    let vbuf = allocate_pooled_upload(
+        allocator,
+        queue,
+        bytemuck::cast_slice(&vertices),
+        wgpu::BufferUsages::VERTEX,
+    )?;
+    let ibuf = allocate_pooled_upload(
+        allocator,
+        queue,
+        bytemuck::cast_slice(&indices),
+        wgpu::BufferUsages::INDEX,
+    )?;
 
     Ok(GpuScene {
         vertex: vbuf,

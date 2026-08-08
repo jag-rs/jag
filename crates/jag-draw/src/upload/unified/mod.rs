@@ -1,7 +1,8 @@
 use anyhow::Result;
 
-use crate::allocator::{BufKey, RenderAllocator};
+use crate::allocator::RenderAllocator;
 use crate::display_list::{Command, DisplayList};
+use crate::gpu_transfer::allocate_pooled_upload;
 use crate::scene::{Rect, Transform2D};
 
 use super::types::{
@@ -266,29 +267,25 @@ impl UnifiedBuilder {
         queue: &wgpu::Queue,
         vertices: &[Vertex],
         indices: &[u16],
-    ) -> GpuScene {
-        let vsize = (vertices.len() * std::mem::size_of::<Vertex>()) as u64;
-        let isize = (indices.len() * std::mem::size_of::<u16>()) as u64;
-        let vbuf = allocator.allocate_buffer(BufKey {
-            size: vsize.max(4),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        });
-        let ibuf = allocator.allocate_buffer(BufKey {
-            size: isize.max(4),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        });
-        if vsize > 0 {
-            queue.write_buffer(&vbuf.buffer, 0, bytemuck::cast_slice(vertices));
-        }
-        if isize > 0 {
-            queue.write_buffer(&ibuf.buffer, 0, bytemuck::cast_slice(indices));
-        }
-        GpuScene {
+    ) -> Result<GpuScene> {
+        let vbuf = allocate_pooled_upload(
+            allocator,
+            queue,
+            bytemuck::cast_slice(vertices),
+            wgpu::BufferUsages::VERTEX,
+        )?;
+        let ibuf = allocate_pooled_upload(
+            allocator,
+            queue,
+            bytemuck::cast_slice(indices),
+            wgpu::BufferUsages::INDEX,
+        )?;
+        Ok(GpuScene {
             vertex: vbuf,
             index: ibuf,
             vertices: vertices.len() as u32,
             indices: indices.len() as u32,
-        }
+        })
     }
 
     /// Consume the builder, aligning + uploading both scenes into a result.
@@ -297,7 +294,7 @@ impl UnifiedBuilder {
         allocator: &mut RenderAllocator,
         queue: &wgpu::Queue,
         compositor_plan: crate::compositor::CompositorPlan,
-    ) -> UnifiedSceneData {
+    ) -> Result<UnifiedSceneData> {
         // Flush the final opaque solid batch.
         let index_end = self.indices.len();
         self.flush_solid_batch(index_end, None);
@@ -305,15 +302,15 @@ impl UnifiedBuilder {
         Self::align_indices(&mut self.indices);
         Self::align_indices(&mut self.transparent_indices);
 
-        let gpu_scene = Self::upload_scene(allocator, queue, &self.vertices, &self.indices);
+        let gpu_scene = Self::upload_scene(allocator, queue, &self.vertices, &self.indices)?;
         let transparent_gpu_scene = Self::upload_scene(
             allocator,
             queue,
             &self.transparent_vertices,
             &self.transparent_indices,
-        );
+        )?;
 
-        UnifiedSceneData {
+        Ok(UnifiedSceneData {
             compositor_plan,
             gpu_scene,
             solid_batches: self.solid_batches,
@@ -324,7 +321,7 @@ impl UnifiedBuilder {
             svg_draws: self.svg_draws,
             external_texture_draws: self.external_texture_draws,
             shadow_instances: self.shadow_instances,
-        }
+        })
     }
 }
 
@@ -346,5 +343,5 @@ pub fn upload_display_list_unified(
     for cmd in &list.commands {
         builder.handle(cmd);
     }
-    Ok(builder.finalize(allocator, queue, compositor_plan))
+    builder.finalize(allocator, queue, compositor_plan)
 }
