@@ -81,8 +81,8 @@ mod tests {
         let root = layout.add_node(
             Style {
                 size: Size {
-                    width: length(100.0),
-                    height: length(50.0),
+                    width: length(100.0_f32),
+                    height: length(50.0_f32),
                 },
                 ..Default::default()
             },
@@ -102,8 +102,8 @@ mod tests {
         let child = layout.add_node(
             Style {
                 size: Size {
-                    width: length(40.0),
-                    height: length(20.0),
+                    width: length(40.0_f32),
+                    height: length(20.0_f32),
                 },
                 ..Default::default()
             },
@@ -113,8 +113,8 @@ mod tests {
         let parent = layout.add_node(
             Style {
                 size: Size {
-                    width: length(200.0),
-                    height: length(100.0),
+                    width: length(200.0_f32),
+                    height: length(100.0_f32),
                 },
                 ..Default::default()
             },
@@ -143,8 +143,8 @@ mod tests {
         let root = layout.add_node(
             Style {
                 size: Size {
-                    width: length(10.0),
-                    height: length(10.0),
+                    width: length(10.0_f32),
+                    height: length(10.0_f32),
                 },
                 ..Default::default()
             },
