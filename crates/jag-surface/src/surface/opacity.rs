@@ -230,11 +230,12 @@ impl JagSurface {
         );
         let layer_view = crate::gpu_texture::create_default_texture_view(&texture);
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = crate::gpu_commands::create_command_encoder(
+            &self.device,
+            crate::gpu_commands::CommandEncoderDescriptor {
                 label: Some("effect-group-encoder"),
-            });
+            },
+        );
         // Shift world coordinates into this bounded layer's local pixel-aligned origin.
         let saved_scroll = self.pass.scroll_offset();
         self.pass
@@ -300,7 +301,7 @@ impl JagSurface {
                 text_clip_view.as_ref(),
             )?,
         };
-        self.queue.submit(std::iter::once(encoder.finish()));
+        crate::gpu_commands::submit_command_encoder(&self.queue, encoder);
 
         let tex_id = self.allocate_synthetic_external_texture_id();
         crate::gpu_texture::register_external_texture(&mut self.pass, tex_id, layer_view);

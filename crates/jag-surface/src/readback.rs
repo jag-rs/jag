@@ -14,7 +14,7 @@ use anyhow::Result;
 
 use jag_draw::wgpu;
 
-use crate::{JagSurface, gpu_readback::ReadbackBuffer, gpu_texture};
+use crate::{JagSurface, gpu_commands, gpu_readback::ReadbackBuffer, gpu_texture};
 
 /// Copy the most-recently rendered intermediate texture into a tightly
 /// packed RGBA byte buffer (same layout as `end_frame_headless` returns).
@@ -53,9 +53,12 @@ pub fn grab_last_frame_rgba(surface: &mut JagSurface) -> Result<(u32, u32, Vec<u
         .ok_or_else(|| anyhow::anyhow!("grab-last-frame row size overflow"))?;
     let readback = ReadbackBuffer::new(&device, "grab-last-frame-readback", bytes_per_row, height)?;
 
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("grab-last-frame-encoder"),
-    });
+    let mut encoder = gpu_commands::create_command_encoder(
+        &device,
+        gpu_commands::CommandEncoderDescriptor {
+            label: Some("grab-last-frame-encoder"),
+        },
+    );
     gpu_texture::copy_texture_to_buffer_2d(
         &mut encoder,
         &intermediate.texture,
@@ -63,7 +66,7 @@ pub fn grab_last_frame_rgba(surface: &mut JagSurface) -> Result<(u32, u32, Vec<u
         readback.padded_bytes_per_row(),
         [width, height],
     );
-    queue.submit(std::iter::once(encoder.finish()));
+    gpu_commands::submit_command_encoder(&queue, encoder);
 
     let mapped = readback.map_tightly_packed(&device)?;
     let mut pixels = Vec::with_capacity(mapped.len());

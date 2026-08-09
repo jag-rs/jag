@@ -111,11 +111,12 @@ impl JagSurface {
         };
 
         // Command encoder
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = crate::gpu_commands::create_command_encoder(
+            &self.device,
+            crate::gpu_commands::CommandEncoderDescriptor {
                 label: Some("jag-surface-encoder"),
-            });
+            },
+        );
 
         // Clear color or transparent
         let clear = canvas.clear_color.unwrap_or(ColorLinPremul {
@@ -521,8 +522,7 @@ impl JagSurface {
         }
 
         // Submit and present
-        let cb = encoder.finish();
-        self.queue.submit(std::iter::once(cb));
+        crate::gpu_commands::submit_command_encoder(&self.queue, encoder);
         frame.present();
         if let Some((gpu_scene, transparent_gpu_scene)) = reusable_gpu_scenes {
             wait_for_gpu(&self.device);

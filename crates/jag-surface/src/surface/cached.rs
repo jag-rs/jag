@@ -57,11 +57,12 @@ impl JagSurface {
             crate::gpu_texture::create_default_texture_view(&frame.texture)
         };
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = crate::gpu_commands::create_command_encoder(
+            &self.device,
+            crate::gpu_commands::CommandEncoderDescriptor {
                 label: Some("jag-surface-cached-encoder"),
-            });
+            },
+        );
 
         self.pass
             .ensure_depth_texture(&mut self.allocator, width, height);
@@ -111,8 +112,7 @@ impl JagSurface {
             }
         }
 
-        let cb = encoder.finish();
-        self.queue.submit(std::iter::once(cb));
+        crate::gpu_commands::submit_command_encoder(&self.queue, encoder);
         frame.present();
 
         // Reset scroll offset for subsequent full rebuilds
@@ -328,11 +328,12 @@ impl JagSurface {
         let texture_view = crate::gpu_texture::create_default_texture_view(&texture);
 
         // Command encoder
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = crate::gpu_commands::create_command_encoder(
+            &self.device,
+            crate::gpu_commands::CommandEncoderDescriptor {
                 label: Some("headless-encoder"),
-            });
+            },
+        );
 
         // Render unified pass directly to the offscreen texture
         self.pass
@@ -375,7 +376,7 @@ impl JagSurface {
         );
 
         // Submit and wait
-        self.queue.submit(std::iter::once(encoder.finish()));
+        crate::gpu_commands::submit_command_encoder(&self.queue, encoder);
 
         let pixels = readback.map_tightly_packed(&self.device)?;
 
