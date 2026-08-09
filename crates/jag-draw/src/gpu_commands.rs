@@ -37,6 +37,8 @@ mod tests {
     fn migrated_render_pass_owners_cannot_bypass_command_seam() {
         let pass_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pass_manager");
         for file in [
+            "draw_shapes.rs",
+            "filter.rs",
             "paint_root.rs",
             "paint_root_gradients.rs",
             "render_direct.rs",

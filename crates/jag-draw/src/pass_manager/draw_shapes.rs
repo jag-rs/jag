@@ -2,6 +2,7 @@
 //! former monolithic `pass_manager.rs`; no logic changed.
 
 use super::PassManager;
+use crate::gpu_commands::CommandEncoderExt as _;
 use crate::gpu_texture::{Texture2dSpec, create_default_texture_view, create_texture_2d};
 use crate::gpu_transfer::create_transient_upload;
 
@@ -109,20 +110,21 @@ impl PassManager {
             stencil_ops: None,
         });
 
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("image-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: depth_attachment,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("image-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: depth_attachment,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
         self.image.record(
             &mut pass,
             &vp_bg,
@@ -236,20 +238,21 @@ impl PassManager {
         );
 
         // Overlay pass: no depth attachment so the quad simply blends over existing content.
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("overlay-rect-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("overlay-rect-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
         self.overlay_solid
             .record(&mut pass, &vp_bg, &vbuf, &ibuf, idx.len() as u32);
     }
@@ -364,20 +367,21 @@ impl PassManager {
         // Scrim pass: no depth attachment. The scrim pipeline is configured with
         // depth_compare=Always and depth_write_enabled=false, so depth isn't needed.
         // It simply blends over existing content without affecting any depth state.
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("scrim-rect-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("scrim-rect-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
         self.scrim_solid
             .record(&mut pass, &vp_bg, &vbuf, &ibuf, idx.len() as u32);
     }
