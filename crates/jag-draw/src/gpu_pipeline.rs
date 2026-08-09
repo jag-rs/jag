@@ -60,7 +60,9 @@ mod tests {
             "composite.rs",
             "drop_shadow_filter.rs",
             "mask_filter.rs",
+            "scrim_stencil.rs",
             "smaa.rs",
+            "text_image.rs",
         ] {
             let path = pipeline_root.join(file);
             let source = std::fs::read_to_string(&path).expect("read jag-draw source");

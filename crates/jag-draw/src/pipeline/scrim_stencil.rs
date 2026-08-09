@@ -35,69 +35,72 @@ impl ScrimStencilMaskRenderer {
             &[&bgl],
         );
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scrim-stencil-mask-pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<crate::upload::Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            offset: 0,
-                            shader_location: 0,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 8,
-                            shader_location: 1,
-                            format: wgpu::VertexFormat::Float32x4,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 24,
-                            shader_location: 2,
-                            format: wgpu::VertexFormat::Float32,
-                        },
-                    ],
-                }],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::empty(), // disable color writes
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Always,
-                stencil: wgpu::StencilState {
-                    front: wgpu::StencilFaceState {
-                        compare: wgpu::CompareFunction::Always,
-                        fail_op: wgpu::StencilOperation::Replace,
-                        depth_fail_op: wgpu::StencilOperation::Replace,
-                        pass_op: wgpu::StencilOperation::Replace,
-                    },
-                    back: wgpu::StencilFaceState {
-                        compare: wgpu::CompareFunction::Always,
-                        fail_op: wgpu::StencilOperation::Replace,
-                        depth_fail_op: wgpu::StencilOperation::Replace,
-                        pass_op: wgpu::StencilOperation::Replace,
-                    },
-                    read_mask: 0xFF,
-                    write_mask: 0xFF,
+        let pipeline = crate::gpu_pipeline::create_render_pipeline(
+            &device,
+            crate::gpu_pipeline::RenderPipelineDescriptor {
+                label: Some("scrim-stencil-mask-pipeline"),
+                layout: Some(&layout),
+                vertex: crate::gpu_pipeline::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<crate::upload::Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                offset: 0,
+                                shader_location: 0,
+                                format: wgpu::VertexFormat::Float32x2,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 8,
+                                shader_location: 1,
+                                format: wgpu::VertexFormat::Float32x4,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 24,
+                                shader_location: 2,
+                                format: wgpu::VertexFormat::Float32,
+                            },
+                        ],
+                    }],
                 },
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
+                fragment: Some(crate::gpu_pipeline::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::empty(), // disable color writes
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Always,
+                    stencil: wgpu::StencilState {
+                        front: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Always,
+                            fail_op: wgpu::StencilOperation::Replace,
+                            depth_fail_op: wgpu::StencilOperation::Replace,
+                            pass_op: wgpu::StencilOperation::Replace,
+                        },
+                        back: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Always,
+                            fail_op: wgpu::StencilOperation::Replace,
+                            depth_fail_op: wgpu::StencilOperation::Replace,
+                            pass_op: wgpu::StencilOperation::Replace,
+                        },
+                        read_mask: 0xFF,
+                        write_mask: 0xFF,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+            },
+        );
 
         Self { pipeline, bgl }
     }
@@ -157,69 +160,72 @@ impl ScrimStencilRenderer {
             &[&bgl],
         );
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scrim-stencil-pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<crate::upload::Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            offset: 0,
-                            shader_location: 0,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 8,
-                            shader_location: 1,
-                            format: wgpu::VertexFormat::Float32x4,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 24,
-                            shader_location: 2,
-                            format: wgpu::VertexFormat::Float32,
-                        },
-                    ],
-                }],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Always,
-                stencil: wgpu::StencilState {
-                    front: wgpu::StencilFaceState {
-                        compare: wgpu::CompareFunction::Equal,
-                        fail_op: wgpu::StencilOperation::Keep,
-                        depth_fail_op: wgpu::StencilOperation::Keep,
-                        pass_op: wgpu::StencilOperation::Keep,
-                    },
-                    back: wgpu::StencilFaceState {
-                        compare: wgpu::CompareFunction::Equal,
-                        fail_op: wgpu::StencilOperation::Keep,
-                        depth_fail_op: wgpu::StencilOperation::Keep,
-                        pass_op: wgpu::StencilOperation::Keep,
-                    },
-                    read_mask: 0xFF,
-                    write_mask: 0x00,
+        let pipeline = crate::gpu_pipeline::create_render_pipeline(
+            &device,
+            crate::gpu_pipeline::RenderPipelineDescriptor {
+                label: Some("scrim-stencil-pipeline"),
+                layout: Some(&layout),
+                vertex: crate::gpu_pipeline::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<crate::upload::Vertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                offset: 0,
+                                shader_location: 0,
+                                format: wgpu::VertexFormat::Float32x2,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 8,
+                                shader_location: 1,
+                                format: wgpu::VertexFormat::Float32x4,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 24,
+                                shader_location: 2,
+                                format: wgpu::VertexFormat::Float32,
+                            },
+                        ],
+                    }],
                 },
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
+                fragment: Some(crate::gpu_pipeline::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Always,
+                    stencil: wgpu::StencilState {
+                        front: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Equal,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::Keep,
+                        },
+                        back: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Equal,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::Keep,
+                        },
+                        read_mask: 0xFF,
+                        write_mask: 0x00,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+            },
+        );
 
         Self { pipeline, bgl }
     }
