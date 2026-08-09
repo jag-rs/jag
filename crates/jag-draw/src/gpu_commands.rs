@@ -34,24 +34,35 @@ impl CommandEncoderExt for wgpu::CommandEncoder {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn migrated_render_pass_owners_cannot_bypass_command_seam() {
-        let pass_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pass_manager");
-        for file in [
-            "draw_shapes.rs",
-            "filter.rs",
-            "paint_root.rs",
-            "paint_root_gradients.rs",
-            "render_direct.rs",
-            "render_offscreen.rs",
-            "targets.rs",
-        ] {
-            let path = pass_root.join(file);
+    fn jag_draw_cannot_bypass_render_pass_seam() {
+        fn rust_sources(root: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(root).expect("read jag-draw source directory") {
+                let path = entry.expect("read jag-draw source entry").path();
+                if path.is_dir() {
+                    rust_sources(&path, files);
+                } else if path.extension().and_then(|value| value.to_str()) == Some("rs") {
+                    files.push(path);
+                }
+            }
+        }
+
+        let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let seam_path = source_root.join("gpu_commands.rs");
+        let mut sources = Vec::new();
+        rust_sources(&source_root, &mut sources);
+        let mut checked_files = 0;
+        for path in sources {
+            if path == seam_path {
+                continue;
+            }
             let source = std::fs::read_to_string(&path).expect("read jag-draw source");
             assert!(
                 !source.contains(".begin_render_pass("),
                 "{} bypasses the command-recording seam",
                 path.display()
             );
+            checked_files += 1;
         }
+        assert!(checked_files > 40, "recursive jag-draw scan was incomplete");
     }
 }

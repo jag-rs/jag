@@ -3,6 +3,7 @@
 
 use super::{PassManager, apply_transform_to_point, set_scissor_for_clip};
 use crate::allocator::{RenderAllocator, TexKey};
+use crate::gpu_commands::CommandEncoderExt as _;
 use crate::gpu_transfer::create_transient_upload;
 use crate::scene::RoundedRect;
 
@@ -190,27 +191,28 @@ impl PassManager {
 
         // Pass 1: write stencil = 1 inside hole (color writes disabled)
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("scrim-stencil-mask-pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &stencil_tex.view,
-                    depth_ops: None,
-                    stencil_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0),
-                        store: wgpu::StoreOp::Store,
+            let mut pass =
+                encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                    label: Some("scrim-stencil-mask-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &stencil_tex.view,
+                        depth_ops: None,
+                        stencil_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(0),
+                            store: wgpu::StoreOp::Store,
+                        }),
                     }),
-                }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
             pass.set_stencil_reference(1);
             self.scrim_mask
                 .record(&mut pass, &vp_bg, &vbuf, &ibuf, indices.len() as u32);
@@ -265,27 +267,28 @@ impl PassManager {
 
         // Pass 2: draw scrim where stencil == 0 (outside hole)
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("scrim-stencil-pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &stencil_tex.view,
-                    depth_ops: None,
-                    stencil_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
+            let mut pass =
+                encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                    label: Some("scrim-stencil-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &stencil_tex.view,
+                        depth_ops: None,
+                        stencil_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
                     }),
-                }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
             pass.set_stencil_reference(0);
             self.scrim_stencil.record(
                 &mut pass,
@@ -455,20 +458,21 @@ impl PassManager {
             }),
             stencil_ops: None,
         });
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("backdrop-blur-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &target.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: depth_attachment,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("backdrop-blur-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: depth_attachment,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
         if let Some(c) = draw.clip {
             if !set_scissor_for_clip(&mut pass, c, width, height) {
                 drop(pass);
