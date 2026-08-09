@@ -61,6 +61,8 @@ mod tests {
             "drop_shadow_filter.rs",
             "mask_filter.rs",
             "scrim_stencil.rs",
+            "shadow.rs",
+            "shadow_composite_instance.rs",
             "smaa.rs",
             "text_image.rs",
         ] {
