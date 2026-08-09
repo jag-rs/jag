@@ -52,21 +52,27 @@ pub(crate) fn create_render_pipeline(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn migrated_pipeline_owners_cannot_bypass_pipeline_seam() {
-        let pipeline_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pipeline");
-        for file in [
-            "background_blur.rs",
-            "color_filter.rs",
-            "composite.rs",
-            "drop_shadow_filter.rs",
-            "mask_filter.rs",
-            "scrim_stencil.rs",
-            "shadow.rs",
-            "shadow_composite_instance.rs",
-            "smaa.rs",
-            "text_image.rs",
-        ] {
-            let path = pipeline_root.join(file);
+    fn jag_draw_cannot_bypass_pipeline_creation_seam() {
+        fn rust_sources(root: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(root).expect("read jag-draw source directory") {
+                let path = entry.expect("read jag-draw source entry").path();
+                if path.is_dir() {
+                    rust_sources(&path, files);
+                } else if path.extension().and_then(|value| value.to_str()) == Some("rs") {
+                    files.push(path);
+                }
+            }
+        }
+
+        let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let seam_path = source_root.join("gpu_pipeline.rs");
+        let mut sources = Vec::new();
+        rust_sources(&source_root, &mut sources);
+        let mut checked_files = 0;
+        for path in sources {
+            if path == seam_path {
+                continue;
+            }
             let source = std::fs::read_to_string(&path).expect("read jag-draw source");
             for prohibited in [".create_render_pipeline(", ".create_compute_pipeline("] {
                 assert!(
@@ -75,6 +81,8 @@ mod tests {
                     path.display()
                 );
             }
+            checked_files += 1;
         }
+        assert!(checked_files > 40, "recursive jag-draw scan was incomplete");
     }
 }
