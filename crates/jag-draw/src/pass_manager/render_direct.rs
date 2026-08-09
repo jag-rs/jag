@@ -6,6 +6,7 @@
 //! `quad_prep`); everything else is unchanged. No logic changed.
 
 use super::{PassManager, set_scissor_for_clip, transformed_quad_points};
+use crate::gpu_commands::CommandEncoderExt as _;
 use crate::gpu_transfer::create_transient_upload;
 use crate::upload::GpuScene;
 
@@ -183,24 +184,25 @@ impl PassManager {
         });
 
         // Begin unified render pass (after all resource preparation)
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("unified-render-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: surface_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: if preserve_surface {
-                        wgpu::LoadOp::Load
-                    } else {
-                        wgpu::LoadOp::Clear(clear)
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("unified-render-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: surface_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: if preserve_surface {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(clear)
+                        },
+                        store: wgpu::StoreOp::Store,
                     },
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: depth_attachment,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+                })],
+                depth_stencil_attachment: depth_attachment,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
 
         // Render opaque solids in per-clip batches. Each batch has its own
         // scissor rect so that overflow:hidden/scroll clips content correctly.

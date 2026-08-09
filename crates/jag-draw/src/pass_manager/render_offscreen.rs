@@ -7,6 +7,7 @@
 
 use super::{PassManager, set_scissor_for_clip, transformed_quad_points};
 use crate::allocator::RenderAllocator;
+use crate::gpu_commands::CommandEncoderExt as _;
 use crate::gpu_transfer::create_transient_upload;
 use crate::upload::GpuScene;
 
@@ -167,20 +168,21 @@ impl PassManager {
 
         let _z_bg = self.create_z_bind_group(0.0, queue);
 
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("unified-offscreen-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &targets.color.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(clear),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: depth_attachment,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("unified-offscreen-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &targets.color.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(clear),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: depth_attachment,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
 
         // Render opaque solids in per-clip batches (offscreen path).
         if solid_batches.is_empty() {
@@ -265,30 +267,31 @@ impl PassManager {
             );
 
             {
-                let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("unified-offscreen-shadow-composite-pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &targets.color.view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: self.depth_view(),
-                        // Depth is read-only here (pipeline depth_write=false);
-                        // load + store keeps the opaque depth intact for the
-                        // transparent interleave that follows.
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
+                let mut shadow_pass =
+                    encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                        label: Some("unified-offscreen-shadow-composite-pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &targets.color.view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: self.depth_view(),
+                            // Depth is read-only here (pipeline depth_write=false);
+                            // load + store keeps the opaque depth intact for the
+                            // transparent interleave that follows.
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
                         }),
-                        stencil_ops: None,
-                    }),
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                });
+                        occlusion_query_set: None,
+                        timestamp_writes: None,
+                    });
                 self.shadow_composite.record(
                     &mut shadow_pass,
                     &shadow_vp_bg,
@@ -355,20 +358,21 @@ impl PassManager {
                     }),
                     stencil_ops: None,
                 });
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("unified-offscreen-transparent-pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &targets.color.view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: depth_attachment,
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                });
+                let mut pass =
+                    encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                        label: Some("unified-offscreen-transparent-pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &targets.color.view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: depth_attachment,
+                        occlusion_query_set: None,
+                        timestamp_writes: None,
+                    });
 
                 match item {
                     DrawItemOff::BackdropBlur(_) => unreachable!(),

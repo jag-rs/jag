@@ -40,6 +40,7 @@ mod gpu_init;
 pub use gpu_init::*;
 
 mod gpu_bindings;
+mod gpu_commands;
 mod gpu_pipeline;
 #[doc(hidden)]
 pub mod gpu_texture;

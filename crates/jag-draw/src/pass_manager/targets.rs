@@ -3,6 +3,7 @@
 
 use super::{PassManager, PassTargets};
 use crate::allocator::{RenderAllocator, TexKey};
+use crate::gpu_commands::CommandEncoderExt as _;
 
 impl PassManager {
     pub fn alloc_targets(
@@ -75,7 +76,7 @@ impl PassManager {
             .as_ref()
             .expect("intermediate texture must be allocated before clearing");
 
-        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
             label: Some("clear-intermediate"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &intermediate.view,
@@ -104,20 +105,21 @@ impl PassManager {
             .expect("intermediate texture must be allocated before blitting");
 
         let bg = self.blitter.bind_group(&self.device, &intermediate.view);
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("blit-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: surface_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("blit-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: surface_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
         self.blitter.record(&mut pass, &bg);
     }
 
