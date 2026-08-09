@@ -55,10 +55,12 @@ mod tests {
     fn migrated_pipeline_owners_cannot_bypass_pipeline_seam() {
         let pipeline_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pipeline");
         for file in [
+            "background_blur.rs",
             "color_filter.rs",
             "composite.rs",
             "drop_shadow_filter.rs",
             "mask_filter.rs",
+            "smaa.rs",
         ] {
             let path = pipeline_root.join(file);
             let source = std::fs::read_to_string(&path).expect("read jag-draw source");
