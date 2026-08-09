@@ -55,14 +55,15 @@ impl PassManager {
         inv_logical: f32,
         transparent_text_z: &std::collections::HashSet<i32>,
     ) {
-        let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("vp-bg-direct-local"),
-            layout: self.solid_direct.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "vp-bg-direct-local",
+            self.solid_direct.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
 
         // Build the analytic box-shadow instance buffer + viewport bind group
         // before the render pass so both outlive the pass borrow. Skipped
@@ -75,14 +76,15 @@ impl PassManager {
                 wgpu::BufferUsages::VERTEX,
             )
         });
-        let shadow_vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow-vp-bg-direct"),
-            layout: self.shadow_direct.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let shadow_vp_bg = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "shadow-vp-bg-direct",
+            self.shadow_direct.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
 
         // Create z-index bind group before render pass (must outlive the pass)
         let _z_bg = self.create_z_bind_group(0.0, queue);

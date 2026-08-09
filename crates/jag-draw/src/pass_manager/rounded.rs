@@ -186,14 +186,15 @@ impl PassManager {
         };
 
         // Bind viewport
-        let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("vp-bg-direct-no-msaa"),
-            layout: self.solid_direct_no_msaa.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "vp-bg-direct-no-msaa",
+            self.solid_direct_no_msaa.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
 
         // Render directly to target without MSAA to preserve existing content through blending
         // MSAA+resolve doesn't apply blend state correctly for layered rendering

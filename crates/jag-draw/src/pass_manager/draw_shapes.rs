@@ -225,14 +225,15 @@ impl PassManager {
             wgpu::BufferUsages::INDEX,
         );
 
-        let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("overlay-vp-bg"),
-            layout: self.overlay_solid.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "overlay-vp-bg",
+            self.overlay_solid.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
 
         // Overlay pass: no depth attachment so the quad simply blends over existing content.
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -350,14 +351,15 @@ impl PassManager {
             wgpu::BufferUsages::INDEX,
         );
 
-        let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("scrim-vp-bg"),
-            layout: self.scrim_solid.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "scrim-vp-bg",
+            self.scrim_solid.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
 
         // Scrim pass: no depth attachment. The scrim pipeline is configured with
         // depth_compare=Always and depth_write_enabled=false, so depth isn't needed.

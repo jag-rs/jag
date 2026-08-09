@@ -91,10 +91,11 @@ impl PassManager {
             0,
             bytemuck::cast_slice(&stops),
         );
-        let bg_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bg-bind-linear"),
-            layout: self.bg.bgl(),
-            entries: &[
+        let bg_bind = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "bg-bind-linear",
+            self.bg.bgl(),
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: self.bg_param_buffer.as_entire_binding(),
@@ -104,7 +105,7 @@ impl PassManager {
                     resource: self.bg_stops_buffer.as_entire_binding(),
                 },
             ],
-        });
+        );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("bg-linear-pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -236,10 +237,11 @@ impl PassManager {
             0,
             bytemuck::cast_slice(&stops),
         );
-        let bg_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bg-bind-radial"),
-            layout: self.bg.bgl(),
-            entries: &[
+        let bg_bind = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "bg-bind-radial",
+            self.bg.bgl(),
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: self.bg_param_buffer.as_entire_binding(),
@@ -249,7 +251,7 @@ impl PassManager {
                     resource: self.bg_stops_buffer.as_entire_binding(),
                 },
             ],
-        });
+        );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("bg-radial-pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

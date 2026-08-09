@@ -229,14 +229,15 @@ impl PassManager {
         };
 
         // Bind groups for viewport
-        let vp_bg_mask = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("vp-bg-mask"),
-            layout: self.mask_renderer.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg_mask = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "vp-bg-mask",
+            self.mask_renderer.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
         // Render mask shape to R8 texture
         // Clear to BLACK, render WHITE for shadow shape
         // After blur: soft white blob. After cutout: white ring (shadow area)

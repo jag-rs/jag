@@ -178,14 +178,15 @@ impl PassManager {
             wgpu::BufferUsages::INDEX,
         );
 
-        let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("scrim-stencil-vp-bg"),
-            layout: self.scrim_mask.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "scrim-stencil-vp-bg",
+            self.scrim_mask.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
 
         // Pass 1: write stencil = 1 inside hole (color writes disabled)
         {
@@ -252,14 +253,15 @@ impl PassManager {
             wgpu::BufferUsages::INDEX,
         );
 
-        let vp_bg_scrim = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("scrim-stencil-vp-bg-scrim"),
-            layout: self.scrim_stencil.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg_scrim = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "scrim-stencil-vp-bg-scrim",
+            self.scrim_stencil.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
 
         // Pass 2: draw scrim where stencil == 0 (outside hole)
         {
@@ -434,14 +436,15 @@ impl PassManager {
             wgpu::BufferUsages::INDEX,
         );
 
-        let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("backdrop-blur-vp-bg"),
-            layout: self.backdrop_blur.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "backdrop-blur-vp-bg",
+            self.backdrop_blur.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
         let blur_bg = self.backdrop_blur.bind_group(&self.device, filtered);
 
         let depth_attachment = Some(wgpu::RenderPassDepthStencilAttachment {

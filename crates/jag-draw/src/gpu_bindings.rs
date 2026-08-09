@@ -50,15 +50,28 @@ pub(crate) fn create_bind_group(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn pipeline_shader_and_layout_owners_cannot_bypass_binding_seam() {
-        let pipeline_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pipeline");
+    fn jag_draw_cannot_bypass_binding_resource_seam() {
+        fn rust_sources(root: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(root).expect("read jag-draw source directory") {
+                let path = entry.expect("read jag-draw source entry").path();
+                if path.is_dir() {
+                    rust_sources(&path, files);
+                } else if path.extension().and_then(|value| value.to_str()) == Some("rs") {
+                    files.push(path);
+                }
+            }
+        }
+
+        let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let seam_path = source_root.join("gpu_bindings.rs");
+        let mut sources = Vec::new();
+        rust_sources(&source_root, &mut sources);
         let mut checked_files = 0;
-        for entry in std::fs::read_dir(pipeline_root).expect("read jag-draw pipeline directory") {
-            let path = entry.expect("read jag-draw pipeline entry").path();
-            if path.extension().and_then(|value| value.to_str()) != Some("rs") {
+        for path in sources {
+            if path == seam_path {
                 continue;
             }
-            let source = std::fs::read_to_string(&path).expect("read jag-draw pipeline source");
+            let source = std::fs::read_to_string(&path).expect("read jag-draw source");
             for prohibited in [
                 ".create_shader_module(",
                 ".create_pipeline_layout(",
@@ -73,6 +86,6 @@ mod tests {
             }
             checked_files += 1;
         }
-        assert!(checked_files > 10, "jag-draw pipeline scan was incomplete");
+        assert!(checked_files > 40, "recursive jag-draw scan was incomplete");
     }
 }

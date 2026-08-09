@@ -158,10 +158,11 @@ impl PassManager {
         );
         let text_mask_atlas_view =
             crate::gpu_texture::create_default_texture_view(&text_mask_atlas);
-        let text_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("text-mask-bgl"),
-            layout: &text.tex_bgl,
-            entries: &[
+        let text_bind_group = crate::gpu_bindings::create_bind_group(
+            &device,
+            "text-mask-bgl",
+            &text.tex_bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(&text_mask_atlas_view),
@@ -171,7 +172,7 @@ impl PassManager {
                     resource: wgpu::BindingResource::Sampler(&text.sampler),
                 },
             ],
-        });
+        );
         // Defaults: always interpret author coords as logical pixels and scale by DPI.
         let logical_default = true;
         let ui_scale = 1.0;
@@ -257,14 +258,15 @@ impl PassManager {
     /// This is used for dynamic depth control in Phase 2.
     pub fn create_z_bind_group(&self, z_index: f32, queue: &wgpu::Queue) -> wgpu::BindGroup {
         upload_buffer(queue, &self.z_index_buffer, 0, bytemuck::bytes_of(&z_index));
-        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("z-index-bg"),
-            layout: self.solid_direct.z_index_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "z-index-bg",
+            self.solid_direct.z_index_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.z_index_buffer.as_entire_binding(),
             }],
-        })
+        )
     }
 
     /// Create a z-index bind group backed by a dedicated uniform buffer for this draw group.
@@ -280,14 +282,15 @@ impl PassManager {
             bytemuck::bytes_of(&z_index),
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
-        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("z-index-bg-group"),
-            layout: self.solid_direct.z_index_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let bg = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "z-index-bg-group",
+            self.solid_direct.z_index_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: z_buf.as_entire_binding(),
             }],
-        });
+        );
         (bg, z_buf)
     }
 

@@ -224,10 +224,11 @@ impl PassManager {
             0,
             bytemuck::cast_slice(&stops),
         );
-        let bg_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bg-bind"),
-            layout: self.bg.bgl(),
-            entries: &[
+        let bg_bind = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "bg-bind",
+            self.bg.bgl(),
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: self.bg_param_buffer.as_entire_binding(),
@@ -237,7 +238,7 @@ impl PassManager {
                     resource: self.bg_stops_buffer.as_entire_binding(),
                 },
             ],
-        });
+        );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("bg-grad-pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -301,10 +302,11 @@ impl PassManager {
             0,
             bytemuck::cast_slice(&stops),
         );
-        let bg_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bg-bind-solid"),
-            layout: self.bg.bgl(),
-            entries: &[
+        let bg_bind = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "bg-bind-solid",
+            self.bg.bgl(),
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: self.bg_param_buffer.as_entire_binding(),
@@ -314,7 +316,7 @@ impl PassManager {
                     resource: self.bg_stops_buffer.as_entire_binding(),
                 },
             ],
-        });
+        );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("bg-solid-pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -394,10 +396,11 @@ impl PassManager {
             0,
             bytemuck::cast_slice(&stops),
         );
-        let bg_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bg-bind"),
-            layout: self.bg.bgl(),
-            entries: &[
+        let bg_bind = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "bg-bind",
+            self.bg.bgl(),
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: self.bg_param_buffer.as_entire_binding(),
@@ -407,7 +410,7 @@ impl PassManager {
                     resource: self.bg_stops_buffer.as_entire_binding(),
                 },
             ],
-        });
+        );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("bg-grad-pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

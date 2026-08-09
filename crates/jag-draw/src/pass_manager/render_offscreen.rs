@@ -58,14 +58,15 @@ impl PassManager {
         transparent_text_z: &std::collections::HashSet<i32>,
     ) {
         // Create viewport bind group
-        let vp_bg_off = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("vp-bg-offscreen"),
-            layout: self.solid_offscreen.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg_off = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "vp-bg-offscreen",
+            self.solid_offscreen.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
 
         // Offscreen path - unified rendering to offscreen target
         let targets = self.alloc_targets(allocator, width.max(1), height.max(1));
@@ -229,14 +230,15 @@ impl PassManager {
                 bytemuck::cast_slice(&self.shadow_instances),
                 wgpu::BufferUsages::VERTEX,
             );
-            let shadow_vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("shadow-composite-vp-bg-offscreen"),
-                layout: self.shadow_composite.viewport_bgl(),
-                entries: &[wgpu::BindGroupEntry {
+            let shadow_vp_bg = crate::gpu_bindings::create_bind_group(
+                &self.device,
+                "shadow-composite-vp-bg-offscreen",
+                self.shadow_composite.viewport_bgl(),
+                &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: self.vp_buffer.as_entire_binding(),
                 }],
-            });
+            );
 
             // Snapshot of the offscreen scene target (pre-shadow). Same size +
             // format as the scene target; only needs sampling + copy-dst.
@@ -252,14 +254,15 @@ impl PassManager {
                 &snapshot.texture,
                 [width.max(1), height.max(1)],
             );
-            let shadow_dst_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("shadow-composite-dst-bg"),
-                layout: self.shadow_composite.dst_bgl(),
-                entries: &[wgpu::BindGroupEntry {
+            let shadow_dst_bg = crate::gpu_bindings::create_bind_group(
+                &self.device,
+                "shadow-composite-dst-bg",
+                self.shadow_composite.dst_bgl(),
+                &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(&snapshot.view),
                 }],
-            });
+            );
 
             {
                 let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
