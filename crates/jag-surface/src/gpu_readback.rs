@@ -50,7 +50,9 @@ impl ReadbackBuffer {
             .context("readback mapping callback did not complete")?
             .context("GPU readback buffer mapping failed")?;
 
-        let mapped = slice.get_mapped_range();
+        let mapped = slice
+            .get_mapped_range()
+            .context("GPU readback mapped range is unavailable")?;
         let pixels = self.layout.strip_padding(&mapped);
         drop(mapped);
         self.buffer.unmap();
@@ -59,7 +61,7 @@ impl ReadbackBuffer {
 }
 
 pub(crate) fn wait_for_gpu(device: &wgpu::Device) {
-    let _ = device.poll(wgpu::Maintain::Wait);
+    let _ = device.poll(wgpu::PollType::wait_indefinitely());
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

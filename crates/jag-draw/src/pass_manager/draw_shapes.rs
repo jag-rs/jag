@@ -115,6 +115,7 @@ impl PassManager {
                 label: Some("image-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target_view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
@@ -243,6 +244,7 @@ impl PassManager {
                 label: Some("overlay-rect-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target_view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
@@ -372,6 +374,7 @@ impl PassManager {
                 label: Some("scrim-rect-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target_view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,

@@ -17,7 +17,7 @@ license = "MIT"
 repository = "https://github.com/jag-rs/jag"
 
 [workspace.dependencies]
-wgpu = "0.19"
+wgpu = "=30.0.0"
 palette = "0.7"
 bytemuck = { version = "1.14", features = ["derive"] }
 anyhow = "1"

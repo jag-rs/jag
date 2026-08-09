@@ -10,8 +10,8 @@ pub enum DesktopGpuError {
     UnsupportedPlatform,
     #[error("failed to create the desktop presentation surface: {0}")]
     CreateSurface(#[from] wgpu::CreateSurfaceError),
-    #[error("no native GPU adapter supports the desktop presentation surface")]
-    AdapterUnavailable,
+    #[error("no native GPU adapter supports the desktop presentation surface: {0}")]
+    AdapterUnavailable(#[from] wgpu::RequestAdapterError),
     #[error("failed to create the desktop GPU device: {0}")]
     RequestDevice(#[from] wgpu::RequestDeviceError),
     #[error("surface capabilities contain no {0}")]
@@ -53,21 +53,20 @@ impl<'window> DesktopGpu<'window> {
         if backends.is_empty() {
             return Err(DesktopGpuError::UnsupportedPlatform);
         }
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends,
-            ..Default::default()
-        });
+        let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        instance_descriptor.backends = backends;
+        let instance = wgpu::Instance::new(instance_descriptor);
         let surface = instance.create_surface(target)?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 force_fallback_adapter: false,
                 compatible_surface: Some(&surface),
+                apply_limit_buckets: false,
             })
-            .await
-            .ok_or(DesktopGpuError::AdapterUnavailable)?;
+            .await?;
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
+            .request_device(&wgpu::DeviceDescriptor::default())
             .await?;
         let config = try_make_surface_config(&adapter, &surface, width, height)?;
         surface.configure(&device, &config);
@@ -180,6 +179,7 @@ fn surface_config_from_capabilities(
     Ok(wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: selected.format,
+        color_space: wgpu::SurfaceColorSpace::Auto,
         width,
         height,
         present_mode: selected.present_mode,
@@ -236,6 +236,7 @@ mod tests {
                 wgpu::TextureFormat::Rgba8Unorm,
                 wgpu::TextureFormat::Bgra8UnormSrgb,
             ],
+            format_capabilities: vec![],
             present_modes: vec![wgpu::PresentMode::Immediate, wgpu::PresentMode::Fifo],
             alpha_modes: vec![
                 wgpu::CompositeAlphaMode::Inherit,
@@ -251,6 +252,7 @@ mod tests {
         assert_eq!(config.format, wgpu::TextureFormat::Bgra8UnormSrgb);
         assert_eq!(config.present_mode, wgpu::PresentMode::Fifo);
         assert_eq!(config.alpha_mode, wgpu::CompositeAlphaMode::Opaque);
+        assert_eq!(config.color_space, wgpu::SurfaceColorSpace::Auto);
         assert_eq!((config.width, config.height), (800, 600));
     }
 

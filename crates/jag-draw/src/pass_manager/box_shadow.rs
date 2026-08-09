@@ -249,6 +249,7 @@ impl PassManager {
                     label: Some("shadow-mask-pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &mask_view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -294,6 +295,7 @@ impl PassManager {
                     label: Some("shadow-blur-h"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &ping_view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -327,6 +329,7 @@ impl PassManager {
                     label: Some("shadow-blur-v"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &mask_view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -468,6 +471,7 @@ impl PassManager {
                     label: Some("shadow-cutout"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &mask_view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
@@ -505,6 +509,7 @@ impl PassManager {
                     label: Some("shadow-composite"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: target_view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,

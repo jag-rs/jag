@@ -523,7 +523,7 @@ impl JagSurface {
 
         // Submit and present
         crate::gpu_commands::submit_command_encoder(&self.queue, encoder);
-        frame.present();
+        self.queue.present(frame);
         if let Some((gpu_scene, transparent_gpu_scene)) = reusable_gpu_scenes {
             wait_for_gpu(&self.device);
             self.allocator.release_buffer(gpu_scene.vertex);

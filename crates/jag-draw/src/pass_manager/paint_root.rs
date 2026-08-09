@@ -35,6 +35,7 @@ impl PassManager {
                 label: Some("solid-offscreen-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &targets.color.view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(clear_color),
@@ -70,6 +71,7 @@ impl PassManager {
                 label: Some("composite-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: surface_view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: match clear {
@@ -115,6 +117,7 @@ impl PassManager {
                     label: Some("bg-solid-pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: surface_view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -248,6 +251,7 @@ impl PassManager {
                 label: Some("bg-grad-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: surface_view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -327,6 +331,7 @@ impl PassManager {
                 label: Some("bg-solid-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: surface_view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -422,6 +427,7 @@ impl PassManager {
                 label: Some("bg-grad-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: surface_view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),

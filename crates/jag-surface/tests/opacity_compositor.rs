@@ -34,10 +34,10 @@ fn pixel(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
 fn test_gpu() -> Option<(Arc<wgpu::Device>, Arc<wgpu::Queue>, JagSurface)> {
     let instance = wgpu::Instance::default();
     let adapter =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))?;
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
             .ok()?;
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()?;
     let device = Arc::new(device);
     let queue = Arc::new(queue);
     let mut surface = JagSurface::new(
@@ -60,14 +60,13 @@ fn physical(logical: f32, scale: f32) -> u32 {
 #[test]
 fn mask_group_composites_all_css_operators_before_applying_content() {
     let instance = wgpu::Instance::default();
-    let Some(adapter) =
+    let Ok(adapter) =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
     else {
         return;
     };
     let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
-            .unwrap();
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
     let device = Arc::new(device);
     let queue = Arc::new(queue);
     let upload_mask = |label: &'static str, alpha: u8| {
@@ -88,7 +87,7 @@ fn mask_group_composites_all_css_operators_before_applying_content() {
         queue.write_texture(
             texture.as_image_copy(),
             &[0, 0, 0, alpha],
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4),
                 rows_per_image: Some(1),
@@ -217,18 +216,17 @@ fn assert_alpha_near(actual: [u8; 4], expected: u8) {
 #[test]
 fn overlapping_and_nested_descendants_composite_each_group_once() {
     let instance = wgpu::Instance::default();
-    let Some(adapter) =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-    else {
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::LowPower,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+        apply_limit_buckets: false,
+    })) else {
         eprintln!("skipping compositor render test: no GPU adapter available");
         return;
     };
     let Ok((device, queue)) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
     else {
         eprintln!("skipping compositor render test: GPU device unavailable");
         return;
@@ -416,14 +414,13 @@ fn vector_svg_opacity_group_preserves_z_near_bottom_at_device_scale() {
 #[test]
 fn transformed_clip_bounds_nested_effect_layers_in_world_space() {
     let instance = wgpu::Instance::default();
-    let Some(adapter) =
+    let Ok(adapter) =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
     else {
         return;
     };
     let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
-            .unwrap();
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
     let mut surface = JagSurface::new(
         Arc::new(device),
         Arc::new(queue),
@@ -463,18 +460,16 @@ fn transformed_clip_bounds_nested_effect_layers_in_world_space() {
 #[test]
 fn blur_filter_spreads_surface_alpha_beyond_descendant_ink() {
     let instance = wgpu::Instance::default();
-    let Some(adapter) =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-    else {
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::LowPower,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+        apply_limit_buckets: false,
+    })) else {
         return;
     };
     let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
-            .unwrap();
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
     let mut surface = JagSurface::new(
         Arc::new(device),
         Arc::new(queue),
@@ -514,18 +509,16 @@ fn blur_filter_spreads_surface_alpha_beyond_descendant_ink() {
 #[test]
 fn color_matrix_filter_uses_srgb_and_preserves_alpha() {
     let instance = wgpu::Instance::default();
-    let Some(adapter) =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-    else {
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::LowPower,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+        apply_limit_buckets: false,
+    })) else {
         return;
     };
     let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
-            .unwrap();
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
     let mut surface = JagSurface::new(
         Arc::new(device),
         Arc::new(queue),
@@ -575,14 +568,13 @@ fn color_matrix_filter_uses_srgb_and_preserves_alpha() {
 #[test]
 fn drop_shadow_keeps_source_above_shifted_tinted_alpha() {
     let instance = wgpu::Instance::default();
-    let Some(adapter) =
+    let Ok(adapter) =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
     else {
         return;
     };
     let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
-            .unwrap();
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
     let mut surface = JagSurface::new(
         Arc::new(device),
         Arc::new(queue),
@@ -714,7 +706,7 @@ fn nested_mask_keeps_css_geometry_across_device_scales() {
         queue.write_texture(
             mask_texture.as_image_copy(),
             &[0, 0, 0, 255],
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4),
                 rows_per_image: Some(1),
@@ -769,14 +761,13 @@ fn nested_mask_keeps_css_geometry_across_device_scales() {
 #[test]
 fn backdrop_filter_snapshots_before_later_transparent_content() {
     let instance = wgpu::Instance::default();
-    let Some(adapter) =
+    let Ok(adapter) =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
     else {
         return;
     };
     let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
-            .unwrap();
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
     let mut surface = JagSurface::new(
         Arc::new(device),
         Arc::new(queue),
@@ -844,14 +835,13 @@ fn backdrop_filter_snapshots_before_later_transparent_content() {
 
 fn assert_backdrop_filter_captures_ancestor_framebuffer(filter_ancestor: bool) {
     let instance = wgpu::Instance::default();
-    let Some(adapter) =
+    let Ok(adapter) =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
     else {
         return;
     };
     let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
-            .unwrap();
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
     let mut surface = JagSurface::new(
         Arc::new(device),
         Arc::new(queue),
@@ -939,14 +929,13 @@ fn backdrop_filter_inside_filter_captures_the_group_framebuffer() {
 #[test]
 fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
     let instance = wgpu::Instance::default();
-    let Some(adapter) =
+    let Ok(adapter) =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
     else {
         return;
     };
     let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
-            .unwrap();
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
     let device = Arc::new(device);
     let queue = Arc::new(queue);
     let mask_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -965,14 +954,14 @@ fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
     });
     let mask_pixels = [255, 0, 0, 128].repeat(32);
     queue.write_texture(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture: &mask_texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
         &mask_pixels,
-        wgpu::ImageDataLayout {
+        wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(16),
             rows_per_image: Some(8),
@@ -998,14 +987,14 @@ fn resolved_texture_mask_applies_alpha_and_luminance_coverage() {
         view_formats: &[],
     }));
     queue.write_texture(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture: &url_texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
         &[0, 0, 0, 255, 0, 0, 0, 0],
-        wgpu::ImageDataLayout {
+        wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(8),
             rows_per_image: Some(1),

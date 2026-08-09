@@ -27,15 +27,24 @@ pub(crate) fn create_render_pipeline(
     device: &wgpu::Device,
     descriptor: RenderPipelineDescriptor<'_>,
 ) -> wgpu::RenderPipeline {
+    let buffers: Vec<_> = descriptor
+        .vertex
+        .buffers
+        .iter()
+        .cloned()
+        .map(Some)
+        .collect();
     let vertex = wgpu::VertexState {
         module: descriptor.vertex.module,
-        entry_point: descriptor.vertex.entry_point,
-        buffers: descriptor.vertex.buffers,
+        entry_point: Some(descriptor.vertex.entry_point),
+        buffers: &buffers,
+        compilation_options: Default::default(),
     };
     let fragment = descriptor.fragment.map(|state| wgpu::FragmentState {
         module: state.module,
-        entry_point: state.entry_point,
+        entry_point: Some(state.entry_point),
         targets: state.targets,
+        compilation_options: Default::default(),
     });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: descriptor.label,
@@ -45,7 +54,8 @@ pub(crate) fn create_render_pipeline(
         primitive: descriptor.primitive,
         depth_stencil: descriptor.depth_stencil,
         multisample: descriptor.multisample,
-        multiview: descriptor.multiview,
+        multiview_mask: descriptor.multiview,
+        cache: None,
     })
 }
 

@@ -125,8 +125,8 @@ impl BasicSolidRenderer {
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled,
-                    depth_compare,
+                    depth_write_enabled: Some(depth_write_enabled),
+                    depth_compare: Some(depth_compare),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),

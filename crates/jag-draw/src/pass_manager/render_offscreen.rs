@@ -173,6 +173,7 @@ impl PassManager {
                 label: Some("unified-offscreen-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &targets.color.view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(clear),
@@ -272,6 +273,7 @@ impl PassManager {
                         label: Some("unified-offscreen-shadow-composite-pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &targets.color.view,
+                            depth_slice: None,
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Load,
@@ -363,6 +365,7 @@ impl PassManager {
                         label: Some("unified-offscreen-transparent-pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &targets.color.view,
+                            depth_slice: None,
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Load,

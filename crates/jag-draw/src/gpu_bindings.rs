@@ -16,10 +16,11 @@ pub(crate) fn create_pipeline_layout(
     label: &str,
     bind_group_layouts: &[&wgpu::BindGroupLayout],
 ) -> wgpu::PipelineLayout {
+    let bind_group_layouts: Vec<_> = bind_group_layouts.iter().copied().map(Some).collect();
     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
-        bind_group_layouts,
-        push_constant_ranges: &[],
+        bind_group_layouts: &bind_group_layouts,
+        immediate_size: 0,
     })
 }
 

@@ -196,6 +196,7 @@ impl PassManager {
                     label: Some("scrim-stencil-mask-pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: target_view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
@@ -272,6 +273,7 @@ impl PassManager {
                     label: Some("scrim-stencil-pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: target_view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Load,
@@ -463,6 +465,7 @@ impl PassManager {
                 label: Some("backdrop-blur-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &target.view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,

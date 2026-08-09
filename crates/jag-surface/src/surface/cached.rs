@@ -113,7 +113,7 @@ impl JagSurface {
         }
 
         crate::gpu_commands::submit_command_encoder(&self.queue, encoder);
-        frame.present();
+        self.queue.present(frame);
 
         // Reset scroll offset for subsequent full rebuilds
         self.pass.set_scroll_offset([0.0, 0.0]);

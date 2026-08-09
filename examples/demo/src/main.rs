@@ -139,8 +139,9 @@ fn main() -> anyhow::Result<()> {
                     return;
                 }
                 let frame = match gpu.surface().get_current_texture() {
-                    Ok(f) => f,
-                    Err(_) => {
+                    jag_draw::wgpu::CurrentSurfaceTexture::Success(frame)
+                    | jag_draw::wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+                    _ => {
                         window.request_redraw();
                         return;
                     }

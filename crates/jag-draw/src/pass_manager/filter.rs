@@ -40,6 +40,7 @@ impl PassManager {
                 label: Some("mask-filter-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -170,6 +171,7 @@ impl PassManager {
                 label: Some("mask-compositor-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -232,6 +234,7 @@ impl PassManager {
                 label: Some("drop-shadow-filter-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -273,6 +276,7 @@ impl PassManager {
                 label: Some("color-filter-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -329,6 +333,7 @@ impl PassManager {
                     label: Some("filter-blur-horizontal"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &ping_view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -353,6 +358,7 @@ impl PassManager {
                     label: Some("filter-blur-vertical"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &output_view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),

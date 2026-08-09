@@ -218,6 +218,7 @@ impl PassManager {
                 label: Some("rounded-rect-fill-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target_view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
@@ -288,6 +289,7 @@ impl PassManager {
                     label: Some("smaa-edge-pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &edges.view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -308,6 +310,7 @@ impl PassManager {
                     label: Some("smaa-blend-pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &weights.view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -328,6 +331,7 @@ impl PassManager {
                     label: Some("smaa-resolve-pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: dst_view,
+                        depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),

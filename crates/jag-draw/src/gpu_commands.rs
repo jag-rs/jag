@@ -26,6 +26,7 @@ impl CommandEncoderExt for wgpu::CommandEncoder {
             depth_stencil_attachment: descriptor.depth_stencil_attachment,
             timestamp_writes: descriptor.timestamp_writes,
             occlusion_query_set: descriptor.occlusion_query_set,
+            multiview_mask: None,
         };
         self.begin_render_pass(&descriptor)
     }

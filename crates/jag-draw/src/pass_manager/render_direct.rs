@@ -189,6 +189,7 @@ impl PassManager {
                 label: Some("unified-render-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: surface_view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: if preserve_surface {

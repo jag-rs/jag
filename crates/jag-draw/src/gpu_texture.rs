@@ -44,7 +44,7 @@ pub fn upload_texture_2d(
     data: &[u8],
 ) {
     queue.write_texture(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture,
             mip_level: 0,
             origin: wgpu::Origin3d {
@@ -55,7 +55,7 @@ pub fn upload_texture_2d(
             aspect: wgpu::TextureAspect::All,
         },
         data,
-        wgpu::ImageDataLayout {
+        wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(bytes_per_row),
             rows_per_image: Some(size[1]),
@@ -75,13 +75,13 @@ pub fn copy_texture_2d(
     size: [u32; 2],
 ) {
     encoder.copy_texture_to_texture(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture: source,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture: destination,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
@@ -103,15 +103,15 @@ pub fn copy_texture_to_buffer_2d(
     size: [u32; 2],
 ) {
     encoder.copy_texture_to_buffer(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture: source,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        wgpu::ImageCopyBuffer {
+        wgpu::TexelCopyBufferInfo {
             buffer: destination,
-            layout: wgpu::ImageDataLayout {
+            layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(padded_bytes_per_row),
                 rows_per_image: Some(size[1]),
