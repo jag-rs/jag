@@ -1211,6 +1211,24 @@ impl JagTextProvider {
         }
     }
 
+    fn browser_stem_embolden_px(&self, run: &crate::scene::TextRun) -> f32 {
+        if !matches!(self.antialiasing, TextAntialiasing::Grayscale) {
+            return 0.0;
+        }
+
+        // CoreText/Chromium grayscale text retains slightly more outline ink
+        // than Swash at mobile sizes. Apply the measured 0.1 CSS-pixel stem
+        // darkening in physical pixels, without changing advances, CSS weight,
+        // or authored color. Clamp malformed scale ratios defensively.
+        const STEM_DARKENING_CSS_PX: f32 = 0.1;
+        let device_scale = if run.logical_size > 0.0 {
+            (run.size / run.logical_size).clamp(1.0, 4.0)
+        } else {
+            1.0
+        };
+        STEM_DARKENING_CSS_PX * device_scale
+    }
+
     /// Load a `FontFace` from a `fontdb` face entry.
     fn load_face_from_db(face: &fontdb::FaceInfo) -> Option<jag_text::FontFace> {
         use fontdb::Source;
@@ -1987,11 +2005,15 @@ impl TextProvider for JagTextProvider {
         // Build variation settings for variable fonts (wght, opsz, ital, slnt).
         let requested_weight = run.weight.clamp(100.0, 900.0);
         let raw_variations = Self::build_variations(requested_weight, run, run.style);
-        let renderer = Render::new(&[
+        let mut renderer = Render::new(&[
             Source::Outline,
             Source::Bitmap(StrikeWith::BestFit),
             Source::ColorBitmap(StrikeWith::BestFit),
         ]);
+        let stem_embolden = self.browser_stem_embolden_px(run);
+        if stem_embolden > 0.0 {
+            renderer.embolden(stem_embolden);
+        }
 
         // Get emoji font bytes if available (we'll create FontRef per-use due to lifetime constraints)
         let emoji_bytes = self.emoji_font.as_ref().map(|f| f.as_bytes());
@@ -2380,7 +2402,30 @@ mod tests {
     }
 
     #[test]
-    fn geist_mobile_specimens_emit_channel_equal_coverage_at_12_14_16_px() {
+    fn ios_stem_darkening_tracks_device_scale_without_affecting_desktop() {
+        let bytes = include_bytes!("../../../fonts/Geist/Geist-VariableFont_wght.ttf");
+        let mut provider = JagTextProvider::from_bytes(bytes, SubpixelOrientation::RGB)
+            .expect("load bundled Geist variable font");
+        let mut run = crate::scene::TextRun {
+            text: "Medium".to_string(),
+            pos: [0.0, 0.0],
+            size: 28.0,
+            logical_size: 14.0,
+            color: crate::scene::ColorLinPremul::rgba(10, 10, 10, 255),
+            weight: 500.0,
+            style: crate::scene::FontStyle::Normal,
+            family: None,
+        };
+
+        assert_eq!(provider.browser_stem_embolden_px(&run), 0.0);
+        provider.antialiasing = TextAntialiasing::Grayscale;
+        assert!((provider.browser_stem_embolden_px(&run) - 0.2).abs() < f32::EPSILON);
+        run.size = 42.0;
+        assert!((provider.browser_stem_embolden_px(&run) - 0.3).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn geist_mobile_specimens_preserve_weight_and_grayscale_at_12_14_16_px() {
         let bytes = include_bytes!("../../../fonts/Geist/Geist-VariableFont_wght.ttf");
         let mut provider = JagTextProvider::from_bytes(bytes, SubpixelOrientation::RGB)
             .expect("load bundled Geist variable font");
@@ -2410,43 +2455,42 @@ mod tests {
 
         for device_scale in [2.0, 3.0] {
             for css_size in [12.0, 14.0, 16.0] {
-                let run = crate::scene::TextRun {
-                    text: "Hamburgefontsiv 012345".to_string(),
-                    pos: [0.0, 0.0],
-                    size: css_size * device_scale,
-                    logical_size: css_size,
-                    color: crate::scene::ColorLinPremul::rgba(115, 115, 115, 255),
-                    weight: 400.0,
-                    style: crate::scene::FontStyle::Normal,
-                    family: None,
-                };
-                let glyphs = provider.rasterize_run(&run);
-                assert!(
-                    !glyphs.is_empty(),
-                    "{css_size}px @ {device_scale}x specimen must rasterize"
-                );
-
-                let mut covered_pixels = 0;
-                for glyph in glyphs {
-                    let GlyphMask::Subpixel(mask) = glyph.mask else {
-                        panic!("plain Geist text must use a coverage mask");
+                let mut weight_ink = Vec::new();
+                for weight in [400.0, 500.0, 700.0] {
+                    let run = crate::scene::TextRun {
+                        text: "Hamburgefontsiv 012345".to_string(),
+                        pos: [0.0, 0.0],
+                        size: css_size * device_scale,
+                        logical_size: css_size,
+                        color: crate::scene::ColorLinPremul::rgba(115, 115, 115, 255),
+                        weight,
+                        style: crate::scene::FontStyle::Normal,
+                        family: None,
                     };
-                    for pixel in mask.data.chunks_exact(4) {
-                        assert_eq!(
-                            pixel[0], pixel[1],
-                            "{css_size}px @ {device_scale}x red/green fringe"
-                        );
-                        assert_eq!(
-                            pixel[1], pixel[2],
-                            "{css_size}px @ {device_scale}x green/blue fringe"
-                        );
-                        assert_eq!(pixel[3], 0, "coverage-mask alpha stays unused");
-                        covered_pixels += usize::from(pixel[0] > 0);
+                    let glyphs = provider.rasterize_run(&run);
+                    assert!(
+                        !glyphs.is_empty(),
+                        "{weight} weight at {css_size}px @ {device_scale}x must rasterize"
+                    );
+
+                    let mut coverage_ink = 0_u64;
+                    for glyph in glyphs {
+                        let GlyphMask::Subpixel(mask) = glyph.mask else {
+                            panic!("plain Geist text must use a coverage mask");
+                        };
+                        for pixel in mask.data.chunks_exact(4) {
+                            assert_eq!(pixel[0], pixel[1], "red/green fringe at weight {weight}");
+                            assert_eq!(pixel[1], pixel[2], "green/blue fringe at weight {weight}");
+                            assert_eq!(pixel[3], 0, "coverage-mask alpha stays unused");
+                            coverage_ink += u64::from(pixel[0]);
+                        }
                     }
+                    assert!(coverage_ink > 0, "specimen must retain visible ink");
+                    weight_ink.push(coverage_ink);
                 }
                 assert!(
-                    covered_pixels > 0,
-                    "{css_size}px @ {device_scale}x specimen must retain visible ink"
+                    weight_ink.windows(2).all(|pair| pair[0] < pair[1]),
+                    "400/500/700 coverage must increase at {css_size}px @ {device_scale}x"
                 );
             }
         }
