@@ -86,16 +86,22 @@ impl GraphicsEngine {
 }
 
 /// Choose an sRGB surface format when available; otherwise, pick the first format.
+pub fn select_srgb_surface_format(formats: &[wgpu::TextureFormat]) -> Option<wgpu::TextureFormat> {
+    formats
+        .iter()
+        .copied()
+        .find(wgpu::TextureFormat::is_srgb)
+        .or_else(|| formats.first().copied())
+}
+
+/// Query a surface and choose the format with [`select_srgb_surface_format`].
 pub fn choose_srgb_surface_format(
     adapter: &wgpu::Adapter,
     surface: &wgpu::Surface,
 ) -> wgpu::TextureFormat {
     let caps = surface.get_capabilities(adapter);
-    caps.formats
-        .iter()
-        .copied()
-        .find(|f| f.is_srgb())
-        .unwrap_or(caps.formats[0])
+    select_srgb_surface_format(&caps.formats)
+        .expect("wgpu surface capabilities must expose at least one format")
 }
 
 /// Create a surface configuration for the given size, favoring FIFO present mode when present.
