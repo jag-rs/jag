@@ -132,13 +132,24 @@ impl PassManager {
             {
                 let base_w = w.max(1) as f32;
                 let base_h = h.max(1) as f32;
-                let scale = (max_size[0] / base_w).min(max_size[1] / base_h).max(0.0);
+                let plan = crate::svg_scale::svg_raster_plan(
+                    [base_w, base_h],
+                    *max_size,
+                    inv_logical.recip(),
+                    *transform,
+                );
 
-                if let Some((view_scaled, _sw, _sh)) =
-                    self.rasterize_svg_to_view(std::path::Path::new(path), scale, *style, queue)
-                {
-                    let draw_w = base_w * scale;
-                    let draw_h = base_h * scale;
+                if let Some((plan, (view_scaled, _sw, _sh))) = plan.and_then(|plan| {
+                    self.rasterize_svg_to_view(
+                        std::path::Path::new(path),
+                        plan.raster_scale,
+                        *style,
+                        queue,
+                    )
+                    .map(|view| (plan, view))
+                }) {
+                    let draw_w = base_w * plan.layout_scale;
+                    let draw_h = base_h * plan.layout_scale;
                     let transformed_quad =
                         transformed_quad_points(*origin, [draw_w, draw_h], *transform);
                     svg_views.push((

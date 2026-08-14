@@ -146,6 +146,7 @@ mod scene;
 mod svg;
 mod svg_fontdb;
 mod svg_geometry;
+mod svg_scale;
 mod text;
 mod text_layout;
 mod upload;
