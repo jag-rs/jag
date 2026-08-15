@@ -43,6 +43,26 @@ pub enum SubpixelOrientation {
     BGR,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextAntialiasing {
+    Subpixel,
+    Grayscale,
+}
+
+impl TextAntialiasing {
+    fn for_target_os(target_os: &str) -> Self {
+        if target_os == "ios" {
+            Self::Grayscale
+        } else {
+            Self::Subpixel
+        }
+    }
+
+    fn platform_default() -> Self {
+        Self::for_target_os(std::env::consts::OS)
+    }
+}
+
 /// Storage format for a subpixel coverage mask.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MaskFormat {
@@ -181,6 +201,17 @@ fn strengthen_subpixel_rgba8(data: &[u8]) -> Vec<u8> {
         px[0] = strengthen_coverage_u8(px[0]);
         px[1] = strengthen_coverage_u8(px[1]);
         px[2] = strengthen_coverage_u8(px[2]);
+    }
+    out
+}
+
+fn strengthen_grayscale_subpixel_rgba8(data: &[u8]) -> Vec<u8> {
+    let mut out = strengthen_subpixel_rgba8(data);
+    for px in out.chunks_exact_mut(4) {
+        let coverage = ((u16::from(px[0]) + u16::from(px[1]) + u16::from(px[2])) / 3) as u8;
+        px[0] = coverage;
+        px[1] = coverage;
+        px[2] = coverage;
     }
     out
 }
@@ -893,6 +924,7 @@ pub struct JagTextProvider {
     /// Optional emoji font for fallback when primary font lacks emoji glyphs.
     emoji_font: Option<jag_text::FontFace>,
     orientation: SubpixelOrientation,
+    antialiasing: TextAntialiasing,
     /// System font database kept alive for on-demand font resolution.
     /// `None` when the provider was constructed from raw bytes.
     font_db: Option<fontdb::Database>,
@@ -921,6 +953,7 @@ impl JagTextProvider {
             mono_font: None,
             emoji_font: None,
             orientation,
+            antialiasing: TextAntialiasing::platform_default(),
             font_db: None,
             font_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             char_fallback_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -943,6 +976,7 @@ impl JagTextProvider {
             mono_font: None,
             emoji_font: Some(emoji_font),
             orientation,
+            antialiasing: TextAntialiasing::platform_default(),
             font_db: None,
             font_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             char_fallback_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -1130,11 +1164,69 @@ impl JagTextProvider {
             mono_font,
             emoji_font,
             orientation,
+            antialiasing: TextAntialiasing::platform_default(),
             font_db: Some(db),
             font_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             char_fallback_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
             font_generation: std::sync::atomic::AtomicU64::new(0),
         })
+    }
+
+    fn swash_glyph_mask(
+        &self,
+        content: swash::scale::image::Content,
+        width: u32,
+        height: u32,
+        data: &[u8],
+    ) -> GlyphMask {
+        use swash::scale::image::Content;
+
+        match content {
+            Content::Mask => {
+                let mask = match self.antialiasing {
+                    TextAntialiasing::Subpixel => {
+                        grayscale_to_subpixel_rgb(width, height, data, self.orientation)
+                    }
+                    TextAntialiasing::Grayscale => grayscale_to_rgb_equal(width, height, data),
+                };
+                GlyphMask::Subpixel(mask)
+            }
+            Content::SubpixelMask => {
+                let data = match self.antialiasing {
+                    TextAntialiasing::Subpixel => strengthen_subpixel_rgba8(data),
+                    TextAntialiasing::Grayscale => strengthen_grayscale_subpixel_rgba8(data),
+                };
+                GlyphMask::Subpixel(SubpixelMask {
+                    width,
+                    height,
+                    format: MaskFormat::Rgba8,
+                    data,
+                })
+            }
+            Content::Color => GlyphMask::Color(ColorMask {
+                width,
+                height,
+                data: data.to_vec(),
+            }),
+        }
+    }
+
+    fn browser_stem_embolden_px(&self, run: &crate::scene::TextRun) -> f32 {
+        if !matches!(self.antialiasing, TextAntialiasing::Grayscale) {
+            return 0.0;
+        }
+
+        // CoreText/Chromium grayscale text retains slightly more outline ink
+        // than Swash at mobile sizes. Apply the measured 0.1 CSS-pixel stem
+        // darkening in physical pixels, without changing advances, CSS weight,
+        // or authored color. Clamp malformed scale ratios defensively.
+        const STEM_DARKENING_CSS_PX: f32 = 0.1;
+        let device_scale = if run.logical_size > 0.0 {
+            (run.size / run.logical_size).clamp(1.0, 4.0)
+        } else {
+            1.0
+        };
+        STEM_DARKENING_CSS_PX * device_scale
     }
 
     /// Load a `FontFace` from a `fontdb` face entry.
@@ -1904,7 +1996,6 @@ impl TextProvider for JagTextProvider {
     fn rasterize_run(&self, run: &crate::scene::TextRun) -> Vec<RasterizedGlyph> {
         use jag_text::shaping::TextShaper;
         use swash::FontRef;
-        use swash::scale::image::Content;
         use swash::scale::{Render, ScaleContext, Source, StrikeWith};
 
         let size = run.size.max(1.0);
@@ -1914,11 +2005,15 @@ impl TextProvider for JagTextProvider {
         // Build variation settings for variable fonts (wght, opsz, ital, slnt).
         let requested_weight = run.weight.clamp(100.0, 900.0);
         let raw_variations = Self::build_variations(requested_weight, run, run.style);
-        let renderer = Render::new(&[
+        let mut renderer = Render::new(&[
             Source::Outline,
             Source::Bitmap(StrikeWith::BestFit),
             Source::ColorBitmap(StrikeWith::BestFit),
         ]);
+        let stem_embolden = self.browser_stem_embolden_px(run);
+        if stem_embolden > 0.0 {
+            renderer.embolden(stem_embolden);
+        }
 
         // Get emoji font bytes if available (we'll create FontRef per-use due to lifetime constraints)
         let emoji_bytes = self.emoji_font.as_ref().map(|f| f.as_bytes());
@@ -2006,25 +2101,7 @@ impl TextProvider for JagTextProvider {
                         if w == 0 || h == 0 {
                             return None;
                         }
-                        let mask = match img.content {
-                            Content::Mask => GlyphMask::Subpixel(grayscale_to_subpixel_rgb(
-                                w,
-                                h,
-                                &img.data,
-                                self.orientation,
-                            )),
-                            Content::SubpixelMask => GlyphMask::Subpixel(SubpixelMask {
-                                width: w,
-                                height: h,
-                                format: MaskFormat::Rgba8,
-                                data: strengthen_subpixel_rgba8(&img.data),
-                            }),
-                            Content::Color => GlyphMask::Color(ColorMask {
-                                width: w,
-                                height: h,
-                                data: img.data.clone(),
-                            }),
-                        };
+                        let mask = self.swash_glyph_mask(img.content, w, h, &img.data);
                         let ox = segment_x
                             + glyph_x_adjust
                             + glyph_pos.x_offset
@@ -2049,25 +2126,7 @@ impl TextProvider for JagTextProvider {
                     let w = img.placement.width;
                     let h = img.placement.height;
                     if w > 0 && h > 0 {
-                        let mask = match img.content {
-                            Content::Mask => GlyphMask::Subpixel(grayscale_to_subpixel_rgb(
-                                w,
-                                h,
-                                &img.data,
-                                self.orientation,
-                            )),
-                            Content::SubpixelMask => GlyphMask::Subpixel(SubpixelMask {
-                                width: w,
-                                height: h,
-                                format: MaskFormat::Rgba8,
-                                data: strengthen_subpixel_rgba8(&img.data),
-                            }),
-                            Content::Color => GlyphMask::Color(ColorMask {
-                                width: w,
-                                height: h,
-                                data: img.data.clone(),
-                            }),
-                        };
+                        let mask = self.swash_glyph_mask(img.content, w, h, &img.data);
 
                         let ox = segment_x
                             + glyph_x_adjust
@@ -2324,6 +2383,127 @@ mod tests {
         assert_eq!(mask.data[4], mask.data[5]);
         assert_eq!(mask.data[5], mask.data[6]);
         assert_eq!(&mask.data[8..12], &[255, 255, 255, 0]);
+    }
+
+    #[test]
+    fn ios_selects_grayscale_coverage_without_changing_desktop_policy() {
+        assert_eq!(
+            TextAntialiasing::for_target_os("ios"),
+            TextAntialiasing::Grayscale
+        );
+        assert_eq!(
+            TextAntialiasing::for_target_os("macos"),
+            TextAntialiasing::Subpixel
+        );
+        assert_eq!(
+            TextAntialiasing::for_target_os("windows"),
+            TextAntialiasing::Subpixel
+        );
+    }
+
+    #[test]
+    fn ios_stem_darkening_tracks_device_scale_without_affecting_desktop() {
+        let bytes = include_bytes!("../../../fonts/Geist/Geist-VariableFont_wght.ttf");
+        let mut provider = JagTextProvider::from_bytes(bytes, SubpixelOrientation::RGB)
+            .expect("load bundled Geist variable font");
+        let mut run = crate::scene::TextRun {
+            text: "Medium".to_string(),
+            pos: [0.0, 0.0],
+            size: 28.0,
+            logical_size: 14.0,
+            color: crate::scene::ColorLinPremul::rgba(10, 10, 10, 255),
+            weight: 500.0,
+            style: crate::scene::FontStyle::Normal,
+            family: None,
+        };
+
+        assert_eq!(provider.browser_stem_embolden_px(&run), 0.0);
+        provider.antialiasing = TextAntialiasing::Grayscale;
+        assert!((provider.browser_stem_embolden_px(&run) - 0.2).abs() < f32::EPSILON);
+        run.size = 42.0;
+        assert!((provider.browser_stem_embolden_px(&run) - 0.3).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn geist_mobile_specimens_preserve_weight_and_grayscale_at_12_14_16_px() {
+        let bytes = include_bytes!("../../../fonts/Geist/Geist-VariableFont_wght.ttf");
+        let mut provider = JagTextProvider::from_bytes(bytes, SubpixelOrientation::RGB)
+            .expect("load bundled Geist variable font");
+
+        let baseline = provider.rasterize_run(&crate::scene::TextRun {
+            text: "Hamburgefontsiv 012345".to_string(),
+            pos: [0.0, 0.0],
+            size: 24.0,
+            logical_size: 12.0,
+            color: crate::scene::ColorLinPremul::rgba(115, 115, 115, 255),
+            weight: 400.0,
+            style: crate::scene::FontStyle::Normal,
+            family: None,
+        });
+        assert!(
+            baseline.iter().any(|glyph| match &glyph.mask {
+                GlyphMask::Subpixel(mask) => mask
+                    .data
+                    .chunks_exact(4)
+                    .any(|pixel| pixel[0] != pixel[1] || pixel[1] != pixel[2]),
+                GlyphMask::Color(_) => false,
+            }),
+            "the previous RGB policy must reproduce channel fringing"
+        );
+
+        provider.antialiasing = TextAntialiasing::Grayscale;
+
+        for device_scale in [2.0, 3.0] {
+            for css_size in [12.0, 14.0, 16.0] {
+                let mut weight_ink = Vec::new();
+                for weight in [400.0, 500.0, 700.0] {
+                    let run = crate::scene::TextRun {
+                        text: "Hamburgefontsiv 012345".to_string(),
+                        pos: [0.0, 0.0],
+                        size: css_size * device_scale,
+                        logical_size: css_size,
+                        color: crate::scene::ColorLinPremul::rgba(115, 115, 115, 255),
+                        weight,
+                        style: crate::scene::FontStyle::Normal,
+                        family: None,
+                    };
+                    let glyphs = provider.rasterize_run(&run);
+                    assert!(
+                        !glyphs.is_empty(),
+                        "{weight} weight at {css_size}px @ {device_scale}x must rasterize"
+                    );
+
+                    let mut coverage_ink = 0_u64;
+                    for glyph in glyphs {
+                        let GlyphMask::Subpixel(mask) = glyph.mask else {
+                            panic!("plain Geist text must use a coverage mask");
+                        };
+                        for pixel in mask.data.chunks_exact(4) {
+                            assert_eq!(pixel[0], pixel[1], "red/green fringe at weight {weight}");
+                            assert_eq!(pixel[1], pixel[2], "green/blue fringe at weight {weight}");
+                            assert_eq!(pixel[3], 0, "coverage-mask alpha stays unused");
+                            coverage_ink += u64::from(pixel[0]);
+                        }
+                    }
+                    assert!(coverage_ink > 0, "specimen must retain visible ink");
+                    weight_ink.push(coverage_ink);
+                }
+                assert!(
+                    weight_ink.windows(2).all(|pair| pair[0] < pair[1]),
+                    "400/500/700 coverage must increase at {css_size}px @ {device_scale}x"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn grayscale_subpixel_input_preserves_empty_and_full_coverage() {
+        let data =
+            strengthen_grayscale_subpixel_rgba8(&[0, 0, 0, 0, 255, 255, 255, 0, 64, 128, 192, 0]);
+        assert_eq!(&data[0..4], &[0, 0, 0, 0]);
+        assert_eq!(&data[4..8], &[255, 255, 255, 0]);
+        assert_eq!(data[8], data[9]);
+        assert_eq!(data[9], data[10]);
     }
 
     #[test]

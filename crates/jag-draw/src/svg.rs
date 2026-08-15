@@ -1,5 +1,6 @@
 use crate::scene::ColorLinPremul;
 use crate::svg_fontdb::{render_svg_to_pixmap, svg_font_db};
+use crate::svg_scale::RasterScaleKey;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,6 +13,10 @@ use std::sync::Arc;
 type SvgBytesProvider = fn(&Path) -> Option<&'static [u8]>;
 
 static SVG_BYTES_PROVIDER: std::sync::OnceLock<SvgBytesProvider> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+#[path = "svg_stroke_tests.rs"]
+mod svg_stroke_tests;
 
 /// Register a function that returns embedded SVG bytes for a given path.
 ///
@@ -91,80 +96,10 @@ impl From<SvgStyle> for SvgStyleKey {
     }
 }
 
-/// Bucketed scale factor used for raster cache keys.
-/// Provides more granular buckets to support icons at various sizes while maintaining cache efficiency.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ScaleBucket {
-    X025, // 0.25x
-    X05,  // 0.5x
-    X075, // 0.75x
-    X1,   // 1.0x
-    X125, // 1.25x
-    X15,  // 1.5x
-    X2,   // 2.0x
-    X25,  // 2.5x
-    X3,   // 3.0x
-    X4,   // 4.0x
-    X5,   // 5.0x
-    X6,   // 6.0x
-    X8,   // 8.0x
-}
-
-impl ScaleBucket {
-    pub fn from_scale(s: f32) -> Self {
-        // Bucket to nearest scale factor
-        if s < 0.375 {
-            ScaleBucket::X025
-        } else if s < 0.625 {
-            ScaleBucket::X05
-        } else if s < 0.875 {
-            ScaleBucket::X075
-        } else if s < 1.125 {
-            ScaleBucket::X1
-        } else if s < 1.375 {
-            ScaleBucket::X125
-        } else if s < 1.75 {
-            ScaleBucket::X15
-        } else if s < 2.25 {
-            ScaleBucket::X2
-        } else if s < 2.75 {
-            ScaleBucket::X25
-        } else if s < 3.5 {
-            ScaleBucket::X3
-        } else if s < 4.5 {
-            ScaleBucket::X4
-        } else if s < 5.5 {
-            ScaleBucket::X5
-        } else if s < 7.0 {
-            ScaleBucket::X6
-        } else {
-            ScaleBucket::X8
-        }
-    }
-
-    pub fn as_f32(self) -> f32 {
-        match self {
-            ScaleBucket::X025 => 0.25,
-            ScaleBucket::X05 => 0.5,
-            ScaleBucket::X075 => 0.75,
-            ScaleBucket::X1 => 1.0,
-            ScaleBucket::X125 => 1.25,
-            ScaleBucket::X15 => 1.5,
-            ScaleBucket::X2 => 2.0,
-            ScaleBucket::X25 => 2.5,
-            ScaleBucket::X3 => 3.0,
-            ScaleBucket::X4 => 4.0,
-            ScaleBucket::X5 => 5.0,
-            ScaleBucket::X6 => 6.0,
-            ScaleBucket::X8 => 8.0,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct CacheKey {
     path: PathBuf,
-    scale: ScaleBucket,
+    scale: RasterScaleKey,
     style: SvgStyleKey,
 }
 
@@ -258,7 +193,7 @@ impl SvgRasterCache {
         style: SvgStyle,
         queue: &wgpu::Queue,
     ) -> Option<(std::sync::Arc<wgpu::Texture>, u32, u32)> {
-        let scale_b = ScaleBucket::from_scale(scale);
+        let scale_b = RasterScaleKey::from_scale(scale)?;
         let style_key = SvgStyleKey::from(style);
         let key = CacheKey {
             path: path.to_path_buf(),
