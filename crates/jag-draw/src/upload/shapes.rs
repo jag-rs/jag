@@ -32,7 +32,12 @@ pub(crate) fn push_rounded_rect_aa(
         return;
     }
 
-    let edge = rounded_rect_loop(rrect);
+    // Center the coverage transition on the mathematical boundary. Keeping the
+    // fully opaque loop half a pixel inside gives the rasterizer a complete
+    // one-pixel alpha ramp instead of an outward-only fringe that can miss all
+    // sample centers.
+    let opaque_rrect = inset_rrect(rrect, ROUNDED_EDGE_AA);
+    let edge = rounded_rect_loop(opaque_rrect);
     if edge.len() < 3 {
         return;
     }
@@ -213,8 +218,12 @@ pub(crate) fn push_rounded_rect_stroke_aa(
         return;
     }
 
-    let outer_edge = rounded_rect_loop(rrect);
-    let inner_edge = rounded_rect_loop(inner);
+    // A stroke has two mathematical boundaries. Move each opaque loop toward
+    // the stroke centerline and fade across both boundaries. For a 1px stroke
+    // the opaque loops meet exactly at the centerline.
+    let opaque_inset = ROUNDED_EDGE_AA.min(w * 0.5);
+    let outer_edge = rounded_rect_loop(inset_rrect(rrect, opaque_inset));
+    let inner_edge = rounded_rect_loop(expand_rrect(inner, opaque_inset));
     if outer_edge.len() < 3 || inner_edge.len() != outer_edge.len() {
         return;
     }

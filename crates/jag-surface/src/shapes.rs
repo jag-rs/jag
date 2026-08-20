@@ -1,4 +1,4 @@
-use jag_draw::{Brush, FillRule, Path, PathCmd, Rect, RoundedRect};
+use jag_draw::{Brush, FillRule, Path, PathCmd, Rect, RoundedRadii, RoundedRect};
 
 use crate::canvas::Canvas;
 
@@ -136,28 +136,11 @@ pub fn draw_circle(
         canvas.circle(center, radius, f, z);
     }
     if let (Some(w), Some(sb)) = (stroke_width, stroke_brush) {
-        // Only solid strokes are supported for path-based circle stroke
-        if let Brush::Solid(col) = sb {
-            let segs = 48u32;
-            let mut path = Path {
-                cmds: Vec::new(),
-                fill_rule: FillRule::NonZero,
-            };
-            let mut first = true;
-            for i in 0..=segs {
-                let t = (i as f32) / (segs as f32);
-                let ang = std::f32::consts::TAU * t;
-                let x = center[0] + radius * ang.cos();
-                let y = center[1] + radius * ang.sin();
-                if first {
-                    path.cmds.push(PathCmd::MoveTo([x, y]));
-                    first = false;
-                } else {
-                    path.cmds.push(PathCmd::LineTo([x, y]));
-                }
-            }
-            path.cmds.push(PathCmd::Close);
-            canvas.stroke_path(path, w, col, z + 1);
+        if matches!(&sb, Brush::Solid(_)) {
+            // A circle is a uniformly rounded square. Reuse Jag's local
+            // single-sample rounded-stroke fringe instead of the generic path
+            // tessellator, whose hard edge aliases at small control sizes.
+            canvas.stroke_rounded_rect(circle_rounded_rect(center, radius), w, sb, z + 1);
         }
     }
 }
@@ -178,6 +161,15 @@ pub fn draw_ellipse(
     if let (Some(w), Some(sb)) = (stroke_width, stroke_brush) {
         // Only solid strokes are supported for path-based ellipse stroke
         if let Brush::Solid(col) = sb {
+            if (radii[0] - radii[1]).abs() <= f32::EPSILON {
+                canvas.stroke_rounded_rect(
+                    circle_rounded_rect(center, radii[0]),
+                    w,
+                    Brush::Solid(col),
+                    z + 1,
+                );
+                return;
+            }
             let segs = 64u32;
             let mut path = Path {
                 cmds: Vec::new(),
@@ -199,5 +191,22 @@ pub fn draw_ellipse(
             path.cmds.push(PathCmd::Close);
             canvas.stroke_path(path, w, col, z + 1);
         }
+    }
+}
+
+fn circle_rounded_rect(center: [f32; 2], radius: f32) -> RoundedRect {
+    RoundedRect {
+        rect: Rect {
+            x: center[0] - radius,
+            y: center[1] - radius,
+            w: radius * 2.0,
+            h: radius * 2.0,
+        },
+        radii: RoundedRadii {
+            tl: radius,
+            tr: radius,
+            br: radius,
+            bl: radius,
+        },
     }
 }

@@ -7,6 +7,48 @@ use super::tessellate::{
 use super::types::Vertex;
 use super::verts::apply_transform;
 
+const ELLIPSE_SEGMENTS: u32 = 64;
+const ELLIPSE_EDGE_AA: f32 = 0.5;
+
+fn transparent() -> [f32; 4] {
+    [0.0; 4]
+}
+
+fn push_ellipse_ring(
+    vertices: &mut Vec<Vertex>,
+    center: [f32; 2],
+    radii: [f32; 2],
+    color: [f32; 4],
+    z: f32,
+    t: Transform2D,
+) -> u16 {
+    let start = vertices.len() as u16;
+    for i in 0..ELLIPSE_SEGMENTS {
+        let theta = (i as f32) / (ELLIPSE_SEGMENTS as f32) * std::f32::consts::TAU;
+        let p = [
+            center[0] + radii[0] * theta.cos(),
+            center[1] + radii[1] * theta.sin(),
+        ];
+        vertices.push(Vertex {
+            pos: apply_transform(p, t),
+            color,
+            z_index: z,
+        });
+    }
+    start
+}
+
+fn stitch_ellipse_rings(indices: &mut Vec<u16>, inner: u16, outer: u16) {
+    for i in 0..ELLIPSE_SEGMENTS {
+        let next = (i + 1) % ELLIPSE_SEGMENTS;
+        let a0 = inner + i as u16;
+        let a1 = inner + next as u16;
+        let b0 = outer + i as u16;
+        let b1 = outer + next as u16;
+        indices.extend_from_slice(&[a0, b0, b1, a0, b1, a1]);
+    }
+}
+
 pub(crate) fn push_rect_linear_gradient(
     vertices: &mut Vec<Vertex>,
     indices: &mut Vec<u16>,
@@ -156,7 +198,14 @@ pub(crate) fn push_ellipse(
     z: f32,
     t: Transform2D,
 ) {
-    let segs = 64u32;
+    if radii[0] <= 0.0 || radii[1] <= 0.0 {
+        return;
+    }
+    let needed = 1 + (ELLIPSE_SEGMENTS as usize * 2);
+    if vertices.len() + needed > u16::MAX as usize {
+        return;
+    }
+
     let base = vertices.len() as u16;
     let c = apply_transform(center, t);
     vertices.push(Vertex {
@@ -165,25 +214,30 @@ pub(crate) fn push_ellipse(
         z_index: z,
     });
 
-    for i in 0..segs {
-        let theta = (i as f32) / (segs as f32) * std::f32::consts::TAU;
-        let p = [
-            center[0] + radii[0] * theta.cos(),
-            center[1] + radii[1] * theta.sin(),
-        ];
-        let p = apply_transform(p, t);
-        vertices.push(Vertex {
-            pos: p,
-            color,
-            z_index: z,
-        });
-    }
-    for i in 0..segs {
+    let opaque_radii = [
+        (radii[0] - ELLIPSE_EDGE_AA).max(0.0),
+        (radii[1] - ELLIPSE_EDGE_AA).max(0.0),
+    ];
+    let edge = push_ellipse_ring(vertices, center, opaque_radii, color, z, t);
+    for i in 0..ELLIPSE_SEGMENTS {
         let i0 = base;
-        let i1 = base + 1 + i as u16;
-        let i2 = base + 1 + ((i + 1) % segs) as u16;
+        let i1 = edge + i as u16;
+        let i2 = edge + ((i + 1) % ELLIPSE_SEGMENTS) as u16;
         indices.extend_from_slice(&[i0, i1, i2]);
     }
+
+    // Single-sample analytic coverage fringe centered on the mathematical
+    // boundary. This leaves the interior and text untouched while smoothing
+    // only the vector boundary.
+    let feather = push_ellipse_ring(
+        vertices,
+        center,
+        [radii[0] + ELLIPSE_EDGE_AA, radii[1] + ELLIPSE_EDGE_AA],
+        transparent(),
+        z,
+        t,
+    );
+    stitch_ellipse_rings(indices, edge, feather);
 }
 
 pub(crate) fn push_ellipse_radial_gradient(
@@ -200,7 +254,20 @@ pub(crate) fn push_ellipse_radial_gradient(
     }
     let mut s = stops.to_vec();
     s.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    let segs = 64u32;
+    if s.first().is_some_and(|stop| stop.0 > 0.0) {
+        s.insert(0, (0.0, s[0].1));
+    }
+    if s.last().is_some_and(|stop| stop.0 < 1.0) {
+        s.push((1.0, s[s.len() - 1].1));
+    }
+    let needed = 1 + (s.len() + 1) * ELLIPSE_SEGMENTS as usize;
+    if radii[0] <= 0.0 || radii[1] <= 0.0 || vertices.len() + needed > u16::MAX as usize {
+        return;
+    }
+    let opaque_radii = [
+        (radii[0] - ELLIPSE_EDGE_AA).max(0.0),
+        (radii[1] - ELLIPSE_EDGE_AA).max(0.0),
+    ];
     let base_center = vertices.len() as u16;
     // Center vertex with first stop color
     let cpos = apply_transform(center, t);
@@ -215,11 +282,11 @@ pub(crate) fn push_ellipse_radial_gradient(
     let prev_color = s[0].1;
     let prev_t0 = s[0].0.clamp(0.0, 1.0);
     let prev_t = if prev_t0 <= 0.0 { 0.0 } else { prev_t0 };
-    for i in 0..segs {
-        let theta = (i as f32) / (segs as f32) * std::f32::consts::TAU;
+    for i in 0..ELLIPSE_SEGMENTS {
+        let theta = (i as f32) / (ELLIPSE_SEGMENTS as f32) * std::f32::consts::TAU;
         let p = [
-            center[0] + radii[0] * prev_t * theta.cos(),
-            center[1] + radii[1] * prev_t * theta.sin(),
+            center[0] + opaque_radii[0] * prev_t * theta.cos(),
+            center[1] + opaque_radii[1] * prev_t * theta.sin(),
         ];
         let p = apply_transform(p, t);
         vertices.push(Vertex {
@@ -230,10 +297,10 @@ pub(crate) fn push_ellipse_radial_gradient(
     }
     // Connect center to first ring if needed
     if prev_t == 0.0 {
-        for i in 0..segs {
+        for i in 0..ELLIPSE_SEGMENTS {
             let i1 = base_center;
             let i2 = prev_ring_start + i as u16;
-            let i3 = prev_ring_start + ((i + 1) % segs) as u16;
+            let i3 = prev_ring_start + ((i + 1) % ELLIPSE_SEGMENTS) as u16;
             indices.extend_from_slice(&[i1, i2, i3]);
         }
     }
@@ -241,11 +308,11 @@ pub(crate) fn push_ellipse_radial_gradient(
     for si in 1..s.len() {
         let (tcur, ccur) = (s[si].0.clamp(0.0, 1.0), s[si].1);
         let ring_start = vertices.len() as u16;
-        for i in 0..segs {
-            let theta = (i as f32) / (segs as f32) * std::f32::consts::TAU;
+        for i in 0..ELLIPSE_SEGMENTS {
+            let theta = (i as f32) / (ELLIPSE_SEGMENTS as f32) * std::f32::consts::TAU;
             let p = [
-                center[0] + radii[0] * tcur * theta.cos(),
-                center[1] + radii[1] * tcur * theta.sin(),
+                center[0] + opaque_radii[0] * tcur * theta.cos(),
+                center[1] + opaque_radii[1] * tcur * theta.sin(),
             ];
             let p = apply_transform(p, t);
             vertices.push(Vertex {
@@ -255,15 +322,25 @@ pub(crate) fn push_ellipse_radial_gradient(
             });
         }
         // stitch prev ring to current ring
-        for i in 0..segs {
+        for i in 0..ELLIPSE_SEGMENTS {
             let a0 = prev_ring_start + i as u16;
-            let a1 = prev_ring_start + ((i + 1) % segs) as u16;
+            let a1 = prev_ring_start + ((i + 1) % ELLIPSE_SEGMENTS) as u16;
             let b0 = ring_start + i as u16;
-            let b1 = ring_start + ((i + 1) % segs) as u16;
+            let b1 = ring_start + ((i + 1) % ELLIPSE_SEGMENTS) as u16;
             indices.extend_from_slice(&[a0, b0, b1, a0, b1, a1]);
         }
         prev_ring_start = ring_start;
     }
+
+    let feather = push_ellipse_ring(
+        vertices,
+        center,
+        [radii[0] + ELLIPSE_EDGE_AA, radii[1] + ELLIPSE_EDGE_AA],
+        transparent(),
+        z,
+        t,
+    );
+    stitch_ellipse_rings(indices, prev_ring_start, feather);
 }
 
 pub(crate) fn push_rounded_rect_linear_gradient(
