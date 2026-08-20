@@ -4,7 +4,6 @@ use super::tessellate::{rounded_rect_to_path, tessellate_path_fill, tessellate_p
 use super::types::Vertex;
 use super::verts::apply_transform;
 
-const ROUNDED_EDGE_AA: f32 = 0.5;
 const ROUNDED_SEGMENTS_PER_CORNER: usize = 16;
 
 pub(crate) fn push_rounded_rect(
@@ -26,7 +25,9 @@ pub(crate) fn push_rounded_rect_aa(
     color: [f32; 4],
     z: f32,
     t: Transform2D,
+    edge_aa: f32,
 ) {
+    let edge_aa = edge_aa.max(0.0);
     let rrect = normalize_rrect(rrect);
     if rrect.rect.w <= 0.0 || rrect.rect.h <= 0.0 {
         return;
@@ -36,14 +37,14 @@ pub(crate) fn push_rounded_rect_aa(
     // fully opaque loop half a pixel inside gives the rasterizer a complete
     // one-pixel alpha ramp instead of an outward-only fringe that can miss all
     // sample centers.
-    let opaque_rrect = inset_rrect(rrect, ROUNDED_EDGE_AA);
+    let opaque_rrect = inset_rrect(rrect, edge_aa);
     let edge = rounded_rect_loop(opaque_rrect);
     if edge.len() < 3 {
         return;
     }
 
     let transparent = scale_color(color, 0.0);
-    let expanded = expand_rrect(rrect, ROUNDED_EDGE_AA);
+    let expanded = expand_rrect(rrect, edge_aa);
     let feather = rounded_rect_loop(expanded);
 
     if vertices.len() + 1 + edge.len() + feather.len() > u16::MAX as usize {
@@ -201,7 +202,9 @@ pub(crate) fn push_rounded_rect_stroke_aa(
     color: [f32; 4],
     z: f32,
     t: Transform2D,
+    edge_aa: f32,
 ) {
+    let edge_aa = edge_aa.max(0.0);
     let w = stroke.width.max(0.0);
     if w <= 0.0001 {
         return;
@@ -214,22 +217,22 @@ pub(crate) fn push_rounded_rect_stroke_aa(
 
     let inner = inset_rrect(rrect, w);
     if inner.rect.w <= 0.0 || inner.rect.h <= 0.0 {
-        push_rounded_rect_aa(vertices, indices, rrect, color, z, t);
+        push_rounded_rect_aa(vertices, indices, rrect, color, z, t, edge_aa);
         return;
     }
 
     // A stroke has two mathematical boundaries. Move each opaque loop toward
     // the stroke centerline and fade across both boundaries. For a 1px stroke
     // the opaque loops meet exactly at the centerline.
-    let opaque_inset = ROUNDED_EDGE_AA.min(w * 0.5);
+    let opaque_inset = edge_aa.min(w * 0.5);
     let outer_edge = rounded_rect_loop(inset_rrect(rrect, opaque_inset));
     let inner_edge = rounded_rect_loop(expand_rrect(inner, opaque_inset));
     if outer_edge.len() < 3 || inner_edge.len() != outer_edge.len() {
         return;
     }
 
-    let outer_feather = rounded_rect_loop(expand_rrect(rrect, ROUNDED_EDGE_AA));
-    let inner_feather = rounded_rect_loop(inset_rrect(inner, ROUNDED_EDGE_AA));
+    let outer_feather = rounded_rect_loop(expand_rrect(rrect, edge_aa));
+    let inner_feather = rounded_rect_loop(inset_rrect(inner, edge_aa));
     let transparent = scale_color(color, 0.0);
 
     let needed = (outer_edge.len() + inner_edge.len() + outer_feather.len() + inner_feather.len())
@@ -259,8 +262,8 @@ pub(crate) fn push_rounded_rect_stroke_aa(
         t,
     );
     if inner_feather.len() == inner_edge.len()
-        && inner.rect.w > ROUNDED_EDGE_AA * 2.0
-        && inner.rect.h > ROUNDED_EDGE_AA * 2.0
+        && inner.rect.w > edge_aa * 2.0
+        && inner.rect.h > edge_aa * 2.0
     {
         append_loop_band(
             vertices,

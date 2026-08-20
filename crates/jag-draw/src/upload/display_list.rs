@@ -243,6 +243,7 @@ pub fn upload_display_list(
                         color,
                         *z as f32,
                         *transform,
+                        0.5,
                     );
                 }
                 Brush::RadialGradient {
@@ -273,6 +274,7 @@ pub fn upload_display_list(
                         &packed,
                         *z as f32,
                         *transform,
+                        0.5,
                     );
                 }
                 _ => {}

@@ -33,6 +33,7 @@ impl UnifiedBuilder {
                     color,
                     *z as f32,
                     final_transform,
+                    self.edge_aa,
                 );
                 let index_end = self.transparent_indices.len();
                 let clip = self.current_clip();

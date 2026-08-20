@@ -164,8 +164,14 @@ impl JagSurface {
             commands,
         };
 
-        let group_scene =
-            jag_draw::upload_display_list_unified(&mut self.allocator, &self.queue, &group_list)?;
+        let device_scale =
+            jag_draw::logical_multiplier(self.logical_pixels, self.dpi_scale, self.ui_scale);
+        let group_scene = jag_draw::upload_display_list_unified_with_scale(
+            &mut self.allocator,
+            &self.queue,
+            &group_list,
+            device_scale,
+        )?;
         let group_glyphs =
             self.build_glyph_draws_from_text_draws(&group_scene.text_draws, text_provider);
 

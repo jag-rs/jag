@@ -21,6 +21,10 @@ mod strokes_paths;
 /// methods on this struct. Behaviour is preserved exactly: same ordering, same
 /// batch flushing, same clip/opacity semantics.
 struct UnifiedBuilder {
+    /// Half-width of the coverage ramp in logical units. The caller derives
+    /// this from the logical-to-device scale so the full ramp stays one
+    /// physical pixel wide on every display.
+    edge_aa: f32,
     vertices: Vec<Vertex>,
     indices: Vec<u16>,
     transparent_vertices: Vec<Vertex>,
@@ -52,8 +56,14 @@ struct UnifiedBuilder {
 }
 
 impl UnifiedBuilder {
-    fn new() -> Self {
+    fn new(device_scale: f32) -> Self {
+        let device_scale = if device_scale.is_finite() && device_scale > 0.0 {
+            device_scale
+        } else {
+            1.0
+        };
         Self {
+            edge_aa: 0.5 / device_scale,
             vertices: Vec::new(),
             indices: Vec::new(),
             transparent_vertices: Vec::new(),
@@ -341,8 +351,19 @@ pub fn upload_display_list_unified(
     queue: &wgpu::Queue,
     list: &DisplayList,
 ) -> Result<UnifiedSceneData> {
+    upload_display_list_unified_with_scale(allocator, queue, list, 1.0)
+}
+
+/// Upload a display list using the supplied logical-to-device scale for
+/// device-pixel-aware shape edge coverage.
+pub fn upload_display_list_unified_with_scale(
+    allocator: &mut RenderAllocator,
+    queue: &wgpu::Queue,
+    list: &DisplayList,
+    device_scale: f32,
+) -> Result<UnifiedSceneData> {
     let compositor_plan = crate::compositor::build_compositor_plan(list)?;
-    let mut builder = UnifiedBuilder::new();
+    let mut builder = UnifiedBuilder::new(device_scale);
     for cmd in &list.commands {
         builder.handle(cmd);
     }

@@ -185,8 +185,14 @@ impl JagSurface {
             .ensure_depth_texture(&mut self.allocator, width, height);
 
         // Extract unified scene data
-        let unified_scene =
-            jag_draw::upload_display_list_unified(&mut self.allocator, &self.queue, &list)?;
+        let device_scale =
+            jag_draw::logical_multiplier(self.logical_pixels, self.dpi_scale, self.ui_scale);
+        let unified_scene = jag_draw::upload_display_list_unified_with_scale(
+            &mut self.allocator,
+            &self.queue,
+            &list,
+            device_scale,
+        )?;
 
         // Process text draws from display list via text provider
         let mut glyph_draws = canvas.glyph_draws.clone();

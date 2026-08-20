@@ -81,19 +81,30 @@ impl JagSurface {
     }
     /// Enable or disable logical pixel interpretation.
     pub fn set_logical_pixels(&mut self, on: bool) {
+        if self.logical_pixels != on {
+            self.frame_cache = None;
+        }
         self.logical_pixels = on;
     }
     /// Set current DPI scale and propagate to passes before rendering.
     pub fn set_dpi_scale(&mut self, scale: f32) {
-        self.dpi_scale = if scale.is_finite() && scale > 0.0 {
+        let scale = if scale.is_finite() && scale > 0.0 {
             scale
         } else {
             1.0
         };
+        if (self.dpi_scale - scale).abs() > f32::EPSILON {
+            self.frame_cache = None;
+        }
+        self.dpi_scale = scale;
     }
     /// Set a global UI scale multiplier
     pub fn set_ui_scale(&mut self, s: f32) {
-        self.ui_scale = if s.is_finite() { s } else { 1.0 };
+        let s = if s.is_finite() && s > 0.0 { s } else { 1.0 };
+        if (self.ui_scale - s).abs() > f32::EPSILON {
+            self.frame_cache = None;
+        }
+        self.ui_scale = s;
     }
     /// Set an overlay callback for post-render passes
     pub fn set_overlay(&mut self, callback: OverlayCallback) {

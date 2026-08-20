@@ -8,7 +8,6 @@ use super::types::Vertex;
 use super::verts::apply_transform;
 
 const ELLIPSE_SEGMENTS: u32 = 64;
-const ELLIPSE_EDGE_AA: f32 = 0.5;
 
 fn transparent() -> [f32; 4] {
     [0.0; 4]
@@ -197,7 +196,9 @@ pub(crate) fn push_ellipse(
     color: [f32; 4],
     z: f32,
     t: Transform2D,
+    edge_aa: f32,
 ) {
+    let edge_aa = edge_aa.max(0.0);
     if radii[0] <= 0.0 || radii[1] <= 0.0 {
         return;
     }
@@ -214,10 +215,7 @@ pub(crate) fn push_ellipse(
         z_index: z,
     });
 
-    let opaque_radii = [
-        (radii[0] - ELLIPSE_EDGE_AA).max(0.0),
-        (radii[1] - ELLIPSE_EDGE_AA).max(0.0),
-    ];
+    let opaque_radii = [(radii[0] - edge_aa).max(0.0), (radii[1] - edge_aa).max(0.0)];
     let edge = push_ellipse_ring(vertices, center, opaque_radii, color, z, t);
     for i in 0..ELLIPSE_SEGMENTS {
         let i0 = base;
@@ -232,7 +230,7 @@ pub(crate) fn push_ellipse(
     let feather = push_ellipse_ring(
         vertices,
         center,
-        [radii[0] + ELLIPSE_EDGE_AA, radii[1] + ELLIPSE_EDGE_AA],
+        [radii[0] + edge_aa, radii[1] + edge_aa],
         transparent(),
         z,
         t,
@@ -248,7 +246,9 @@ pub(crate) fn push_ellipse_radial_gradient(
     stops: &[(f32, [f32; 4])],
     z: f32,
     t: Transform2D,
+    edge_aa: f32,
 ) {
+    let edge_aa = edge_aa.max(0.0);
     if stops.len() < 2 {
         return;
     }
@@ -264,10 +264,7 @@ pub(crate) fn push_ellipse_radial_gradient(
     if radii[0] <= 0.0 || radii[1] <= 0.0 || vertices.len() + needed > u16::MAX as usize {
         return;
     }
-    let opaque_radii = [
-        (radii[0] - ELLIPSE_EDGE_AA).max(0.0),
-        (radii[1] - ELLIPSE_EDGE_AA).max(0.0),
-    ];
+    let opaque_radii = [(radii[0] - edge_aa).max(0.0), (radii[1] - edge_aa).max(0.0)];
     let base_center = vertices.len() as u16;
     // Center vertex with first stop color
     let cpos = apply_transform(center, t);
@@ -335,7 +332,7 @@ pub(crate) fn push_ellipse_radial_gradient(
     let feather = push_ellipse_ring(
         vertices,
         center,
-        [radii[0] + ELLIPSE_EDGE_AA, radii[1] + ELLIPSE_EDGE_AA],
+        [radii[0] + edge_aa, radii[1] + edge_aa],
         transparent(),
         z,
         t,
