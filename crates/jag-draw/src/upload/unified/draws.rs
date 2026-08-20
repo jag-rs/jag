@@ -60,7 +60,7 @@ impl UnifiedBuilder {
             text: hyperlink.text.clone(),
             pos: hyperlink.pos,
             size: hyperlink.size,
-            logical_size: 0.0,
+            logical_size: hyperlink.size,
             color: link_color,
             weight: hyperlink.weight,
             style: hyperlink.style,

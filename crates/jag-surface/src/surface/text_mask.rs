@@ -50,7 +50,7 @@ impl JagSurface {
                 text: run.text.clone(),
                 pos: [0.0, 0.0],
                 size: (logical_size * sf).max(1.0),
-                logical_size: 0.0,
+                logical_size,
                 color: run.color,
                 weight: run.weight,
                 style: run.style,

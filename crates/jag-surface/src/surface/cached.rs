@@ -232,7 +232,7 @@ impl JagSurface {
                     text: run.text.clone(),
                     pos: [0.0, 0.0],
                     size: physical_size,
-                    logical_size: 0.0,
+                    logical_size,
                     color: run.color,
                     weight: run.weight,
                     style: run.style,

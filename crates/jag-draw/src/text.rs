@@ -50,6 +50,8 @@ enum TextAntialiasing {
 }
 
 impl TextAntialiasing {
+    const SUBPIXEL_MAX_DEVICE_SCALE: f32 = 1.5;
+
     fn for_target_os(target_os: &str) -> Self {
         if target_os == "ios" {
             Self::Grayscale
@@ -60,6 +62,22 @@ impl TextAntialiasing {
 
     fn platform_default() -> Self {
         Self::for_target_os(std::env::consts::OS)
+    }
+
+    fn for_run(self, run: &crate::scene::TextRun) -> Self {
+        if matches!(self, Self::Grayscale) {
+            return Self::Grayscale;
+        }
+        let device_scale = if run.logical_size.is_finite() && run.logical_size > 0.0 {
+            (run.size / run.logical_size).max(1.0)
+        } else {
+            1.0
+        };
+        if device_scale < Self::SUBPIXEL_MAX_DEVICE_SCALE {
+            Self::Subpixel
+        } else {
+            Self::Grayscale
+        }
     }
 }
 
@@ -224,6 +242,7 @@ fn strengthen_grayscale_subpixel_rgba8(data: &[u8]) -> Vec<u8> {
 struct GlyphRunKey {
     text_hash: u64,
     size_bits: u32,
+    logical_size_bits: u32,
     weight_bits: u32,
     style_bits: u8,
     family_hash: u64,
@@ -641,12 +660,14 @@ pub fn rasterize_run_cached(
         0
     };
     let size_bits = run.size.to_bits();
+    let logical_size_bits = run.logical_size.to_bits();
     let weight_bits = run.weight.to_bits();
     // Use the concrete provider data pointer as a stable identifier for this run.
     let provider_id = (provider as *const dyn TextProvider as *const ()) as usize;
     let key = GlyphRunKey {
         text_hash,
         size_bits,
+        logical_size_bits,
         weight_bits,
         style_bits,
         family_hash,
@@ -1174,6 +1195,7 @@ impl JagTextProvider {
 
     fn swash_glyph_mask(
         &self,
+        antialiasing: TextAntialiasing,
         content: swash::scale::image::Content,
         width: u32,
         height: u32,
@@ -1183,7 +1205,7 @@ impl JagTextProvider {
 
         match content {
             Content::Mask => {
-                let mask = match self.antialiasing {
+                let mask = match antialiasing {
                     TextAntialiasing::Subpixel => {
                         grayscale_to_subpixel_rgb(width, height, data, self.orientation)
                     }
@@ -1192,8 +1214,12 @@ impl JagTextProvider {
                 GlyphMask::Subpixel(mask)
             }
             Content::SubpixelMask => {
-                let data = match self.antialiasing {
-                    TextAntialiasing::Subpixel => strengthen_subpixel_rgba8(data),
+                let data = match antialiasing {
+                    // Swash already produced true per-channel coverage. Applying
+                    // the grayscale/browser strengthening curve here widens
+                    // partial edge pixels, making low-DPI text look heavy and
+                    // smudged. Preserve the native LCD mask unchanged.
+                    TextAntialiasing::Subpixel => data.to_vec(),
                     TextAntialiasing::Grayscale => strengthen_grayscale_subpixel_rgba8(data),
                 };
                 GlyphMask::Subpixel(SubpixelMask {
@@ -1211,8 +1237,12 @@ impl JagTextProvider {
         }
     }
 
-    fn browser_stem_embolden_px(&self, run: &crate::scene::TextRun) -> f32 {
-        if !matches!(self.antialiasing, TextAntialiasing::Grayscale) {
+    fn browser_stem_embolden_px(
+        &self,
+        run: &crate::scene::TextRun,
+        antialiasing: TextAntialiasing,
+    ) -> f32 {
+        if !matches!(antialiasing, TextAntialiasing::Grayscale) {
             return 0.0;
         }
 
@@ -1999,6 +2029,7 @@ impl TextProvider for JagTextProvider {
         use swash::scale::{Render, ScaleContext, Source, StrikeWith};
 
         let size = run.size.max(1.0);
+        let antialiasing = self.antialiasing.for_run(run);
         let face = self.select_face(run);
         let segments = self.face_segments_for_run(run, &face);
 
@@ -2010,7 +2041,10 @@ impl TextProvider for JagTextProvider {
             Source::Bitmap(StrikeWith::BestFit),
             Source::ColorBitmap(StrikeWith::BestFit),
         ]);
-        let stem_embolden = self.browser_stem_embolden_px(run);
+        if matches!(antialiasing, TextAntialiasing::Subpixel) {
+            renderer.format(swash::zeno::Format::Subpixel);
+        }
+        let stem_embolden = self.browser_stem_embolden_px(run, antialiasing);
         if stem_embolden > 0.0 {
             renderer.embolden(stem_embolden);
         }
@@ -2101,7 +2135,8 @@ impl TextProvider for JagTextProvider {
                         if w == 0 || h == 0 {
                             return None;
                         }
-                        let mask = self.swash_glyph_mask(img.content, w, h, &img.data);
+                        let mask =
+                            self.swash_glyph_mask(antialiasing, img.content, w, h, &img.data);
                         let ox = segment_x
                             + glyph_x_adjust
                             + glyph_pos.x_offset
@@ -2126,7 +2161,8 @@ impl TextProvider for JagTextProvider {
                     let w = img.placement.width;
                     let h = img.placement.height;
                     if w > 0 && h > 0 {
-                        let mask = self.swash_glyph_mask(img.content, w, h, &img.data);
+                        let mask =
+                            self.swash_glyph_mask(antialiasing, img.content, w, h, &img.data);
 
                         let ox = segment_x
                             + glyph_x_adjust
@@ -2402,6 +2438,37 @@ mod tests {
     }
 
     #[test]
+    fn desktop_subpixel_coverage_is_limited_to_low_dpi() {
+        let make_run = |device_scale: f32| crate::scene::TextRun {
+            text: "Aa".to_string(),
+            pos: [0.0, 0.0],
+            size: 14.0 * device_scale,
+            logical_size: 14.0,
+            color: crate::scene::ColorLinPremul::rgba(10, 10, 10, 255),
+            weight: 400.0,
+            style: crate::scene::FontStyle::Normal,
+            family: None,
+        };
+
+        assert_eq!(
+            TextAntialiasing::Subpixel.for_run(&make_run(1.0)),
+            TextAntialiasing::Subpixel
+        );
+        assert_eq!(
+            TextAntialiasing::Subpixel.for_run(&make_run(1.25)),
+            TextAntialiasing::Subpixel
+        );
+        assert_eq!(
+            TextAntialiasing::Subpixel.for_run(&make_run(1.5)),
+            TextAntialiasing::Grayscale
+        );
+        assert_eq!(
+            TextAntialiasing::Grayscale.for_run(&make_run(1.0)),
+            TextAntialiasing::Grayscale
+        );
+    }
+
+    #[test]
     fn ios_stem_darkening_tracks_device_scale_without_affecting_desktop() {
         let bytes = include_bytes!("../../../fonts/Geist/Geist-VariableFont_wght.ttf");
         let mut provider = JagTextProvider::from_bytes(bytes, SubpixelOrientation::RGB)
@@ -2417,11 +2484,20 @@ mod tests {
             family: None,
         };
 
-        assert_eq!(provider.browser_stem_embolden_px(&run), 0.0);
+        assert_eq!(
+            provider.browser_stem_embolden_px(&run, TextAntialiasing::Subpixel),
+            0.0
+        );
         provider.antialiasing = TextAntialiasing::Grayscale;
-        assert!((provider.browser_stem_embolden_px(&run) - 0.2).abs() < f32::EPSILON);
+        assert!(
+            (provider.browser_stem_embolden_px(&run, TextAntialiasing::Grayscale) - 0.2).abs()
+                < f32::EPSILON
+        );
         run.size = 42.0;
-        assert!((provider.browser_stem_embolden_px(&run) - 0.3).abs() < f32::EPSILON);
+        assert!(
+            (provider.browser_stem_embolden_px(&run, TextAntialiasing::Grayscale) - 0.3).abs()
+                < f32::EPSILON
+        );
     }
 
     #[test]
@@ -2433,7 +2509,7 @@ mod tests {
         let baseline = provider.rasterize_run(&crate::scene::TextRun {
             text: "Hamburgefontsiv 012345".to_string(),
             pos: [0.0, 0.0],
-            size: 24.0,
+            size: 12.0,
             logical_size: 12.0,
             color: crate::scene::ColorLinPremul::rgba(115, 115, 115, 255),
             weight: 400.0,
@@ -2450,6 +2526,26 @@ mod tests {
             }),
             "the previous RGB policy must reproduce channel fringing"
         );
+
+        let high_dpi = provider.rasterize_run(&crate::scene::TextRun {
+            text: "Hamburgefontsiv 012345".to_string(),
+            pos: [0.0, 0.0],
+            size: 28.0,
+            logical_size: 14.0,
+            color: crate::scene::ColorLinPremul::rgba(115, 115, 115, 255),
+            weight: 400.0,
+            style: crate::scene::FontStyle::Normal,
+            family: None,
+        });
+        assert!(high_dpi.iter().all(|glyph| {
+            match &glyph.mask {
+                GlyphMask::Subpixel(mask) => mask
+                    .data
+                    .chunks_exact(4)
+                    .all(|pixel| pixel[0] == pixel[1] && pixel[1] == pixel[2]),
+                GlyphMask::Color(_) => true,
+            }
+        }));
 
         provider.antialiasing = TextAntialiasing::Grayscale;
 
