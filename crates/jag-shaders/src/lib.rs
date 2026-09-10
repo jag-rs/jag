@@ -735,8 +735,9 @@ fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// Text rendering shader: samples an RGB coverage mask (subpixel AA) and tints with a
-/// premultiplied linear text color. The output is premultiplied.
+/// Text rendering shader: resolves RGB mask coverage to grayscale and tints with a
+/// premultiplied linear text color. Single-source alpha blending cannot attenuate
+/// the destination per subpixel, so both output color and alpha use mean coverage.
 ///
 /// Bindings:
 /// - @group(0) @binding(0): Viewport uniform (shared layout with solids)
@@ -804,12 +805,12 @@ fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
         // Return as-is - the alpha channel controls blending.
         return m;
     } else if (has_rgb) {
-        // Subpixel text: RGB contains coverage masks, alpha is unused.
-        // Apply text color modulated by coverage.
-        let rgb = vec3<f32>(inp.color.r * m.r, inp.color.g * m.g, inp.color.b * m.b);
-        let cov = max(m.r, max(m.g, m.b));
-        let a = inp.color.a * cov;
-        return vec4<f32>(rgb, a);
+        // This pipeline uses single-source premultiplied alpha blending, not
+        // per-channel LCD blending. Resolve to mean coverage for both color and
+        // alpha: max(RGB) expands dark edges, while separate RGB tinting fringes
+        // colored text. Equal-channel grayscale masks pass through unchanged.
+        let coverage = dot(m.rgb, vec3<f32>(1.0 / 3.0));
+        return inp.color * coverage;
     } else {
         // Fully transparent mask pixel: discard so we don't write depth for empty texels.
         discard;
