@@ -17,6 +17,7 @@ impl JagSurface {
         frame: wgpu::SurfaceTexture,
         scroll_delta: [f32; 2],
     ) -> Result<()> {
+        self.pass.begin_composite_frame();
         let cache = self
             .frame_cache
             .as_ref()

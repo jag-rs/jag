@@ -131,6 +131,20 @@ fn assert_pixels(actual: &[u8], expected: &[u8], label: &str) {
 }
 
 #[test]
+fn direct_tile_presentation_matches_intermediate_for_nested_and_fixed_content() {
+    let mut direct = surface();
+    direct.set_use_intermediate(false);
+    let mut intermediate = surface();
+    for dpr in [1.0, 1.25, 2.0, 3.0] {
+        for (outer, inner) in [(0.0, 0.0), (13.0, 7.0), (19.0, 522.0)] {
+            let actual = render(&mut direct, true, dpr, outer, inner, false);
+            let expected = render(&mut intermediate, true, dpr, outer, inner, false);
+            assert_pixels(&actual, &expected, "direct mobile tile presentation");
+        }
+    }
+}
+
+#[test]
 fn nested_tiles_match_direct_paint_across_boundaries_and_reuse_while_scrolling() {
     let mut s = surface();
     for dpr in [1.0, 1.25, 1.5, 2.0, 3.0] {
@@ -374,6 +388,123 @@ fn immutable_scene_rebases_nested_clips_and_counter_transforms_without_repaintin
                 &format!("committed scene DPR {dpr}, base {base}, outer {outer}, inner {inner}"),
             );
         }
+    }
+}
+
+#[test]
+fn hit_regions_preserve_targeting_without_fragmenting_scroll_tiles() {
+    let mut s = surface();
+    let paint = |c: &mut Canvas| {
+        for row in 0..20 {
+            let rect = Rect {
+                x: 8.0,
+                y: 8.0 + row as f32 * 10.0,
+                w: 180.0,
+                h: 7.0,
+            };
+            fill(c, rect, [30 + row as u8 * 5, 60, 90, 255], row);
+            // High hit z must neither force a paint boundary nor replace the
+            // authoritative hit metadata in the retained source.
+            c.hit_region_rect(100 + row as u32, rect, 1000 + row);
+        }
+    };
+    let make_canvas = |s: &JagSurface| {
+        let mut c = s.begin_frame(220, 220);
+        c.clear(ColorLinPremul::from_srgba_u8([255; 4]));
+        c
+    };
+    let mut c = make_canvas(&s);
+    let capture = c.begin_scroll_scene_capture();
+    c.push_bound_scroll_layer("content", "scroll", [0.0, 0.0], [-1.0, -1.0]);
+    paint(&mut c);
+    c.pop_scroll_layer();
+    let scene = c.finish_scroll_scene_capture(capture).unwrap();
+    let hit = jag_draw::HitIndex::build(c.display_list())
+        .topmost_at([20.0, 30.0])
+        .unwrap();
+    assert_eq!(hit.region_id, Some(102));
+    s.end_frame_headless(c).unwrap();
+    assert_eq!(
+        s.retained_layer_stats().misses,
+        1,
+        "one paint run, not one per hit marker"
+    );
+    for scroll in [2.0, 7.0, 2.0] {
+        let mut c = make_canvas(&s);
+        c.replay_scroll_scene(
+            &scene,
+            &[("scroll".into(), [0.0, scroll])].into_iter().collect(),
+        );
+        let hit = jag_draw::HitIndex::build(c.display_list())
+            .topmost_at([20.0, 30.0 - scroll])
+            .unwrap();
+        assert_eq!(hit.region_id, Some(102));
+        let actual = s.end_frame_headless(c).unwrap().2;
+        assert_eq!(s.retained_layer_stats().misses, 0);
+        assert_eq!(s.retained_layer_stats().hits, 1);
+        let mut c = make_canvas(&s);
+        c.push_transform(Transform2D::translate(0.0, -scroll));
+        paint(&mut c);
+        c.pop_transform();
+        assert_pixels(
+            &actual,
+            &s.end_frame_headless(c).unwrap().2,
+            "hit metadata does not affect pixels",
+        );
+    }
+}
+
+#[test]
+fn fixed_opacity_layer_ignores_scrolling_ancestor_transform_in_cache_key() {
+    let mut s = surface();
+    let make = |s: &JagSurface, offset: f32| {
+        let mut c = s.begin_frame(200, 200);
+        c.clear(ColorLinPremul::from_srgba_u8([255; 4]));
+        c.push_transform(Transform2D::translate(0.0, -offset));
+        c
+    };
+    let mut c = make(&s, 0.0);
+    let capture = c.begin_scroll_scene_capture();
+    c.push_scroll_layer("page", [0.0, 0.0]);
+    c.push_opacity(0.7);
+    c.push_bound_scroll_layer("fixed", "page-scroll", [0.0, 0.0], [1.0, 1.0]);
+    fill(
+        &mut c,
+        Rect {
+            x: 20.0,
+            y: 150.0,
+            w: 80.0,
+            h: 20.0,
+        },
+        [40, 80, 120, 255],
+        1,
+    );
+    c.pop_scroll_layer();
+    c.pop_opacity();
+    c.pop_scroll_layer();
+    let scene = c.finish_scroll_scene_capture(capture).unwrap();
+    c.pop_transform();
+    let expected = s.end_frame_headless(c).unwrap().2;
+    for offset in [2.0, 7.0, 13.0, 2.0] {
+        let mut c = make(&s, offset);
+        c.replay_scroll_scene(
+            &scene,
+            &[("page-scroll".into(), [0.0, offset])]
+                .into_iter()
+                .collect(),
+        );
+        c.pop_transform();
+        assert_pixels(
+            &s.end_frame_headless(c).unwrap().2,
+            &expected,
+            "fixed opacity pixels",
+        );
+        let stats = s.retained_layer_stats();
+        assert_eq!(
+            stats.misses, 0,
+            "fixed child and its opacity surface must both reuse: {stats:?}"
+        );
+        assert_eq!(stats.hits, 2);
     }
 }
 

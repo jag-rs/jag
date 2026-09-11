@@ -261,10 +261,10 @@ fn retention_respects_memory_budget_and_can_be_disabled() {
         retained.pass_manager().clear_external_textures();
         let stats = retained.retained_layer_stats();
         assert!(stats.resident_bytes <= 16 * 1024, "{stats:?}");
-        assert!(
-            stats.evictions > 0,
-            "budget should force eviction: {stats:?}"
-        );
+        assert!(stats.budget_usage_bytes <= 16 * 1024, "{stats:?}");
+        // The visible working set is pinned during a frame. Overflow paints
+        // transiently instead of evicting and re-rasterizing its own tiles.
+        assert_eq!(stats.evictions, 0, "{stats:?}");
     }
     retained.set_retained_layer_budget(0);
     assert_eq!(retained.retained_layer_stats().resident_bytes, 0);
@@ -272,4 +272,100 @@ fn retention_respects_memory_budget_and_can_be_disabled() {
     render(&mut retained, &font, 1.0, 0.0, 0.0, 0.8);
     assert_eq!(retained.retained_layer_stats().resident_bytes, 0);
     assert_eq!(retained.retained_layer_stats().hits, 0);
+}
+
+#[test]
+fn composite_slots_update_placement_depth_and_texture_without_aliasing_draws() {
+    let (mut surface, _) = surfaces();
+    let device = surface.device();
+    let queue = surface.queue();
+    let colors = [[220u8, 20, 20, 255], [20, 220, 20, 255]];
+    let views: Vec<_> = colors
+        .iter()
+        .map(|color| {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("composite-slot-test"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            queue.write_texture(
+                texture.as_image_copy(),
+                color,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4),
+                    rows_per_image: Some(1),
+                },
+                wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            );
+            Arc::new(texture.create_view(&Default::default()))
+        })
+        .collect();
+    let id = jag_draw::ExternalTextureId(7);
+    for direct in [true, false] {
+        surface.set_direct(direct);
+        surface.set_use_intermediate(!direct);
+        for frame in 0..6 {
+            let color_index = frame / 3;
+            surface
+                .pass_manager()
+                .register_shared_external_texture(id, views[color_index].clone());
+            let x = (frame % 3 * 2) as f32;
+            let mut canvas = surface.begin_frame(32, 24);
+            canvas.clear(jag_draw::ColorLinPremul::from_srgba_u8([255; 4]));
+            // Skipped registrations leave a hole in the uploaded vertex batch;
+            // subsequent draws must use their original base-vertex offsets.
+            canvas.external_texture(
+                Rect {
+                    x: 26.0,
+                    y: 2.0,
+                    w: 4.0,
+                    h: 4.0,
+                },
+                jag_draw::ExternalTextureId(999),
+                0,
+            );
+            // Same texture twice in one submission: updating the second draw
+            // must not overwrite the first draw's vertices or depth uniform.
+            for y in [2.0, 14.0] {
+                canvas.external_texture(
+                    Rect {
+                        x,
+                        y,
+                        w: 8.0,
+                        h: 8.0,
+                    },
+                    id,
+                    frame as i32,
+                );
+            }
+            let pixels = surface.end_frame_headless(canvas).unwrap().2;
+            for y in [4usize, 16] {
+                let offset = (y * 32 + x as usize + 2) * 4;
+                assert_eq!(
+                    &pixels[offset..offset + 4],
+                    &colors[color_index],
+                    "frame {frame}, direct {direct}"
+                );
+            }
+            let gap = (11 * 32 + x as usize + 2) * 4;
+            assert_eq!(&pixels[gap..gap + 4], &[255; 4]);
+            surface.pass_manager().clear_external_textures();
+        }
+    }
+    drop(views);
+    surface.pass_manager().clear_external_textures();
 }

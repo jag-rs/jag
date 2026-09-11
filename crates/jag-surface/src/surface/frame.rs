@@ -554,7 +554,10 @@ impl JagSurface {
         self.queue.submit(std::iter::once(cb));
         frame.present();
         if let Some((gpu_scene, transparent_gpu_scene)) = reusable_gpu_scenes {
-            let _ = self.device.poll(wgpu::Maintain::Wait);
+            // The next queue.write_buffer is ordered after this submission.
+            // Pooling these handles does not require waiting for GPU completion;
+            // wgpu retains in-flight resources and retires them asynchronously.
+            let _ = self.device.poll(wgpu::Maintain::Poll);
             self.allocator.release_buffer(gpu_scene.vertex);
             self.allocator.release_buffer(gpu_scene.index);
             self.allocator.release_buffer(transparent_gpu_scene.vertex);

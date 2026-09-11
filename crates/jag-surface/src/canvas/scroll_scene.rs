@@ -9,7 +9,7 @@ pub struct ScrollSceneCapture {
 }
 
 impl Canvas {
-    fn capture_side_channels(&self) -> [usize; 9] {
+    pub(crate) fn capture_side_channels(&self) -> [usize; 9] {
         [
             self.glyph_draws.len(),
             self.svg_draws.len(),

@@ -234,6 +234,8 @@ impl PassManager {
             smaa_param_buffer,
             scrim_stencil_tex: None,
             external_textures: std::collections::HashMap::new(),
+            composite_direct: Default::default(),
+            composite_offscreen: Default::default(),
         }
     }
 
@@ -263,6 +265,17 @@ impl PassManager {
     /// Clear all registered external textures (call after frame).
     pub fn clear_external_textures(&mut self) {
         self.external_textures.clear();
+        self.composite_direct.release_expired_textures();
+        self.composite_offscreen.release_expired_textures();
+    }
+
+    /// Start a frame only after all commands from the previous frame have
+    /// been submitted. Distinct draws in this frame must keep distinct buffers.
+    pub fn begin_composite_frame(&mut self) {
+        self.composite_direct.release_expired_textures();
+        self.composite_offscreen.release_expired_textures();
+        self.composite_direct.begin_frame();
+        self.composite_offscreen.begin_frame();
     }
 
     /// Release frame registrations for compositor-owned resources. Retained

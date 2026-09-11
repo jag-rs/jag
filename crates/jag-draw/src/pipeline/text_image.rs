@@ -483,6 +483,21 @@ impl ImageRenderer {
         ibuf: &'a wgpu::Buffer,
         icount: u32,
     ) {
+        self.record_at_vertex(pass, vp_bg, z_bg, tex_bg, params_bg, vbuf, ibuf, icount, 0);
+    }
+
+    pub fn record_at_vertex<'a>(
+        &'a self,
+        pass: &mut wgpu::RenderPass<'a>,
+        vp_bg: &'a wgpu::BindGroup,
+        z_bg: &'a wgpu::BindGroup,
+        tex_bg: &'a wgpu::BindGroup,
+        params_bg: &'a wgpu::BindGroup,
+        vbuf: &'a wgpu::Buffer,
+        ibuf: &'a wgpu::Buffer,
+        icount: u32,
+        base_vertex: i32,
+    ) {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, vp_bg, &[]);
         pass.set_bind_group(1, z_bg, &[]);
@@ -490,6 +505,6 @@ impl ImageRenderer {
         pass.set_bind_group(3, params_bg, &[]);
         pass.set_vertex_buffer(0, vbuf.slice(..));
         pass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint16);
-        pass.draw_indexed(0..icount, 0, 0..1);
+        pass.draw_indexed(0..icount, base_vertex, 0..1);
     }
 }

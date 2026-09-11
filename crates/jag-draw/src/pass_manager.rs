@@ -275,6 +275,8 @@ pub struct PassManager {
     // Registry for externally-rendered textures (e.g., 3D viewports)
     external_textures:
         std::collections::HashMap<crate::display_list::ExternalTextureId, Arc<wgpu::TextureView>>,
+    composite_direct: composite_resources::CompositeResources,
+    composite_offscreen: composite_resources::CompositeResources,
 }
 
 // Vertex structures for unified rendering
@@ -294,6 +296,7 @@ pub(crate) struct ImageQuadVtx {
 }
 
 mod box_shadow;
+mod composite_resources;
 mod draw_shapes;
 mod filter;
 mod paint_root;

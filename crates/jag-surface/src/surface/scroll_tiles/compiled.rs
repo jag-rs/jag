@@ -214,6 +214,17 @@ impl CompiledScene {
         let mut segments = vec![0];
         let mut run = Vec::new();
         for command in source.commands.iter() {
+            // HitIndex reads the immutable source before composition. These
+            // markers have no pixels and must not split a raster run per DOM
+            // element (or alter the paint-order comparison below).
+            if matches!(
+                command,
+                Command::HitRegionRect { .. }
+                    | Command::HitRegionRoundedRect { .. }
+                    | Command::HitRegionEllipse { .. }
+            ) {
+                continue;
+            }
             let owner = *owners.last().unwrap();
             let clip = *clips.last().unwrap();
             let boundary = command.z_index().is_none()
@@ -222,9 +233,6 @@ impl CompiledScene {
                     command,
                     Command::BackdropFilter(_)
                         | Command::DrawExternalTexture { .. }
-                        | Command::HitRegionRect { .. }
-                        | Command::HitRegionRoundedRect { .. }
-                        | Command::HitRegionEllipse { .. }
                 )
                 || command
                     .z_index()
@@ -289,10 +297,7 @@ impl CompiledScene {
                 | Command::PushFilter(_)
                 | Command::PopFilter
                 | Command::BackdropFilter(_)
-                | Command::DrawExternalTexture { .. }
-                | Command::HitRegionRect { .. }
-                | Command::HitRegionRoundedRect { .. }
-                | Command::HitRegionEllipse { .. } => result.ops.push(Op::Draw {
+                | Command::DrawExternalTexture { .. } => result.ops.push(Op::Draw {
                     command: command.clone(),
                     owner,
                 }),

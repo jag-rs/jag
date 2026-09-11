@@ -465,10 +465,18 @@ impl PassManager {
                         }
                     }
                     DrawItemOff::ExternalTexture(i) => {
-                        let (vbuf, ibuf, vp_bg_ext, z_bg_ext, tex_bg, params_bg, _, _) =
-                            &ext_resources_off[i];
-                        self.image_offscreen.record(
-                            &mut pass, vp_bg_ext, z_bg_ext, tex_bg, params_bg, vbuf, ibuf, 6,
+                        let (vbuf, ibuf, vp_bg_ext, z_bg_ext, tex_bg, params_bg, _, _, base_vertex) =
+                            &*ext_resources_off[i];
+                        self.image_offscreen.record_at_vertex(
+                            &mut pass,
+                            vp_bg_ext,
+                            z_bg_ext,
+                            tex_bg,
+                            params_bg,
+                            vbuf,
+                            ibuf,
+                            6,
+                            *base_vertex,
                         );
                     }
                 }

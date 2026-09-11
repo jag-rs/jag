@@ -136,6 +136,16 @@ impl JagSurface {
         let mut run = Vec::new();
         let mut out = Vec::new();
         for command in commands {
+            // Preserve hit metadata without allowing its z to fragment paint.
+            if matches!(
+                command,
+                Command::HitRegionRect { .. }
+                    | Command::HitRegionRoundedRect { .. }
+                    | Command::HitRegionEllipse { .. }
+            ) {
+                out.push(command.clone());
+                continue;
+            }
             let boundary = matches!(
                 command,
                 Command::PushScrollLayer { .. }

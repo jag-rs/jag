@@ -131,7 +131,24 @@ impl RetainedLayers {
             // Texture handles alone do not describe changing mask pixels.
             SurfaceEffect::Mask(_) | SurfaceEffect::MaskGroup(_) => return None,
         };
-        let mut commands = commands.to_vec();
+        // Clips have already been localized, and every draw carries its full
+        // transform. The structural transform stack has no remaining pixel
+        // meaning here. Including it invalidates fixed-position opacity layers
+        // whenever their scrolling ancestor moves, despite identical pixels.
+        let mut commands: Vec<_> = commands
+            .iter()
+            .filter(|command| {
+                !matches!(
+                    command,
+                    Command::PushTransform(_)
+                        | Command::PopTransform
+                        | Command::HitRegionRect { .. }
+                        | Command::HitRegionRoundedRect { .. }
+                        | Command::HitRegionEllipse { .. }
+                )
+            })
+            .cloned()
+            .collect();
         let mut children = Vec::new();
         let mut has_text = false;
         let mut assets = Vec::new();

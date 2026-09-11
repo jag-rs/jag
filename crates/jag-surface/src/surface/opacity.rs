@@ -125,6 +125,7 @@ impl JagSurface {
         self.retained_layers.begin_frame();
         self.scroll_tiles.begin_frame();
         self.pass.clear_compositor_textures();
+        self.pass.begin_composite_frame();
     }
 
     fn allocate_synthetic_external_texture_id(&mut self) -> ExternalTextureId {
