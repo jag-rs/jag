@@ -33,6 +33,7 @@ pub struct ExtractedTextDraw {
 /// Extracted image draw from DisplayList (placeholder for future)
 #[derive(Clone, Debug)]
 pub struct ExtractedImageDraw {
+    pub fit: crate::ImageFitMode,
     pub path: std::path::PathBuf,
     pub origin: [f32; 2],
     pub size: [f32; 2],
@@ -62,6 +63,8 @@ pub struct ExtractedExternalTextureDraw {
     pub z: i32,
     pub opacity: f32,
     pub premultiplied: bool,
+    pub uv: [f32; 4],
+    pub rounded_clip: Option<crate::RoundedRectClipGpu>,
 }
 
 /// A contiguous range inside the transparent index buffer for a given z-index.

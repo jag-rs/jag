@@ -33,6 +33,7 @@ impl JagSurface {
             frame_cache_enabled: true,
             pending_image_loads: false,
             retained_layers: Default::default(),
+            scroll_tiles: Default::default(),
         }
     }
 

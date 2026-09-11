@@ -29,6 +29,16 @@ fn builtin_image_bytes(_path: &Path) -> Option<&'static [u8]> {
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct CacheKey {
     path: PathBuf,
+    stamp: Option<crate::AssetStamp>,
+}
+
+impl CacheKey {
+    fn new(path: &Path) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            stamp: crate::AssetStamp::read(path),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -48,12 +58,14 @@ enum CacheEntry {
 enum DecodedImageResult {
     Ready {
         path: PathBuf,
+        stamp: Option<crate::AssetStamp>,
         rgba: Vec<u8>,
         width: u32,
         height: u32,
     },
     Failed {
         path: PathBuf,
+        stamp: Option<crate::AssetStamp>,
     },
 }
 
@@ -146,9 +158,7 @@ impl ImageCache {
     /// Check if an image is in the cache and return it if ready.
     /// Returns None if loading or failed, Some if ready.
     pub fn get(&mut self, path: &Path) -> Option<(Arc<wgpu::Texture>, u32, u32)> {
-        let key = CacheKey {
-            path: path.to_path_buf(),
-        };
+        let key = CacheKey::new(path);
 
         // Clone the data we need before touching
         let result = if let Some(entry) = self.map.get(&key) {
@@ -174,9 +184,7 @@ impl ImageCache {
     /// thread. The render thread uploads completed decodes via
     /// [`Self::poll_decoded`].
     pub fn start_load(&mut self, path: &Path) -> bool {
-        let key = CacheKey {
-            path: path.to_path_buf(),
-        };
+        let key = CacheKey::new(path);
 
         if let Some(entry) = self.map.get(&key) {
             return matches!(entry, CacheEntry::Loading);
@@ -187,15 +195,17 @@ impl ImageCache {
         let path = path.to_path_buf();
         let max_tex_size = self.max_tex_size;
         let tx = self.decode_tx.clone();
+        let stamp = crate::AssetStamp::read(&path);
         std::thread::spawn(move || {
             let result = match decode_image_file(&path, max_tex_size) {
                 Some((rgba, width, height)) => DecodedImageResult::Ready {
                     path,
+                    stamp,
                     rgba,
                     width,
                     height,
                 },
-                None => DecodedImageResult::Failed { path },
+                None => DecodedImageResult::Failed { path, stamp },
             };
             let _ = tx.send(result);
         });
@@ -210,19 +220,26 @@ impl ImageCache {
             match result {
                 DecodedImageResult::Ready {
                     path,
+                    stamp,
                     rgba,
                     width,
                     height,
                 } => {
+                    if stamp != crate::AssetStamp::read(&path) {
+                        continue;
+                    }
                     if self
                         .store_decoded_rgba(&path, rgba, width, height, queue)
                         .is_none()
                     {
-                        self.insert(CacheKey { path }, CacheEntry::Failed);
+                        self.insert(CacheKey::new(&path), CacheEntry::Failed);
                     }
                 }
-                DecodedImageResult::Failed { path } => {
-                    self.insert(CacheKey { path }, CacheEntry::Failed);
+                DecodedImageResult::Failed { path, stamp } => {
+                    if stamp != crate::AssetStamp::read(&path) {
+                        continue;
+                    }
+                    self.insert(CacheKey::new(&path), CacheEntry::Failed);
                 }
             }
         }
@@ -236,9 +253,7 @@ impl ImageCache {
         path: &Path,
         queue: &wgpu::Queue,
     ) -> Option<(Arc<wgpu::Texture>, u32, u32)> {
-        let key = CacheKey {
-            path: path.to_path_buf(),
-        };
+        let key = CacheKey::new(path);
 
         // Check cache first - clone data before touching
         let cached_result = if let Some(entry) = self.map.get(&key) {
@@ -290,9 +305,7 @@ impl ImageCache {
         if width == 0 || height == 0 || width > self.max_tex_size || height > self.max_tex_size {
             return None;
         }
-        let key = CacheKey {
-            path: path.to_path_buf(),
-        };
+        let key = CacheKey::new(path);
 
         // Create GPU texture
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -347,25 +360,19 @@ impl ImageCache {
 
     /// Check if an image is currently loading
     pub fn is_loading(&self, path: &Path) -> bool {
-        let key = CacheKey {
-            path: path.to_path_buf(),
-        };
+        let key = CacheKey::new(path);
         matches!(self.map.get(&key), Some(CacheEntry::Loading))
     }
 
     /// Check if an image is ready
     pub fn is_ready(&self, path: &Path) -> bool {
-        let key = CacheKey {
-            path: path.to_path_buf(),
-        };
+        let key = CacheKey::new(path);
         matches!(self.map.get(&key), Some(CacheEntry::Ready { .. }))
     }
 
     /// Store a pre-loaded texture in the cache (used for async loading)
     pub fn store_ready(&mut self, path: &Path, tex: Arc<wgpu::Texture>, width: u32, height: u32) {
-        let key = CacheKey {
-            path: path.to_path_buf(),
-        };
+        let key = CacheKey::new(path);
         let bytes = (width * height * 4) as usize;
 
         let entry = CacheEntry::Ready {

@@ -137,6 +137,7 @@ impl UnifiedBuilder {
 
     pub(super) fn handle_image(&mut self, cmd: &Command) {
         let Command::DrawImage {
+            fit,
             path,
             origin,
             size,
@@ -151,6 +152,7 @@ impl UnifiedBuilder {
         let world_origin = apply_transform(*origin, final_transform);
         let opa = self.current_opacity();
         self.image_draws.push(ExtractedImageDraw {
+            fit: *fit,
             path: path.clone(),
             origin: world_origin,
             size: *size,
@@ -210,6 +212,31 @@ impl UnifiedBuilder {
                 z: *z,
                 opacity: *opacity * opa,
                 premultiplied: *premultiplied,
+                uv: [0.0, 0.0, 1.0, 1.0],
+                rounded_clip: None,
             });
+    }
+
+    pub(super) fn handle_composite_tile(&mut self, cmd: &Command) {
+        if let Command::DrawCompositeTile {
+            rect,
+            texture_id,
+            uv,
+            rounded_clip,
+            z,
+        } = cmd
+        {
+            self.external_texture_draws
+                .push(ExtractedExternalTextureDraw {
+                    texture_id: *texture_id,
+                    origin: [rect.x, rect.y],
+                    size: [rect.w, rect.h],
+                    z: *z,
+                    opacity: self.current_opacity(),
+                    premultiplied: true,
+                    uv: *uv,
+                    rounded_clip: *rounded_clip,
+                });
+        }
     }
 }

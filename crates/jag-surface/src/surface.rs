@@ -15,6 +15,7 @@ mod frame;
 mod masks;
 mod opacity;
 mod retained_layers;
+mod scroll_tiles;
 mod text_mask;
 
 pub use retained_layers::RetainedLayerStats;
@@ -228,4 +229,5 @@ pub struct JagSurface {
     frame_cache_enabled: bool,
     pending_image_loads: bool,
     retained_layers: retained_layers::RetainedLayers,
+    scroll_tiles: scroll_tiles::ScrollTiles,
 }

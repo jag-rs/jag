@@ -179,6 +179,12 @@ impl UnifiedBuilder {
     /// Dispatch a single command to the appropriate handler.
     fn handle(&mut self, cmd: &Command) {
         match cmd {
+            Command::PushScrollLayer { .. }
+            | Command::PopScrollLayer
+            | Command::ScrollClipRadii(_) => {}
+            Command::DrawScrollScene { .. } => {
+                panic!("retained scroll scene must be composed before GPU upload")
+            }
             // Handle transform stack
             Command::PushTransform(t) => {
                 // `t` is already the composed world transform at this stack depth.
@@ -208,6 +214,7 @@ impl UnifiedBuilder {
             Command::DrawImage { .. } => self.handle_image(cmd),
             Command::DrawSvg { .. } => self.handle_svg(cmd),
             Command::DrawExternalTexture { .. } => self.handle_external_texture(cmd),
+            Command::DrawCompositeTile { .. } => self.handle_composite_tile(cmd),
 
             // Box shadows feed a dedicated analytic shadow pipeline. Each one
             // becomes a GPU instance (outer shadows only — BoxShadowSpec has no

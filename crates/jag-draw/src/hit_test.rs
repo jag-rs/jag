@@ -1,5 +1,6 @@
 use crate::display_list::{Command, DisplayList};
 use crate::scene::*;
+use std::sync::{Arc, OnceLock};
 
 /// Result of a hit test for a single topmost element.
 #[derive(Clone, Debug)]
@@ -86,6 +87,19 @@ struct ClipEntry {
 #[derive(Default, Clone)]
 pub struct HitIndex {
     items: Vec<HitItem>,
+    retained: Vec<RetainedHits>,
+    static_signature: Vec<Command>,
+    viewport: (u32, u32),
+}
+
+#[derive(Clone)]
+struct RetainedHits {
+    scene: Arc<crate::ScrollScene>,
+    base: Transform2D,
+    inputs: Arc<crate::ScrollInputs>,
+    clips: Vec<ClipEntry>,
+    id_offset: usize,
+    resolved: Arc<OnceLock<HitIndex>>,
 }
 
 impl HitIndex {
@@ -96,9 +110,29 @@ impl HitIndex {
         let mut clips: Vec<ClipEntry> = Vec::new();
         let mut tstack: Vec<Transform2D> = vec![Transform2D::identity()];
         let mut next_id: usize = 0;
+        let mut retained = Vec::new();
 
         for cmd in &list.commands {
             match cmd {
+                Command::DrawScrollScene {
+                    scene,
+                    base,
+                    inputs,
+                } => {
+                    retained.push(RetainedHits {
+                        scene: scene.clone(),
+                        base: *base,
+                        inputs: inputs.clone(),
+                        clips: clips.clone(),
+                        id_offset: next_id,
+                        resolved: Arc::new(OnceLock::new()),
+                    });
+                    next_id += scene.commands.len();
+                }
+                Command::PushScrollLayer { .. }
+                | Command::PopScrollLayer
+                | Command::ScrollClipRadii(_)
+                | Command::DrawCompositeTile { .. } => {}
                 Command::PushClip(ClipRect(rect)) => {
                     clips.push(ClipEntry {
                         rect: *rect,
@@ -405,7 +439,57 @@ impl HitIndex {
             region_id: Some(u32::MAX),
         });
 
-        Self { items }
+        let static_signature = if retained.is_empty() {
+            Vec::new()
+        } else {
+            static_hit_signature(list)
+        };
+        Self {
+            items,
+            retained,
+            static_signature,
+            viewport: (list.viewport.width, list.viewport.height),
+        }
+    }
+
+    /// Update committed-scene properties without rebuilding static geometry.
+    /// The signature includes transformed clips and each drawable's complete
+    /// transform, so chrome, resize and overlay changes still force a rebuild.
+    pub fn update_retained_scenes(&mut self, list: &DisplayList) -> bool {
+        if self.retained.is_empty()
+            || self.viewport != (list.viewport.width, list.viewport.height)
+            || self.static_signature != static_hit_signature(list)
+        {
+            return false;
+        }
+        let scenes: Vec<_> = list
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                Command::DrawScrollScene {
+                    scene,
+                    base,
+                    inputs,
+                } => Some((scene, base, inputs)),
+                _ => None,
+            })
+            .collect();
+        if scenes.len() != self.retained.len()
+            || scenes
+                .iter()
+                .zip(&self.retained)
+                .any(|((scene, _, _), old)| scene.id != old.scene.id)
+        {
+            return false;
+        }
+        for ((_, base, inputs), old) in scenes.into_iter().zip(&mut self.retained) {
+            if old.base != *base || old.inputs != *inputs {
+                old.base = *base;
+                old.inputs = inputs.clone();
+                old.resolved = Arc::new(OnceLock::new());
+            }
+        }
+        true
     }
 
     /// Return the topmost element at the given device-space position.
@@ -428,7 +512,7 @@ impl HitIndex {
                 };
             }
         }
-        best.map(|it| {
+        let mut result = best.map(|it| {
             let (local_pos, local_uv) = compute_locals(&it, pos);
             HitResult {
                 id: it.id,
@@ -462,8 +546,68 @@ impl HitIndex {
                 local_pos,
                 local_uv,
             }
-        })
+        });
+        for retained in &self.retained {
+            if !retained
+                .clips
+                .iter()
+                .all(|clip| point_in_rect_local(pos, &clip.transform, clip.rect))
+            {
+                continue;
+            }
+            let index = retained.resolved.get_or_init(|| {
+                HitIndex::build(&DisplayList {
+                    viewport: crate::Viewport {
+                        width: self.viewport.0,
+                        height: self.viewport.1,
+                    },
+                    commands: retained.scene.resolve(retained.base, &retained.inputs),
+                })
+            });
+            if let Some(mut hit) = index.topmost_at(pos) {
+                if hit.region_id == Some(u32::MAX) {
+                    continue;
+                }
+                hit.id += retained.id_offset;
+                if result
+                    .as_ref()
+                    .is_none_or(|old| hit.z > old.z || (hit.z == old.z && hit.id > old.id))
+                {
+                    result = Some(hit);
+                }
+            }
+        }
+        result
     }
+}
+
+fn static_hit_signature(list: &DisplayList) -> Vec<Command> {
+    let mut transforms = vec![Transform2D::identity()];
+    let mut signature = Vec::new();
+    for command in &list.commands {
+        match command {
+            // Keep the scene's location among clip/overlay commands in the
+            // signature; only its live compositor properties may change.
+            Command::DrawScrollScene { scene, .. } => signature.push(Command::DrawScrollScene {
+                scene: scene.clone(),
+                base: Transform2D::identity(),
+                inputs: Arc::default(),
+            }),
+            Command::PushTransform(t) => transforms.push(*t),
+            Command::PopTransform => {
+                transforms.pop();
+            }
+            Command::PushClip(_) => {
+                signature.push(Command::PushTransform(
+                    *transforms.last().unwrap_or(&Transform2D::identity()),
+                ));
+                signature.push(command.clone());
+                signature.push(Command::PopTransform);
+            }
+            _ => signature.push(command.clone()),
+        }
+    }
+    signature
 }
 
 fn bbox_for_path(path: &Path) -> Option<Rect> {
@@ -877,6 +1021,70 @@ fn compute_locals(item: &HitItem, world: [f32; 2]) -> (Option<[f32; 2]>, Option<
 mod tests {
     use super::*;
     use crate::{Command, DisplayList, Viewport};
+
+    #[test]
+    fn retained_hit_properties_follow_scroll_and_invalidate_changed_clip_ownership() {
+        let viewport = Viewport {
+            width: 200,
+            height: 200,
+        };
+        let mut painter = crate::Painter::begin_frame(viewport);
+        painter.push_bound_scroll_layer("list".into(), "offset".into(), [0.0, 0.0], [-1.0, -1.0]);
+        painter.hit_region_rect(
+            42,
+            Rect {
+                x: 20.0,
+                y: 80.0,
+                w: 40.0,
+                h: 20.0,
+            },
+            1,
+        );
+        painter.pop_scroll_layer();
+        let scene = Arc::new(crate::ScrollScene::new(
+            painter.finish().commands.into(),
+            Transform2D::identity(),
+            1.0,
+            None,
+        ));
+        let make_list = |offset: f32, inside_clip: bool| {
+            let draw = Command::DrawScrollScene {
+                scene: scene.clone(),
+                base: Transform2D::identity(),
+                inputs: Arc::new([("offset".into(), [0.0, offset])].into_iter().collect()),
+            };
+            let clip = Command::PushClip(ClipRect(Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 60.0,
+            }));
+            DisplayList {
+                viewport,
+                commands: if inside_clip {
+                    vec![clip, draw, Command::PopClip]
+                } else {
+                    vec![draw, clip, Command::PopClip]
+                },
+            }
+        };
+        let mut index = HitIndex::build(&make_list(0.0, true));
+        assert_ne!(index.topmost_at([30.0, 90.0]).unwrap().region_id, Some(42));
+        assert!(index.update_retained_scenes(&make_list(40.0, true)));
+        assert_eq!(index.topmost_at([30.0, 50.0]).unwrap().region_id, Some(42));
+        assert_ne!(index.topmost_at([30.0, 90.0]).unwrap().region_id, Some(42));
+        assert!(
+            !index.update_retained_scenes(&make_list(0.0, false)),
+            "moving a scene out of a clip must rebuild its inherited clip state"
+        );
+        assert_eq!(
+            HitIndex::build(&make_list(0.0, false))
+                .topmost_at([30.0, 90.0])
+                .unwrap()
+                .region_id,
+            Some(42)
+        );
+    }
 
     #[test]
     fn inline_hyperlink_hit_wins_over_overlapping_text_region() {

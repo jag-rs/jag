@@ -60,6 +60,8 @@ impl JagSurface {
         // Build final display list from painter
         let mut list = canvas.painter.finish();
         self.reset_synthetic_external_texture_ids();
+        list.commands =
+            self.flatten_scroll_layers(&list.commands, list.viewport, text_provider.as_ref())?;
         let width = canvas.viewport.width.max(1);
         let height = canvas.viewport.height.max(1);
         let has_backdrop_blur = !canvas.backdrop_blur_draws.is_empty();

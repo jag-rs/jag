@@ -4,6 +4,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use jag_draw::{Command, ExternalTextureId, SurfaceEffect, TextProvider, wgpu};
 
+// Tiny clip/scroll tiles still consume handles and cache bookkeeping. Charge
+// at least one 4 KiB slot instead of limiting every view to 128 textures.
+const MIN_ENTRY_CHARGE: u64 = 4096;
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RetainedLayerStats {
     pub hits: u64,
@@ -12,6 +16,7 @@ pub struct RetainedLayerStats {
     pub rasterized_pixels: u64,
     pub reused_pixels: u64,
     pub resident_bytes: u64,
+    pub budget_usage_bytes: u64,
     pub evictions: u64,
 }
 
@@ -23,6 +28,7 @@ pub(super) struct LayerKey {
     provider: Option<Arc<dyn TextProvider + Send + Sync>>,
     font_tag: u64,
     children: Vec<(ExternalTextureId, u64)>,
+    assets: Vec<(std::path::PathBuf, jag_draw::AssetStamp)>,
 }
 
 impl PartialEq for LayerKey {
@@ -32,6 +38,7 @@ impl PartialEq for LayerKey {
             && self.font_tag == other.font_tag
             && self.effect == other.effect
             && self.children == other.children
+            && self.assets == other.assets
             && match (&self.provider, &other.provider) {
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b),
                 (None, None) => true,
@@ -45,6 +52,7 @@ struct Entry {
     key: LayerKey,
     view: Arc<wgpu::TextureView>,
     bytes: u64,
+    charge: u64,
     revision: u64,
     used: u64,
 }
@@ -54,6 +62,7 @@ pub(super) struct RetainedLayers {
     current: HashMap<ExternalTextureId, u64>,
     budget: u64,
     resident: u64,
+    budget_usage: u64,
     clock: u64,
     revision: u64,
     stats: RetainedLayerStats,
@@ -66,6 +75,7 @@ impl Default for RetainedLayers {
             current: HashMap::new(),
             budget: 32 * 1024 * 1024,
             resident: 0,
+            budget_usage: 0,
             clock: 0,
             revision: 0,
             stats: Default::default(),
@@ -83,6 +93,7 @@ impl RetainedLayers {
         self.entries.clear();
         self.current.clear();
         self.resident = 0;
+        self.budget_usage = 0;
     }
 
     pub fn set_budget(&mut self, bytes: u64) {
@@ -93,6 +104,7 @@ impl RetainedLayers {
     pub fn stats(&self) -> RetainedLayerStats {
         RetainedLayerStats {
             resident_bytes: self.resident,
+            budget_usage_bytes: self.budget_usage,
             ..self.stats
         }
     }
@@ -122,8 +134,19 @@ impl RetainedLayers {
         let mut commands = commands.to_vec();
         let mut children = Vec::new();
         let mut has_text = false;
+        let mut assets = Vec::new();
         for command in &mut commands {
             let transform = match command {
+                Command::DrawSvg {
+                    path, transform, ..
+                }
+                | Command::DrawImage {
+                    path, transform, ..
+                } => {
+                    let path = crate::resolve_asset_path(path);
+                    assets.push((path.clone(), jag_draw::AssetStamp::read(&path)?));
+                    transform
+                }
                 Command::DrawText {
                     transform,
                     dynamic: false,
@@ -163,7 +186,18 @@ impl RetainedLayers {
                     }
                     transform
                 }
-                Command::PushClip(_) | Command::PopClip | Command::PopTransform => continue,
+                Command::PushClip(_)
+                | Command::PopClip
+                | Command::PopTransform
+                | Command::ScrollClipRadii(_) => continue,
+                Command::DrawCompositeTile {
+                    texture_id, rect, ..
+                } => {
+                    children.push((*texture_id, *self.current.get(texture_id)?));
+                    rect.x -= origin[0];
+                    rect.y -= origin[1];
+                    continue;
+                }
                 // File-backed images/SVGs need decode/asset revisions before
                 // they can be retained. Never freeze async loads or HMR assets.
                 _ => return None,
@@ -181,6 +215,7 @@ impl RetainedLayers {
             provider,
             font_tag,
             children,
+            assets,
         })
     }
 
@@ -219,33 +254,43 @@ impl RetainedLayers {
     ) {
         if let Some(old) = self.entries.remove(&id) {
             self.resident -= old.bytes;
+            self.budget_usage -= old.charge;
         }
-        if bytes > self.budget {
+        self.current.remove(&id);
+        let charge = bytes.max(MIN_ENTRY_CHARGE);
+        if charge > self.budget {
             return;
         }
-        while self.resident + bytes > self.budget || self.entries.len() >= 128 {
+        while self.budget_usage > self.budget - charge {
             let Some(old_id) = self
                 .entries
                 .iter()
+                // A frame which exceeds the budget must still reuse its
+                // resident subset. Evicting tiles already used this frame
+                // makes a sequential scan redraw the entire set every time.
+                .filter(|(id, _)| !self.current.contains_key(id))
                 .min_by_key(|(_, e)| e.used)
                 .map(|(id, _)| *id)
             else {
-                break;
+                return;
             };
             let old = self.entries.remove(&old_id).unwrap();
             self.resident -= old.bytes;
+            self.budget_usage -= old.charge;
             self.stats.evictions += 1;
         }
         self.clock += 1;
         self.revision += 1;
         self.current.insert(id, self.revision);
         self.resident += bytes;
+        self.budget_usage += charge;
         self.entries.insert(
             id,
             Entry {
                 key,
                 view,
                 bytes,
+                charge,
                 revision: self.revision,
                 used: self.clock,
             },

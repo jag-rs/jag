@@ -12,6 +12,7 @@ mod readback;
 pub mod shapes;
 mod surface;
 
+pub use canvas::ScrollSceneCapture;
 pub use canvas::{Canvas, ImageFitMode, RawImageDraw, RoundedRectClip, ScrimDraw};
 pub use readback::grab_last_frame_rgba;
 pub use surface::{CachedFrameData, JagSurface, RetainedLayerStats, get_last_raw_image_rect};

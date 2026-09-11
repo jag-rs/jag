@@ -99,6 +99,7 @@ impl From<SvgStyle> for SvgStyleKey {
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct CacheKey {
     path: PathBuf,
+    stamp: Option<crate::AssetStamp>,
     scale: RasterScaleKey,
     style: SvgStyleKey,
 }
@@ -197,6 +198,7 @@ impl SvgRasterCache {
         let style_key = SvgStyleKey::from(style);
         let key = CacheKey {
             path: path.to_path_buf(),
+            stamp: crate::AssetStamp::read(path),
             scale: scale_b,
             style: style_key,
         };

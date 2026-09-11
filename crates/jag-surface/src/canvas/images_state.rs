@@ -4,6 +4,27 @@ use super::helpers::intersect_rect;
 use super::{Canvas, ImageFitMode, RawImageDraw, RoundedRectClip};
 
 impl Canvas {
+    /// Record a separately movable content layer. Keys must be stable across
+    /// frames and unique within the committed scene (including iframe owners).
+    pub fn push_scroll_layer(&mut self, key: impl Into<String>, translation: [f32; 2]) {
+        self.painter.push_scroll_layer(key.into(), translation);
+    }
+
+    pub fn pop_scroll_layer(&mut self) {
+        self.painter.pop_scroll_layer();
+    }
+
+    pub fn push_bound_scroll_layer(
+        &mut self,
+        key: impl Into<String>,
+        input_key: impl Into<String>,
+        value: [f32; 2],
+        factor: [f32; 2],
+    ) {
+        self.painter
+            .push_bound_scroll_layer(key.into(), input_key.into(), value, factor);
+    }
+
     /// Queue an SVG to be rasterized and drawn at origin, scaled to fit within max_size.
     /// Captures the current transform from the painter's transform stack.
     /// Optional style parameter allows overriding fill, stroke, and stroke-width.
@@ -104,6 +125,18 @@ impl Canvas {
         fit: ImageFitMode,
         z: i32,
     ) {
+        if self.painter.has_scroll_layer() {
+            self.painter
+                .extend_commands(&[jag_draw::Command::DrawImage {
+                    path: path.into(),
+                    origin,
+                    size,
+                    fit,
+                    z,
+                    transform: self.painter.current_transform(),
+                }]);
+            return;
+        }
         // Skip draws entirely outside the active clip rect.
         if let Some(clip) = self.clip_rect_local() {
             let bounds = Rect {
@@ -287,6 +320,8 @@ impl Canvas {
             rect: dev_rect,
             radii: dev_radii,
         }));
+        self.painter
+            .extend_commands(&[jag_draw::Command::ScrollClipRadii(dev_radii)]);
     }
 
     fn push_clip_rect_inner(&mut self, rect: Rect) {
@@ -438,6 +473,9 @@ impl Canvas {
     /// For axis-aligned transforms (translation + scale), the device-space clip
     /// is inverse-transformed back to the local coordinate space.
     pub(crate) fn clip_rect_local(&self) -> Option<Rect> {
+        if self.painter.has_scroll_layer() {
+            return None;
+        }
         let clip_device = match self.clip_stack.last() {
             Some(Some(r)) => *r,
             _ => return None,
@@ -496,6 +534,9 @@ impl Canvas {
     /// Lets filled/stroked SVG paths honor `border-radius` `overflow:hidden`
     /// corners, not just the bounding rect.
     pub(crate) fn rounded_clip_local(&self) -> Option<PathClip> {
+        if self.painter.has_scroll_layer() {
+            return None;
+        }
         let rect = self.clip_rect_local()?;
         // The nearest active rounded clip. Descendants (e.g. an SVG element's own
         // default `overflow` rect clip) push `None` entries on top of an ancestor

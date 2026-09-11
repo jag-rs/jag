@@ -11,8 +11,41 @@ pub struct Viewport {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ExternalTextureId(pub u64);
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ImageFitMode {
+    Fill,
+    #[default]
+    Contain,
+    Cover,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
+    /// An immutable paint commit with a small set of live compositor inputs.
+    DrawScrollScene {
+        scene: std::sync::Arc<crate::ScrollScene>,
+        base: Transform2D,
+        inputs: std::sync::Arc<crate::ScrollInputs>,
+    },
+    /// A content-space raster owner. Descendants retain their pixels while this
+    /// translation changes; nested owners remain separate compositing layers.
+    PushScrollLayer {
+        key: String,
+        origin: [f32; 2],
+        binding: crate::ScrollBinding,
+    },
+    PopScrollLayer,
+    /// Corner geometry for the most recently pushed rectangular clip.
+    ScrollClipRadii([f32; 4]),
+    /// A tile quad with cropped UVs. Clip geometry is applied at composition,
+    /// never baked into the reusable content texture.
+    DrawCompositeTile {
+        rect: Rect,
+        texture_id: ExternalTextureId,
+        uv: [f32; 4],
+        rounded_clip: Option<crate::RoundedRectClipGpu>,
+        z: i32,
+    },
     DrawRect {
         rect: Rect,
         brush: Brush,
@@ -121,6 +154,7 @@ pub enum Command {
         path: PathBuf,
         origin: [f32; 2],
         size: [f32; 2],
+        fit: ImageFitMode,
         z: i32,
         transform: Transform2D,
     },
@@ -163,6 +197,7 @@ impl Command {
     /// Get the z-index of this command, or None for non-drawable commands
     pub fn z_index(&self) -> Option<i32> {
         match self {
+            Command::DrawCompositeTile { z, .. } => Some(*z),
             Command::DrawRect { z, .. } => Some(*z),
             Command::DrawRoundedRect { z, .. } => Some(*z),
             Command::StrokeRect { z, .. } => Some(*z),

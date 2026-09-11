@@ -9,6 +9,7 @@ pub struct Painter {
     clip_depth: usize,
     opacity_depth: usize,
     filter_depth: usize,
+    scroll_depth: usize,
 }
 
 impl Painter {
@@ -22,6 +23,7 @@ impl Painter {
             clip_depth: 0,
             opacity_depth: 0,
             filter_depth: 0,
+            scroll_depth: 0,
         }
     }
 
@@ -70,7 +72,46 @@ impl Painter {
     }
 
     pub fn has_active_effect(&self) -> bool {
-        self.opacity_depth > 0 || self.filter_depth > 0
+        self.opacity_depth > 0 || self.filter_depth > 0 || self.scroll_depth > 0
+    }
+
+    pub fn has_scroll_layer(&self) -> bool {
+        self.scroll_depth > 0
+    }
+
+    pub fn push_scroll_layer(&mut self, key: String, translation: [f32; 2]) {
+        self.push_bound_scroll_layer(key.clone(), key, translation, [1.0, 1.0]);
+    }
+
+    pub fn push_bound_scroll_layer(
+        &mut self,
+        key: String,
+        input_key: String,
+        value: [f32; 2],
+        factor: [f32; 2],
+    ) {
+        let basis = self.current_transform().m[..4].try_into().unwrap();
+        let translation = [value[0] * factor[0], value[1] * factor[1]];
+        self.push_transform(Transform2D::translate(translation[0], translation[1]));
+        let t = self.current_transform();
+        self.list.commands.push(Command::PushScrollLayer {
+            key,
+            origin: [t.m[4], t.m[5]],
+            binding: crate::ScrollBinding {
+                key: input_key,
+                value,
+                factor,
+                basis,
+            },
+        });
+        self.scroll_depth += 1;
+    }
+
+    pub fn pop_scroll_layer(&mut self) {
+        assert!(self.scroll_depth > 0, "unbalanced scroll layer");
+        self.scroll_depth -= 1;
+        self.list.commands.push(Command::PopScrollLayer);
+        self.pop_transform();
     }
 
     pub fn push_filter(&mut self, effect: FilterEffect) {
@@ -92,6 +133,10 @@ impl Painter {
     /// Return the current number of commands in the display list.
     pub fn command_count(&self) -> usize {
         self.list.commands.len()
+    }
+
+    pub fn truncate_commands(&mut self, count: usize) {
+        self.list.commands.truncate(count);
     }
 
     /// Append previously-captured commands to the display list.
@@ -255,6 +300,7 @@ impl Painter {
     pub fn image<P: Into<PathBuf>>(&mut self, path: P, origin: [f32; 2], size: [f32; 2], z: i32) {
         let t = self.current_transform();
         self.list.commands.push(Command::DrawImage {
+            fit: crate::ImageFitMode::Fill,
             path: path.into(),
             origin,
             size,

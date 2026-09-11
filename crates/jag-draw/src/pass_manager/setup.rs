@@ -265,6 +265,13 @@ impl PassManager {
         self.external_textures.clear();
     }
 
+    /// Release frame registrations for compositor-owned resources. Retained
+    /// cache entries keep their own Arc; eviction must actually free the view.
+    pub fn clear_compositor_textures(&mut self) {
+        self.external_textures
+            .retain(|id, _| id.0 < 0x7000_0000_0000_0000);
+    }
+
     /// Create a z-index bind group for the given z-index value.
     /// This is used for dynamic depth control in Phase 2.
     pub fn create_z_bind_group(&self, z_index: f32, queue: &wgpu::Queue) -> wgpu::BindGroup {

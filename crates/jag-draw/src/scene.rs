@@ -126,7 +126,7 @@ pub struct RoundedRect {
 
 /// Rounded-rect clip data ready for the GPU image shader.
 /// Rect and radii are in device pixels.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RoundedRectClipGpu {
     /// [x, y, w, h] in device pixels.
     pub rect: [f32; 4],

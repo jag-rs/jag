@@ -183,19 +183,19 @@ impl PassManager {
             let verts = [
                 ImageQuadVtx {
                     pos: [etd.origin[0], etd.origin[1]],
-                    uv: [0.0, 0.0],
+                    uv: [etd.uv[0], etd.uv[1]],
                 },
                 ImageQuadVtx {
                     pos: [etd.origin[0] + etd.size[0], etd.origin[1]],
-                    uv: [1.0, 0.0],
+                    uv: [etd.uv[2], etd.uv[1]],
                 },
                 ImageQuadVtx {
                     pos: [etd.origin[0] + etd.size[0], etd.origin[1] + etd.size[1]],
-                    uv: [1.0, 1.0],
+                    uv: [etd.uv[2], etd.uv[3]],
                 },
                 ImageQuadVtx {
                     pos: [etd.origin[0], etd.origin[1] + etd.size[1]],
-                    uv: [0.0, 1.0],
+                    uv: [etd.uv[0], etd.uv[3]],
                 },
             ];
             let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
@@ -218,9 +218,12 @@ impl PassManager {
             let vp_bg_ext = self.image.vp_bind_group(&self.device, &self.vp_buffer);
             let (z_bg_ext, z_buf_ext) = self.create_group_z_bind_group(etd.z as f32, queue);
             let tex_bg = self.image.tex_bind_group(&self.device, tex_view);
-            let (params_bg, params_buf) =
-                self.image
-                    .params_bind_group(&self.device, etd.opacity, etd.premultiplied);
+            let (params_bg, params_buf) = self.image.params_bind_group_clipped(
+                &self.device,
+                etd.opacity,
+                etd.premultiplied,
+                etd.rounded_clip.as_ref(),
+            );
 
             ext_z_vals.push(etd.z);
             ext_resources.push((
@@ -374,19 +377,19 @@ impl PassManager {
             let verts = [
                 ImageQuadVtx {
                     pos: [etd.origin[0], etd.origin[1]],
-                    uv: [0.0, 0.0],
+                    uv: [etd.uv[0], etd.uv[1]],
                 },
                 ImageQuadVtx {
                     pos: [etd.origin[0] + etd.size[0], etd.origin[1]],
-                    uv: [1.0, 0.0],
+                    uv: [etd.uv[2], etd.uv[1]],
                 },
                 ImageQuadVtx {
                     pos: [etd.origin[0] + etd.size[0], etd.origin[1] + etd.size[1]],
-                    uv: [1.0, 1.0],
+                    uv: [etd.uv[2], etd.uv[3]],
                 },
                 ImageQuadVtx {
                     pos: [etd.origin[0], etd.origin[1] + etd.size[1]],
-                    uv: [0.0, 1.0],
+                    uv: [etd.uv[0], etd.uv[3]],
                 },
             ];
             let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
@@ -411,10 +414,11 @@ impl PassManager {
                 .vp_bind_group(&self.device, &self.vp_buffer);
             let (z_bg_ext, z_buf_ext) = self.create_group_z_bind_group(etd.z as f32, queue);
             let tex_bg = self.image_offscreen.tex_bind_group(&self.device, tex_view);
-            let (params_bg, params_buf) = self.image_offscreen.params_bind_group(
+            let (params_bg, params_buf) = self.image_offscreen.params_bind_group_clipped(
                 &self.device,
                 etd.opacity,
                 etd.premultiplied,
+                etd.rounded_clip.as_ref(),
             );
 
             ext_z_vals_off.push(etd.z);

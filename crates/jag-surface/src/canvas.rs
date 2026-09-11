@@ -8,7 +8,9 @@ use jag_draw::{
 mod helpers;
 mod images_state;
 mod masks;
+mod scroll_scene;
 mod shapes;
+pub use scroll_scene::ScrollSceneCapture;
 mod text;
 mod text_extra;
 
@@ -25,22 +27,7 @@ pub struct RoundedRectClip {
     pub radii: [f32; 4],
 }
 
-/// How an image should fit within its bounds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImageFitMode {
-    /// Stretch to fill (may distort aspect ratio)
-    Fill,
-    /// Fit inside maintaining aspect ratio (letterbox/pillarbox)
-    Contain,
-    /// Fill maintaining aspect ratio (may crop edges)
-    Cover,
-}
-
-impl Default for ImageFitMode {
-    fn default() -> Self {
-        Self::Contain
-    }
-}
+pub use jag_draw::ImageFitMode;
 
 /// Builder for a single frame’s draw commands. Wraps `Painter` and adds canvas helpers.
 pub struct Canvas {

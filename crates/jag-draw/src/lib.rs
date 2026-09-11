@@ -37,7 +37,11 @@ use anyhow::Result;
 pub use wgpu;
 
 mod allocator;
+mod asset_stamp;
+pub use asset_stamp::AssetStamp;
+mod scroll_scene;
 pub use allocator::{OwnedBuffer, OwnedTexture, RenderAllocator};
+pub use scroll_scene::*;
 
 /// Top-level engine handle.
 pub struct GraphicsEngine {
