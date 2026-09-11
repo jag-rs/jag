@@ -115,6 +115,7 @@ impl JagSurface {
         // of retaining one new registration per effect per repaint. Cached
         // scroll-only frames do not enter this path and keep their views.
         self.next_synthetic_external_texture_id = SYNTHETIC_EXTERNAL_TEXTURE_ID_START;
+        self.retained_layers.begin_frame();
     }
 
     fn allocate_synthetic_external_texture_id(&mut self) -> ExternalTextureId {
@@ -142,6 +143,23 @@ impl JagSurface {
                 if group.layers.iter().any(|layer| layer.text_clip)
         );
         localize_clips(&mut commands, geometry.origin, logical_scale);
+        let tex_id = self.allocate_synthetic_external_texture_id();
+        let retained_key = self.retained_layers.key(
+            &commands,
+            &effect,
+            geometry.origin,
+            geometry.pixel_size,
+            logical_scale,
+            text_provider,
+        );
+        if let Some(key) = &retained_key
+            && let Some(view) = self.retained_layers.lookup(tex_id, key)
+        {
+            self.pass.register_shared_external_texture(tex_id, view);
+            return Ok(tex_id);
+        }
+        self.retained_layers
+            .rasterized(retained_key.is_some(), geometry.pixel_size);
         let backdrop_draws = commands
             .iter()
             .filter_map(|command| match command {
@@ -179,14 +197,20 @@ impl JagSurface {
             .svg_draws
             .iter()
             .map(|draw| {
+                // Extraction has already transformed the origin. Keep that
+                // translation once, while preserving the linear transform for
+                // the quad geometry and physical SVG raster resolution.
+                let mut transform = draw.transform;
+                transform.m[4] = draw.origin[0];
+                transform.m[5] = draw.origin[1];
                 (
                     crate::resolve_asset_path(&draw.path),
-                    draw.origin,
+                    [0.0, 0.0],
                     draw.size,
                     draw.style,
                     draw.z,
                     draw.opacity,
-                    Transform2D::identity(),
+                    transform,
                     None, // no clip for opacity group internals
                     None, // no rounded clip for opacity group internals
                 )
@@ -311,8 +335,15 @@ impl JagSurface {
         };
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        let tex_id = self.allocate_synthetic_external_texture_id();
-        self.pass.register_external_texture(tex_id, layer_view);
+        let layer_view = Arc::new(layer_view);
+        if let Some(key) = retained_key {
+            let bytes_per_pixel = self.surface_format.block_copy_size(None).unwrap_or(16);
+            let bytes = u64::from(width) * u64::from(height) * u64::from(bytes_per_pixel);
+            self.retained_layers
+                .insert(tex_id, key, layer_view.clone(), bytes);
+        }
+        self.pass
+            .register_shared_external_texture(tex_id, layer_view);
         Ok(tex_id)
     }
 
@@ -337,6 +368,11 @@ impl JagSurface {
                         .find(|surface| surface.parent.is_none() && surface.commands.start == i + 1)
                         .expect("validated compositor plan must own each root opacity scope");
                     let mut raw_group = commands[surface.commands.clone()].to_vec();
+                    // Draws store complete transforms, but clip commands store
+                    // local rects. Preserve the transform active at scope entry
+                    // when replaying an isolated group (including nested ones).
+                    raw_group.insert(0, Command::PushTransform(surface.inherited_transform));
+                    raw_group.push(Command::PopTransform);
                     if let Some(clip) = surface.inherited_clip {
                         raw_group.insert(0, Command::PushClip(jag_draw::ClipRect(clip)));
                         raw_group.push(Command::PopClip);

@@ -159,7 +159,7 @@ impl PassManager {
             let tex_bg = self.image.tex_bind_group(&self.device, view_scaled);
             let (params_bg, params_buf) =
                 self.image
-                    .params_bind_group_clipped(&self.device, *opacity, false, *rounded_clip);
+                    .params_bind_group_clipped(&self.device, *opacity, true, *rounded_clip);
 
             svg_z_vals.push(*z_val as i32);
             svg_resources.push((
@@ -348,7 +348,7 @@ impl PassManager {
             let (params_bg, params_buf) = self.image_offscreen.params_bind_group_clipped(
                 &self.device,
                 *opacity,
-                false,
+                true,
                 *rounded_clip,
             );
 

@@ -274,7 +274,7 @@ pub struct PassManager {
     smaa_param_buffer: wgpu::Buffer,
     // Registry for externally-rendered textures (e.g., 3D viewports)
     external_textures:
-        std::collections::HashMap<crate::display_list::ExternalTextureId, wgpu::TextureView>,
+        std::collections::HashMap<crate::display_list::ExternalTextureId, Arc<wgpu::TextureView>>,
 }
 
 // Vertex structures for unified rendering

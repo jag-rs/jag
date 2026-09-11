@@ -28,7 +28,11 @@ impl Canvas {
             }
         }
         if self.painter.has_active_effect() {
-            self.painter.svg(path, origin, max_size, z);
+            // Keep the SVG command until the layer knows its device scale.
+            // Painter::svg imports simple SVGs as un-antialiased path geometry,
+            // unlike the rasterized side channel used outside effect groups.
+            self.painter
+                .svg_styled(path, origin, max_size, Default::default(), z);
             return;
         }
         let device_clip = self.clip_stack.last().copied().flatten();

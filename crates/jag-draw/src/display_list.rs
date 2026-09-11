@@ -11,7 +11,7 @@ pub struct Viewport {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ExternalTextureId(pub u64);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     DrawRect {
         rect: Rect,

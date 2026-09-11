@@ -1,23 +1,21 @@
 use crate::Transform2D;
 
-const SCALE_QUANTUM: f32 = 64.0;
-
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct RasterScaleKey(u16);
+pub(crate) struct RasterScaleKey(u32);
 
 impl RasterScaleKey {
     pub(crate) fn from_scale(scale: f32) -> Option<Self> {
         if !scale.is_finite() || scale <= 0.0 {
             return None;
         }
-        let quantized = (scale * SCALE_QUANTUM)
-            .round()
-            .clamp(1.0, f32::from(u16::MAX));
-        Some(Self(quantized as u16))
+        // Quantizing the raster scale moves authored edges off the pixel grid
+        // even when the requested icon size is an exact number of pixels.
+        // The cache is already bounded by its byte budget.
+        Some(Self(scale.to_bits()))
     }
 
     pub(crate) fn as_f32(self) -> f32 {
-        f32::from(self.0) / SCALE_QUANTUM
+        f32::from_bits(self.0)
     }
 }
 

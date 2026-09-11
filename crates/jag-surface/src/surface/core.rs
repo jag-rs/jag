@@ -32,6 +32,7 @@ impl JagSurface {
             frame_cache: None,
             frame_cache_enabled: true,
             pending_image_loads: false,
+            retained_layers: Default::default(),
         }
     }
 
@@ -83,6 +84,7 @@ impl JagSurface {
     pub fn set_logical_pixels(&mut self, on: bool) {
         if self.logical_pixels != on {
             self.frame_cache = None;
+            self.retained_layers.clear();
         }
         self.logical_pixels = on;
     }
@@ -95,6 +97,7 @@ impl JagSurface {
         };
         if (self.dpi_scale - scale).abs() > f32::EPSILON {
             self.frame_cache = None;
+            self.retained_layers.clear();
         }
         self.dpi_scale = scale;
     }
@@ -103,6 +106,7 @@ impl JagSurface {
         let s = if s.is_finite() && s > 0.0 { s } else { 1.0 };
         if (self.ui_scale - s).abs() > f32::EPSILON {
             self.frame_cache = None;
+            self.retained_layers.clear();
         }
         self.ui_scale = s;
     }
@@ -135,6 +139,16 @@ impl JagSurface {
     /// Clear the frame cache (e.g., on resize or content change).
     pub fn clear_frame_cache(&mut self) {
         self.frame_cache = None;
+    }
+
+    /// Retain isolated effect/iframe pixels across frames. A zero budget disables
+    /// retention; rendering continues through the same effect compositor.
+    pub fn set_retained_layer_budget(&mut self, bytes: u64) {
+        self.retained_layers.set_budget(bytes);
+    }
+
+    pub fn retained_layer_stats(&self) -> super::RetainedLayerStats {
+        self.retained_layers.stats()
     }
 
     /// Enable or disable retaining the completed frame for scroll-only replay.

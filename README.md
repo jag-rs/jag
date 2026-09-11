@@ -70,6 +70,16 @@ jag (meta-crate)
 └── jag-ui       — UI elements, widgets, events, layout
 ```
 
+## Rendering checks
+
+`cargo test -p jag-surface --test dpi_edges` requires a GPU adapter and checks
+SVG edge colors and centered rounded strokes at 100%, 125%, 150%, 200%, and
+300% display scaling. SVG textures store color premultiplied in linear light;
+rounded rectangle stroke coordinates describe the stroke centerline.
+The checks also compare an SVG inside an opacity-1 iframe layer with the same
+SVG drawn directly: both must keep antialiased edges through the DPI-aware
+rasterizer, including simple solid-color icons.
+
 ## License
 
 MIT License. See [LICENSE-MIT](LICENSE-MIT) for details.

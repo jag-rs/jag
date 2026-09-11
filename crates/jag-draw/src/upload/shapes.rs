@@ -215,6 +215,9 @@ pub(crate) fn push_rounded_rect_stroke_aa(
         return;
     }
 
+    // Match path stroking: the requested rounded rectangle is the centerline,
+    // not the outside of the stroke. CSS callers already inset by half-width.
+    let rrect = expand_rrect(rrect, w * 0.5);
     let inner = inset_rrect(rrect, w);
     if inner.rect.w <= 0.0 || inner.rect.h <= 0.0 {
         push_rounded_rect_aa(vertices, indices, rrect, color, z, t, edge_aa);

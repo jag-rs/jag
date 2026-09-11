@@ -3,6 +3,22 @@ use crate::svg_fontdb::{render_svg_to_pixmap, svg_font_db};
 
 const LUCIDE_BELL: &[u8] = include_bytes!("../tests/fixtures/lucide-bell.svg");
 
+#[test]
+fn cached_scale_preserves_pixel_aligned_icon_edges() {
+    // These edges land on whole pixels at 16px. Scale bucketing used to
+    // introduce partially covered pixels along otherwise sharp edges.
+    let source = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M6 6h6v12H6z"/></svg>"#;
+    let fonts = svg_font_db();
+    for dpr in [1.0, 1.25, 1.5, 2.0, 3.0] {
+        let scale = crate::svg_scale::RasterScaleKey::from_scale(16.0 / 24.0 * dpr)
+            .unwrap()
+            .as_f32();
+        let pixmap = render_svg_to_pixmap(source, scale, &fonts, None, 4096).unwrap();
+        assert!(pixmap.pixels().iter().all(|p| p.alpha() == 0 || p.alpha() == 255),
+            "pixel-aligned edges became soft at DPR {dpr}");
+    }
+}
+
 fn alpha_sum(pixmap: &tiny_skia::Pixmap) -> u64 {
     pixmap
         .data()

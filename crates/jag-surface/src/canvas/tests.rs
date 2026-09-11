@@ -44,7 +44,7 @@ mod side_channel_opacity_tests {
                 .display_list()
                 .commands
                 .iter()
-                .any(|command| matches!(command, Command::DrawSvg { style: None, .. }))
+                .any(|command| matches!(command, Command::DrawSvg { style: Some(style), .. } if *style == jag_draw::SvgStyle::default()))
         );
     }
 
@@ -142,23 +142,25 @@ mod side_channel_opacity_tests {
 
         canvas.draw_svg(svg, [10.0, 20.0], [24.0, 24.0], 7);
 
-        let transform = canvas
+        let (origin, transform) = canvas
             .display_list()
             .commands
             .iter()
             .find_map(|command| match command {
-                Command::FillPath { transform, .. } | Command::StrokePath { transform, .. } => {
-                    Some(*transform)
-                }
+                Command::DrawSvg {
+                    origin, transform, ..
+                } => Some((*origin, *transform)),
                 _ => None,
             })
-            .expect("simple SVG should import vector path commands");
+            .expect("simple SVG must retain the DPI-aware raster command inside effects");
         assert_eq!(
-            transform.m[4], 110.0,
+            origin[0] + transform.m[4],
+            110.0,
             "parent translation must not be composed twice"
         );
         assert_eq!(
-            transform.m[5], 70.0,
+            origin[1] + transform.m[5],
+            70.0,
             "parent translation must not be composed twice"
         );
     }

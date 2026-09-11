@@ -235,7 +235,31 @@ impl SvgRasterCache {
         )?;
         let w = pixmap.width();
         let h = pixmap.height();
-        let rgba = pixmap.take();
+        // tiny-skia premultiplies in sRGB space. The GPU samples this sRGB
+        // texture in linear light, so first undo that premultiplication, then
+        // premultiply in linear light and encode for the texture. This also
+        // makes bilinear filtering preserve color across transparent edges.
+        let rgba: Vec<u8> = pixmap
+            .pixels()
+            .iter()
+            .flat_map(|pixel| {
+                let straight = pixel.demultiply();
+                let linear = ColorLinPremul::from_srgba_u8([
+                    straight.red(),
+                    straight.green(),
+                    straight.blue(),
+                    straight.alpha(),
+                ]);
+                let encoded: palette::Srgb<f32> =
+                    palette::Srgb::from_linear(palette::LinSrgb::new(linear.r, linear.g, linear.b));
+                [
+                    (encoded.red * 255.0).round() as u8,
+                    (encoded.green * 255.0).round() as u8,
+                    (encoded.blue * 255.0).round() as u8,
+                    straight.alpha(),
+                ]
+            })
+            .collect();
 
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("svg-raster"),

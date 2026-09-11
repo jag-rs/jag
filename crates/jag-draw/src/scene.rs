@@ -81,7 +81,7 @@ pub type Color = ColorLinPremul;
 
 // Constructors for ColorLinPremul are defined in color.rs to keep scene.rs focused
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Brush {
     Solid(ColorLinPremul),
     LinearGradient {
@@ -159,10 +159,10 @@ impl PathClip {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClipRect(pub Rect);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stroke {
     pub width: f32,
 }
@@ -241,7 +241,7 @@ pub enum FilterEffect {
     MaskGroup(MaskGroupEffect),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoxShadowSpec {
     pub offset: [f32; 2],
     pub spread: f32,
@@ -249,7 +249,7 @@ pub struct BoxShadowSpec {
     pub color: ColorLinPremul,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BackdropBlurDraw {
     pub rect: Rect,
     pub effects: Vec<FilterEffect>,
@@ -273,7 +273,7 @@ pub enum FontStyle {
     Oblique,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TextRun {
     pub text: String,
     pub pos: [f32; 2],
@@ -298,13 +298,13 @@ pub struct TextRun {
 
 // --- Path geometry (for SVG import / lyon) ---
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FillRule {
     NonZero,
     EvenOdd,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PathCmd {
     MoveTo([f32; 2]),
     LineTo([f32; 2]),
@@ -313,7 +313,7 @@ pub enum PathCmd {
     Close,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Path {
     pub cmds: Vec<PathCmd>,
     pub fill_rule: FillRule,
@@ -322,7 +322,7 @@ pub struct Path {
 // --- Hyperlink ---
 
 /// Hyperlink element combining text, optional underline, and a URL target.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Hyperlink {
     /// The text content to display
     pub text: String,

@@ -248,6 +248,15 @@ impl PassManager {
         id: crate::display_list::ExternalTextureId,
         view: wgpu::TextureView,
     ) {
+        self.register_shared_external_texture(id, Arc::new(view));
+    }
+
+    /// Register a retained surface without transferring its cache ownership.
+    pub fn register_shared_external_texture(
+        &mut self,
+        id: crate::display_list::ExternalTextureId,
+        view: Arc<wgpu::TextureView>,
+    ) {
         self.external_textures.insert(id, view);
     }
 
