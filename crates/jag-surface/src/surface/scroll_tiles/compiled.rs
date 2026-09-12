@@ -231,8 +231,7 @@ impl CompiledScene {
                 && !matches!(command, Command::PushTransform(_) | Command::PopTransform)
                 || matches!(
                     command,
-                    Command::BackdropFilter(_)
-                        | Command::DrawExternalTexture { .. }
+                    Command::BackdropFilter(_) | Command::DrawExternalTexture { .. }
                 )
                 || command
                     .z_index()

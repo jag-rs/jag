@@ -14,8 +14,13 @@ fn cached_scale_preserves_pixel_aligned_icon_edges() {
             .unwrap()
             .as_f32();
         let pixmap = render_svg_to_pixmap(source, scale, &fonts, None, 4096).unwrap();
-        assert!(pixmap.pixels().iter().all(|p| p.alpha() == 0 || p.alpha() == 255),
-            "pixel-aligned edges became soft at DPR {dpr}");
+        assert!(
+            pixmap
+                .pixels()
+                .iter()
+                .all(|p| p.alpha() == 0 || p.alpha() == 255),
+            "pixel-aligned edges became soft at DPR {dpr}"
+        );
     }
 }
 
