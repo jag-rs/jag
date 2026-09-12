@@ -4,6 +4,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use jag_draw::{Command, ExternalTextureId, SurfaceEffect, TextProvider, wgpu};
 
+#[path = "retained_budget.rs"]
+mod retained_budget;
+use retained_budget::RetainedBudget;
+
 // Tiny clip/scroll tiles still consume handles and cache bookkeeping. Charge
 // at least one 4 KiB slot instead of limiting every view to 128 textures.
 const MIN_ENTRY_CHARGE: u64 = 4096;
@@ -57,10 +61,11 @@ struct Entry {
     used: u64,
 }
 
+#[derive(Default)]
 pub(super) struct RetainedLayers {
     entries: HashMap<ExternalTextureId, Entry>,
     current: HashMap<ExternalTextureId, u64>,
-    budget: u64,
+    budget: RetainedBudget,
     resident: u64,
     budget_usage: u64,
     clock: u64,
@@ -68,28 +73,15 @@ pub(super) struct RetainedLayers {
     stats: RetainedLayerStats,
 }
 
-impl Default for RetainedLayers {
-    fn default() -> Self {
-        Self {
-            entries: HashMap::new(),
-            current: HashMap::new(),
-            budget: 32 * 1024 * 1024,
-            resident: 0,
-            budget_usage: 0,
-            clock: 0,
-            revision: 0,
-            stats: Default::default(),
-        }
-    }
-}
-
 impl RetainedLayers {
     pub fn begin_frame(&mut self) {
+        self.budget.begin_frame();
         self.current.clear();
         self.stats = Default::default();
     }
 
     pub fn clear(&mut self) {
+        self.budget.clear();
         self.entries.clear();
         self.current.clear();
         self.resident = 0;
@@ -97,7 +89,7 @@ impl RetainedLayers {
     }
 
     pub fn set_budget(&mut self, bytes: u64) {
-        self.budget = bytes;
+        self.budget.set(bytes);
         self.clear();
     }
 
@@ -120,7 +112,7 @@ impl RetainedLayers {
         scale: f32,
         provider: Option<&Arc<dyn TextProvider + Send + Sync>>,
     ) -> Option<LayerKey> {
-        if self.budget == 0 || commands.len() > 4096 {
+        if self.budget.bytes() == 0 || commands.len() > 4096 {
             return None;
         }
         let effect = match effect {
@@ -245,6 +237,7 @@ impl RetainedLayers {
         if entry.key != *key {
             return None;
         }
+        self.budget.observe(id, entry.charge);
         self.clock += 1;
         entry.used = self.clock;
         self.current.insert(id, entry.revision);
@@ -275,10 +268,12 @@ impl RetainedLayers {
         }
         self.current.remove(&id);
         let charge = bytes.max(MIN_ENTRY_CHARGE);
-        if charge > self.budget {
+        self.budget.observe(id, charge);
+        let budget = self.budget.bytes();
+        if charge > budget {
             return;
         }
-        while self.budget_usage > self.budget - charge {
+        while self.budget_usage > budget - charge {
             let Some(old_id) = self
                 .entries
                 .iter()

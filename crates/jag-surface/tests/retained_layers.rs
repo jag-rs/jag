@@ -253,7 +253,7 @@ fn retention_respects_memory_budget_and_can_be_disabled() {
                 24.0,
                 20.0,
                 Brush::Solid(ColorLinPremul::from_srgba_u8([frame * 20, 40, 90, 255])),
-                i as i32,
+                i,
             );
             canvas.pop_opacity();
         }
@@ -272,6 +272,50 @@ fn retention_respects_memory_budget_and_can_be_disabled() {
     render(&mut retained, &font, 1.0, 0.0, 0.0, 0.8);
     assert_eq!(retained.retained_layer_stats().resident_bytes, 0);
     assert_eq!(retained.retained_layer_stats().hits, 0);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn retina_working_set_above_32_mib_warms_without_repeated_rasterization() {
+    let (mut retained, mut fresh) = surfaces();
+    let render_large = |surface: &mut JagSurface| {
+        let mut canvas = surface.begin_frame(1024, 1024);
+        canvas.clear(ColorLinPremul::from_srgba_u8([255; 4]));
+        for i in 0..12 {
+            canvas.push_opacity(0.8);
+            canvas.fill_rect(
+                0.0,
+                0.0,
+                1024.0,
+                1024.0,
+                Brush::Solid(ColorLinPremul::from_srgba_u8([i * 20, 40, 90, 255])),
+                i as i32,
+            );
+            canvas.pop_opacity();
+        }
+        let pixels = surface.end_frame_headless(canvas).unwrap().2;
+        surface.pass_manager().clear_external_textures();
+        pixels
+    };
+    let expected = render_large(&mut fresh);
+    for frame in 0..4 {
+        assert_eq!(render_large(&mut retained), expected, "frame {frame}");
+        let stats = retained.retained_layer_stats();
+        assert!(stats.budget_usage_bytes <= 128 * 1024 * 1024, "{stats:?}");
+        if frame >= 2 {
+            assert_eq!(stats.hits, 12, "{stats:?}");
+            assert_eq!(stats.rasterized_pixels, 0, "{stats:?}");
+            assert!(stats.resident_bytes > 32 * 1024 * 1024, "{stats:?}");
+        }
+    }
+    // The same working set must respect a caller's fixed memory limit.
+    retained.set_retained_layer_budget(32 * 1024 * 1024);
+    for _ in 0..3 {
+        assert_eq!(render_large(&mut retained), expected);
+        let stats = retained.retained_layer_stats();
+        assert!(stats.budget_usage_bytes <= 32 * 1024 * 1024, "{stats:?}");
+        assert!(stats.misses > 0, "{stats:?}");
+    }
 }
 
 #[test]

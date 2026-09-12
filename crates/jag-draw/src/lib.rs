@@ -137,7 +137,10 @@ pub fn make_surface_config(
         present_mode,
         alpha_mode,
         view_formats: vec![],
-        desired_maximum_frame_latency: 1,
+        // Metal maps latency + 1 to its drawable pool. Two drawables serialize
+        // acquisition with the previous frame at Retina sizes; three let CPU
+        // encoding overlap presentation. The Mac host still paces submissions.
+        desired_maximum_frame_latency: if cfg!(target_os = "macos") { 2 } else { 1 },
     }
 }
 
