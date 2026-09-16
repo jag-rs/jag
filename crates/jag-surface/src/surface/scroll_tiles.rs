@@ -13,7 +13,8 @@ use super::{
 const TILE: i32 = 512;
 const GUTTER: i32 = 1;
 mod compiled;
-use compiled::RasterRun;
+mod raster;
+use raster::RasterRun;
 
 #[derive(Default)]
 pub(super) struct ScrollTiles {
@@ -289,7 +290,7 @@ impl JagSurface {
         provider: Option<&Arc<dyn TextProvider + Send + Sync>>,
         out: &mut Vec<Command>,
     ) -> Result<()> {
-        let Some(z) = data.commands.iter().filter_map(Command::z_index).min() else {
+        let Some(z) = data.z else {
             return Ok(());
         };
         if clip.rect.w <= 0.0 || clip.rect.h <= 0.0 {
