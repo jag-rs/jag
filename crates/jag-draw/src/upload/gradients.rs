@@ -48,61 +48,6 @@ fn stitch_ellipse_rings(indices: &mut Vec<u16>, inner: u16, outer: u16) {
     }
 }
 
-pub(crate) fn push_rect_linear_gradient(
-    vertices: &mut Vec<Vertex>,
-    indices: &mut Vec<u16>,
-    rect: Rect,
-    stops: &[(f32, [f32; 4])],
-    t: Transform2D,
-    z: f32,
-) {
-    if stops.len() < 2 {
-        return;
-    }
-    // ensure sorted
-    let mut s = stops.to_vec();
-    s.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    let y0 = rect.y;
-    let y1 = rect.y + rect.h;
-    for pair in s.windows(2) {
-        let (t0, c0) = (pair[0].0.clamp(0.0, 1.0), pair[0].1);
-        let (t1, c1) = (pair[1].0.clamp(0.0, 1.0), pair[1].1);
-        if (t1 - t0).abs() < 1e-6 {
-            continue;
-        }
-        let x0 = rect.x + rect.w * t0;
-        let x1 = rect.x + rect.w * t1;
-        let p0 = apply_transform([x0, y0], t);
-        let p1 = apply_transform([x1, y0], t);
-        let p2 = apply_transform([x1, y1], t);
-        let p3 = apply_transform([x0, y1], t);
-        let base = vertices.len() as u16;
-        vertices.extend_from_slice(&[
-            Vertex {
-                pos: p0,
-                color: c0,
-                z_index: z,
-            },
-            Vertex {
-                pos: p1,
-                color: c1,
-                z_index: z,
-            },
-            Vertex {
-                pos: p2,
-                color: c1,
-                z_index: z,
-            },
-            Vertex {
-                pos: p3,
-                color: c0,
-                z_index: z,
-            },
-        ]);
-        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-    }
-}
-
 fn normalize_gradient_stops(stops: &[(f32, [f32; 4])]) -> Vec<(f32, [f32; 4])> {
     if stops.is_empty() {
         return Vec::new();

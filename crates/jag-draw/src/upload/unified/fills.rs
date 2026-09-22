@@ -3,7 +3,7 @@ use crate::scene::{Brush, RoundedRadii, RoundedRect};
 
 use super::super::gradients::{
     push_ellipse, push_ellipse_radial_gradient, push_rect_conic_gradient,
-    push_rect_linear_gradient, push_rounded_rect_radial_gradient,
+    push_rounded_rect_radial_gradient,
 };
 use super::super::verts::rect_to_verts;
 use super::UnifiedBuilder;
@@ -42,8 +42,7 @@ impl UnifiedBuilder {
                     self.indices.extend(i.iter().map(|idx| base + idx));
                 }
             }
-            Brush::LinearGradient { stops, .. } => {
-                // Only handle horizontal gradients for now: map t along x within rect
+            Brush::LinearGradient { start, end, stops } => {
                 let mut packed: Vec<(f32, [f32; 4])> = stops
                     .iter()
                     .map(|(tpos, c)| (*tpos, Self::premul_opa([c.r, c.g, c.b, c.a], opa)))
@@ -63,10 +62,12 @@ impl UnifiedBuilder {
                 let gradient_transparent = packed.iter().any(|(_, c)| Self::is_transparent(c[3]));
                 if gradient_transparent {
                     let index_start = self.transparent_indices.len();
-                    push_rect_linear_gradient(
+                    super::super::rect_gradient::push_rect_linear_gradient(
                         &mut self.transparent_vertices,
                         &mut self.transparent_indices,
                         *rect,
+                        *start,
+                        *end,
                         &packed,
                         final_transform,
                         *z as f32,
@@ -75,10 +76,12 @@ impl UnifiedBuilder {
                     let clip = self.current_clip();
                     self.record_transparent_batch(*z, index_start, index_end, clip);
                 } else {
-                    push_rect_linear_gradient(
+                    super::super::rect_gradient::push_rect_linear_gradient(
                         &mut self.vertices,
                         &mut self.indices,
                         *rect,
+                        *start,
+                        *end,
                         &packed,
                         final_transform,
                         *z as f32,
