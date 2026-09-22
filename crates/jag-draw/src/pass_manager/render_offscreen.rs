@@ -235,7 +235,11 @@ impl PassManager {
         //
         // Limitation: all overlapping shadows read the same pre-shadow
         // snapshot, so they do not accumulate against each other. Accepted.
-        if !self.shadow_instances.is_empty() {
+        // A gamma-blend target already blends in sRGB, so hardware blending
+        // is correct there and overlapping shadows accumulate.
+        if !self.shadow_instances.is_empty() && self.gamma_blend {
+            self.record_blended_shadows(encoder, &targets);
+        } else if !self.shadow_instances.is_empty() {
             let shadow_buf = self
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {

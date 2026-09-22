@@ -7,10 +7,16 @@ pub struct BackgroundRenderer {
 }
 
 impl BackgroundRenderer {
-    pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        gamma_blend: bool,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("background-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::BACKGROUND_WGSL.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                jag_shaders::with_blend_space(jag_shaders::BACKGROUND_WGSL, gamma_blend).into(),
+            ),
         });
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("bg-bgl"),
@@ -428,10 +434,17 @@ pub struct ShadowCompositeRenderer {
 }
 
 impl ShadowCompositeRenderer {
-    pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        gamma_blend: bool,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shadow-composite-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SHADOW_COMPOSITE_WGSL.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                jag_shaders::with_blend_space(jag_shaders::SHADOW_COMPOSITE_WGSL, gamma_blend)
+                    .into(),
+            ),
         });
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("shadow-composite-bgl"),

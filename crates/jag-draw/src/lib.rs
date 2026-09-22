@@ -108,6 +108,19 @@ pub fn choose_srgb_surface_format(
         .expect("wgpu surface capabilities must expose at least one format")
 }
 
+/// Choose a format that does not encode sRGB on write, so jag blends
+/// sRGB-encoded color the way browsers composite CSS (see
+/// `jag_shaders::with_blend_space`). Falls back to the first format.
+pub fn select_gamma_blend_surface_format(
+    formats: &[wgpu::TextureFormat],
+) -> Option<wgpu::TextureFormat> {
+    formats
+        .iter()
+        .copied()
+        .find(|format| !format.is_srgb())
+        .or_else(|| formats.first().copied())
+}
+
 /// Create a surface configuration for the given size, favoring FIFO present mode when present.
 pub fn make_surface_config(
     adapter: &wgpu::Adapter,
@@ -115,8 +128,31 @@ pub fn make_surface_config(
     width: u32,
     height: u32,
 ) -> wgpu::SurfaceConfiguration {
-    let caps = surface.get_capabilities(adapter);
     let format = choose_srgb_surface_format(adapter, surface);
+    surface_config_with_format(adapter, surface, format, width, height)
+}
+
+/// [`make_surface_config`] with a [`select_gamma_blend_surface_format`] format.
+pub fn make_gamma_blend_surface_config(
+    adapter: &wgpu::Adapter,
+    surface: &wgpu::Surface,
+    width: u32,
+    height: u32,
+) -> wgpu::SurfaceConfiguration {
+    let caps = surface.get_capabilities(adapter);
+    let format = select_gamma_blend_surface_format(&caps.formats)
+        .expect("wgpu surface capabilities must expose at least one format");
+    surface_config_with_format(adapter, surface, format, width, height)
+}
+
+fn surface_config_with_format(
+    adapter: &wgpu::Adapter,
+    surface: &wgpu::Surface,
+    format: wgpu::TextureFormat,
+    width: u32,
+    height: u32,
+) -> wgpu::SurfaceConfiguration {
+    let caps = surface.get_capabilities(adapter);
     let present_mode = caps
         .present_modes
         .iter()

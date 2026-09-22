@@ -180,14 +180,32 @@ impl GlyphBatch {
     }
 }
 
+/// Whether glyph coverage feeds sRGB-space blending (see
+/// `jag_shaders::with_blend_space`). Process-wide because the glyph cache is.
+static GAMMA_BLEND_COVERAGE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Select the blend space glyph masks are rasterized for, clearing cached
+/// glyphs when it changes. Called by `PassManager::new`.
+pub(crate) fn set_gamma_blend_coverage(gamma_blend: bool) {
+    let previous = GAMMA_BLEND_COVERAGE.swap(gamma_blend, std::sync::atomic::Ordering::Relaxed);
+    if previous != gamma_blend {
+        invalidate_glyph_run_cache();
+    }
+}
+
 fn strengthen_coverage(c: f32) -> f32 {
     let coverage = c.clamp(0.0, 1.0);
-    if coverage <= 0.0 || coverage >= 1.0 {
+    if coverage <= 0.0
+        || coverage >= 1.0
+        || GAMMA_BLEND_COVERAGE.load(std::sync::atomic::Ordering::Relaxed)
+    {
         return coverage;
     }
 
     // Browser text edges are visually closer to sRGB/display-space alpha
-    // compositing. Jag's text shader blends premultiplied linear color, so a
+    // compositing. On a linear-blend target the text shader blends
+    // premultiplied linear color, so a
     // geometric 50% coverage mask becomes perceptually too light on white.
     // Convert the coverage so linear blending produces approximately the same
     // sRGB result while preserving empty/full pixels and glyph bounds.

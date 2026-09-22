@@ -91,7 +91,7 @@ impl PassManager {
         let vp_bg = self.image.vp_bind_group(&self.device, &self.vp_buffer);
         let z_bg = self.create_z_bind_group(0.0, queue);
         let tex_bg = self.image.tex_bind_group(&self.device, tex_view);
-        let (params_bg, _params_buf) = self.image.params_bind_group(&self.device, 1.0, false);
+        let (params_bg, _params_buf) = self.image.params_bind_group(&self.device, 1.0, false, true);
 
         // Create depth texture for image rendering (1x)
         let depth_tex = self.device.create_texture(&wgpu::TextureDescriptor {

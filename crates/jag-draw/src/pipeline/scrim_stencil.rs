@@ -7,10 +7,16 @@ pub struct ScrimStencilMaskRenderer {
 }
 
 impl ScrimStencilMaskRenderer {
-    pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        gamma_blend: bool,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scrim-stencil-mask-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SOLID_WGSL.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                jag_shaders::with_blend_space(jag_shaders::SOLID_WGSL, gamma_blend).into(),
+            ),
         });
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -127,10 +133,16 @@ pub struct ScrimStencilRenderer {
 }
 
 impl ScrimStencilRenderer {
-    pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        gamma_blend: bool,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scrim-stencil-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SOLID_WGSL.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                jag_shaders::with_blend_space(jag_shaders::SOLID_WGSL, gamma_blend).into(),
+            ),
         });
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

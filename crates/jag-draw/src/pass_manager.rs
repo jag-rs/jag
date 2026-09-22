@@ -198,6 +198,8 @@ pub enum Background {
 
 pub struct PassManager {
     device: Arc<wgpu::Device>,
+    /// The target blends sRGB-encoded color (see `jag_shaders::with_blend_space`).
+    gamma_blend: bool,
     pub solid_offscreen: BasicSolidRenderer,
     pub solid_direct: BasicSolidRenderer,
     pub transparent_solid_offscreen: BasicSolidRenderer,
@@ -275,6 +277,8 @@ pub struct PassManager {
     // Registry for externally-rendered textures (e.g., 3D viewports)
     external_textures:
         std::collections::HashMap<crate::display_list::ExternalTextureId, Arc<wgpu::TextureView>>,
+    /// External textures registered through `register_linear_external_texture`.
+    linear_external_textures: std::collections::HashSet<crate::display_list::ExternalTextureId>,
     composite_direct: composite_resources::CompositeResources,
     composite_offscreen: composite_resources::CompositeResources,
 }
@@ -295,6 +299,7 @@ pub(crate) struct ImageQuadVtx {
     uv: [f32; 2],
 }
 
+mod blended_shadows;
 mod box_shadow;
 mod composite_resources;
 mod draw_shapes;

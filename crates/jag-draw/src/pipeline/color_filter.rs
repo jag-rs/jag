@@ -8,10 +8,12 @@ pub struct ColorFilterRenderer {
 }
 
 impl ColorFilterRenderer {
-    pub fn new(device: Arc<wgpu::Device>, format: wgpu::TextureFormat) -> Self {
+    pub fn new(device: Arc<wgpu::Device>, format: wgpu::TextureFormat, gamma_blend: bool) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("color-filter-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::COLOR_FILTER_WGSL.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                jag_shaders::with_blend_space(jag_shaders::COLOR_FILTER_WGSL, gamma_blend).into(),
+            ),
         });
         let entries = [
             wgpu::BindGroupLayoutEntry {

@@ -64,14 +64,21 @@ impl PassManager {
         // are 1×). Keep sample count at 1 and rely on SMAA / pixel snapping
         // for edge smoothing to avoid crashes and validation errors.
         let msaa_count = 1;
-        let solid_offscreen = BasicSolidRenderer::new(device.clone(), offscreen_format, msaa_count);
-        let solid_direct = BasicSolidRenderer::new(device.clone(), target_format, msaa_count);
+        // A target that does not encode sRGB on write blends sRGB-encoded
+        // color, as browsers do; the offscreen format follows the target.
+        let gamma_blend = !target_format.is_srgb();
+        crate::text::set_gamma_blend_coverage(gamma_blend);
+        let solid_offscreen =
+            BasicSolidRenderer::new(device.clone(), offscreen_format, msaa_count, gamma_blend);
+        let solid_direct =
+            BasicSolidRenderer::new(device.clone(), target_format, msaa_count, gamma_blend);
         let transparent_solid_offscreen = BasicSolidRenderer::new_with_depth_state(
             device.clone(),
             offscreen_format,
             msaa_count,
             false,
             wgpu::CompareFunction::LessEqual,
+            gamma_blend,
         );
         let transparent_solid_direct = BasicSolidRenderer::new_with_depth_state(
             device.clone(),
@@ -79,37 +86,43 @@ impl PassManager {
             msaa_count,
             false,
             wgpu::CompareFunction::LessEqual,
+            gamma_blend,
         );
-        let solid_direct_no_msaa = BasicSolidRenderer::new(device.clone(), target_format, 1);
-        let overlay_solid = OverlaySolidRenderer::new(device.clone(), target_format);
-        let scrim_solid = ScrimSolidRenderer::new(device.clone(), target_format);
+        let solid_direct_no_msaa =
+            BasicSolidRenderer::new(device.clone(), target_format, 1, gamma_blend);
+        let overlay_solid = OverlaySolidRenderer::new(device.clone(), target_format, gamma_blend);
+        let scrim_solid = ScrimSolidRenderer::new(device.clone(), target_format, gamma_blend);
         let compositor = Compositor::new(device.clone(), target_format);
         let blitter = Blitter::new(device.clone(), target_format);
         let smaa = SmaaRenderer::new(device.clone(), target_format);
-        let scrim_mask = ScrimStencilMaskRenderer::new(device.clone(), target_format);
-        let scrim_stencil = ScrimStencilRenderer::new(device.clone(), target_format);
+        let scrim_mask = ScrimStencilMaskRenderer::new(device.clone(), target_format, gamma_blend);
+        let scrim_stencil = ScrimStencilRenderer::new(device.clone(), target_format, gamma_blend);
         // Shadow/blur pipelines
         let mask_renderer =
-            BasicSolidRenderer::new(device.clone(), wgpu::TextureFormat::R8Unorm, 1);
+            // Coverage mask, not color: no blend-space encoding.
+            BasicSolidRenderer::new(device.clone(), wgpu::TextureFormat::R8Unorm, 1, false);
         let blur_r8 = BlurRenderer::new(device.clone(), wgpu::TextureFormat::R8Unorm);
         let blur_rgba = BlurRenderer::new(device.clone(), target_format);
-        let color_filter = ColorFilterRenderer::new(device.clone(), target_format);
-        let drop_shadow_filter = DropShadowFilterRenderer::new(device.clone(), target_format);
+        let color_filter = ColorFilterRenderer::new(device.clone(), target_format, gamma_blend);
+        let drop_shadow_filter =
+            DropShadowFilterRenderer::new(device.clone(), target_format, gamma_blend);
         let mask_filter = MaskFilterRenderer::new(device.clone(), target_format);
         let backdrop_blur = BackdropBlurRenderer::new(device.clone(), offscreen_format);
-        let shadow_comp = ShadowCompositeRenderer::new(device.clone(), target_format);
+        let shadow_comp = ShadowCompositeRenderer::new(device.clone(), target_format, gamma_blend);
         let shadow_offscreen =
-            ShadowInstanceRenderer::new(device.clone(), offscreen_format, msaa_count);
-        let shadow_direct = ShadowInstanceRenderer::new(device.clone(), target_format, msaa_count);
+            ShadowInstanceRenderer::new(device.clone(), offscreen_format, msaa_count, gamma_blend);
+        let shadow_direct =
+            ShadowInstanceRenderer::new(device.clone(), target_format, msaa_count, gamma_blend);
         let shadow_composite =
             ShadowCompositeInstanceRenderer::new(device.clone(), offscreen_format, msaa_count);
-        let text = TextRenderer::new(device.clone(), target_format);
-        let text_offscreen = TextRenderer::new(device.clone(), offscreen_format);
-        let image = crate::pipeline::ImageRenderer::new(device.clone(), target_format);
-        let image_offscreen = crate::pipeline::ImageRenderer::new(device.clone(), offscreen_format);
+        let text = TextRenderer::new(device.clone(), target_format, gamma_blend);
+        let text_offscreen = TextRenderer::new(device.clone(), offscreen_format, gamma_blend);
+        let image = crate::pipeline::ImageRenderer::new(device.clone(), target_format, gamma_blend);
+        let image_offscreen =
+            crate::pipeline::ImageRenderer::new(device.clone(), offscreen_format, gamma_blend);
         let svg_cache = crate::svg::SvgRasterCache::new(device.clone());
         let image_cache = crate::image_cache::ImageCache::new(device.clone());
-        let bg = BackgroundRenderer::new(device.clone(), target_format);
+        let bg = BackgroundRenderer::new(device.clone(), target_format, gamma_blend);
         let vp_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("viewport-uniform"),
             size: 32, // [scale.x, scale.y, translate.x, translate.y, scroll.x, scroll.y, pad, pad]
@@ -210,6 +223,7 @@ impl PassManager {
             svg_cache,
             image_cache,
             offscreen_format,
+            gamma_blend,
             surface_format: target_format,
             vp_buffer,
             scroll_offset: [0.0, 0.0],
@@ -234,6 +248,7 @@ impl PassManager {
             smaa_param_buffer,
             scrim_stencil_tex: None,
             external_textures: std::collections::HashMap::new(),
+            linear_external_textures: std::collections::HashSet::new(),
             composite_direct: Default::default(),
             composite_offscreen: Default::default(),
         }
@@ -259,12 +274,27 @@ impl PassManager {
         id: crate::display_list::ExternalTextureId,
         view: Arc<wgpu::TextureView>,
     ) {
+        self.linear_external_textures.remove(&id);
         self.external_textures.insert(id, view);
+    }
+
+    /// Register a texture whose sampling yields linear values (an `*Srgb`
+    /// format), such as a 3D viewport; the image shader encodes it for the
+    /// target's blend space. [`Self::register_external_texture`] textures
+    /// already hold blend-space values.
+    pub fn register_linear_external_texture(
+        &mut self,
+        id: crate::display_list::ExternalTextureId,
+        view: wgpu::TextureView,
+    ) {
+        self.external_textures.insert(id, Arc::new(view));
+        self.linear_external_textures.insert(id);
     }
 
     /// Clear all registered external textures (call after frame).
     pub fn clear_external_textures(&mut self) {
         self.external_textures.clear();
+        self.linear_external_textures.clear();
         self.composite_direct.release_expired_textures();
         self.composite_offscreen.release_expired_textures();
     }

@@ -11,10 +11,16 @@ pub struct TextRenderer {
 }
 
 impl TextRenderer {
-    pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        gamma_blend: bool,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("text-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::TEXT_WGSL.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                jag_shaders::with_blend_space(jag_shaders::TEXT_WGSL, gamma_blend).into(),
+            ),
         });
 
         // Viewport uniform group (matches solids layout)
@@ -219,10 +225,16 @@ pub struct ImageRenderer {
 }
 
 impl ImageRenderer {
-    pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        gamma_blend: bool,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("image-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::IMAGE_WGSL.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                jag_shaders::with_blend_space(jag_shaders::IMAGE_WGSL, gamma_blend).into(),
+            ),
         });
 
         // Optional debug/escape hatch: allow disabling depth testing for images.
@@ -421,13 +433,17 @@ impl ImageRenderer {
     /// `rounded_clip`: if `Some`, the shader discards fragments outside
     /// the rounded rect (SDF-based).  The rect and radii must be in
     /// **device pixels** (after DPI scaling).
+    ///
+    /// `source_linear`: sampling the texture yields linear values (an `*Srgb`
+    /// format), so the shader encodes for the target's blend space.
     pub fn params_bind_group(
         &self,
         device: &wgpu::Device,
         opacity: f32,
         premultiplied_input: bool,
+        source_linear: bool,
     ) -> (wgpu::BindGroup, wgpu::Buffer) {
-        self.params_bind_group_clipped(device, opacity, premultiplied_input, None)
+        self.params_bind_group_clipped(device, opacity, premultiplied_input, source_linear, None)
     }
 
     pub fn params_bind_group_clipped(
@@ -435,6 +451,7 @@ impl ImageRenderer {
         device: &wgpu::Device,
         opacity: f32,
         premultiplied_input: bool,
+        source_linear: bool,
         rounded_clip: Option<&crate::scene::RoundedRectClipGpu>,
     ) -> (wgpu::BindGroup, wgpu::Buffer) {
         let (clip_enabled, clip_rect, clip_radii) = match rounded_clip {
@@ -446,7 +463,7 @@ impl ImageRenderer {
             opacity.clamp(0.0, 1.0),
             if premultiplied_input { 1.0 } else { 0.0 },
             clip_enabled,
-            0.0, // _pad1
+            if source_linear { 1.0 } else { 0.0 },
             clip_rect[0],
             clip_rect[1],
             clip_rect[2],

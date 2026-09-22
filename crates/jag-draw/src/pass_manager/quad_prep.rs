@@ -88,9 +88,13 @@ impl PassManager {
             // Pass z_index as float directly - shader will convert to depth
             let (z_bg_img, z_buf_img) = self.create_group_z_bind_group(*z_val as f32, queue);
             let tex_bg = self.image.tex_bind_group(&self.device, tex_view);
-            let (params_bg, params_buf) =
-                self.image
-                    .params_bind_group_clipped(&self.device, *opacity, false, *rounded_clip);
+            let (params_bg, params_buf) = self.image.params_bind_group_clipped(
+                &self.device,
+                *opacity,
+                false,
+                true,
+                *rounded_clip,
+            );
 
             image_z_vals.push(*z_val as i32);
             image_resources.push((
@@ -147,9 +151,13 @@ impl PassManager {
             // Pass z_index as float directly - shader will convert to depth
             let (z_bg_svg, z_buf_svg) = self.create_group_z_bind_group(*z_val as f32, queue);
             let tex_bg = self.image.tex_bind_group(&self.device, view_scaled);
-            let (params_bg, params_buf) =
-                self.image
-                    .params_bind_group_clipped(&self.device, *opacity, true, *rounded_clip);
+            let (params_bg, params_buf) = self.image.params_bind_group_clipped(
+                &self.device,
+                *opacity,
+                true,
+                true,
+                *rounded_clip,
+            );
 
             svg_z_vals.push(*z_val as i32);
             svg_resources.push((
@@ -185,6 +193,7 @@ impl PassManager {
                 self.solid_direct.z_index_bgl(),
                 draw,
                 view,
+                self.linear_external_textures.contains(&draw.texture_id),
                 &vertices,
                 (index * 4) as i32,
             ));
@@ -245,6 +254,7 @@ impl PassManager {
                 &self.device,
                 *opacity,
                 false,
+                true,
                 *rounded_clip,
             );
 
@@ -311,6 +321,7 @@ impl PassManager {
                 &self.device,
                 *opacity,
                 true,
+                true,
                 *rounded_clip,
             );
 
@@ -348,6 +359,7 @@ impl PassManager {
                 self.solid_direct.z_index_bgl(),
                 draw,
                 view,
+                self.linear_external_textures.contains(&draw.texture_id),
                 &vertices,
                 (index * 4) as i32,
             ));

@@ -1,5 +1,34 @@
 //! engine-shaders: WGSL shader sources and helpers.
 
+/// Output encoding for shaders that generate color.
+///
+/// Pipelines receive premultiplied linear colors. A target that encodes sRGB
+/// on write (`*UnormSrgb`) blends them in linear light. A target that does not
+/// stores whatever the shader writes and blends it as-is, so these shaders
+/// write sRGB-encoded premultiplied color and the GPU then blends in sRGB, as
+/// browsers composite CSS. [`with_blend_space`] prepends this with the mode.
+const BLEND_SPACE_WGSL: &str = r#"
+fn jag_linear_to_srgb(value: vec3<f32>) -> vec3<f32> {
+    return select(12.92 * value, 1.055 * pow(value, vec3(1.0 / 2.4)) - 0.055, value > vec3(0.0031308));
+}
+
+// Premultiplied linear color, re-expressed in the target's blend space.
+fn encode_output(color: vec4<f32>) -> vec4<f32> {
+    if (!GAMMA_BLEND || color.a <= 0.0) {
+        return color;
+    }
+    let straight = clamp(color.rgb / color.a, vec3(0.0), vec3(1.0));
+    return vec4(jag_linear_to_srgb(straight) * color.a, color.a);
+}
+"#;
+
+/// Prefix a color-generating shader with its blend-space helpers.
+/// `gamma_blend` is true when the pipeline's color target does not encode
+/// sRGB on write (see [`BLEND_SPACE_WGSL`]).
+pub fn with_blend_space(source: &str, gamma_blend: bool) -> String {
+    format!("const GAMMA_BLEND: bool = {gamma_blend};\n{BLEND_SPACE_WGSL}\n{source}")
+}
+
 /// Common WGSL snippet shared across shaders.
 pub const COMMON_WGSL: &str = r#"
 struct VsOut {
@@ -80,7 +109,7 @@ fn vs_main(@location(0) in_pos: vec2<f32>, @location(1) in_color: vec4<f32>, @lo
 
 @fragment
 fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
-    return inp.color;
+    return encode_output(inp.color);
 }
 "#;
 
@@ -375,6 +404,10 @@ fn eval_stops(t: f32) -> vec4<f32> {
 
 @fragment
 fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
+    return encode_output(shade(inp));
+}
+
+fn shade(inp: VsOut) -> vec4<f32> {
     // Normalize UVs to [0,1]
     let uv01 = inp.uv * 0.5;
     let start = bg.start_end.xy;
@@ -505,13 +538,17 @@ fn srgb_to_linear(value: vec3<f32>) -> vec3<f32> {
 }
 
 @fragment fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
+    // The filter matrix applies to sRGB values; a gamma-blend target's
+    // source already holds them.
     let premul = textureSample(source, source_sampler, input.uv);
-    let straight = vec4(linear_to_srgb(premul.rgb / max(premul.a, 0.00001)), premul.a);
+    let unpremul = premul.rgb / max(premul.a, 0.00001);
+    let straight = vec4(select(linear_to_srgb(unpremul), unpremul, GAMMA_BLEND), premul.a);
     let filtered = clamp(vec4(
         dot(params.row0, straight), dot(params.row1, straight),
         dot(params.row2, straight), dot(params.row3, straight)
     ) + params.bias, vec4(0.0), vec4(1.0));
-    return vec4(srgb_to_linear(filtered.rgb) * filtered.a, filtered.a);
+    let rgb = select(srgb_to_linear(filtered.rgb), filtered.rgb, GAMMA_BLEND);
+    return vec4(rgb * filtered.a, filtered.a);
 }
 "#;
 
@@ -535,15 +572,20 @@ fn srgb_to_linear(value: vec3<f32>) -> vec3<f32> {
     return select(value / 12.92, pow((value + 0.055) / 1.055, vec3(2.4)), value > vec3(0.04045));
 }
 @fragment fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
-    let source_linear = textureSample(source, source_sampler, input.uv);
-    let source_rgb = linear_to_srgb(source_linear.rgb / max(source_linear.a, 0.00001));
-    let source_srgb = vec4(source_rgb * source_linear.a, source_linear.a);
+    // Composites in sRGB; a gamma-blend target's source already holds it.
+    let sampled = textureSample(source, source_sampler, input.uv);
+    let unpremul = sampled.rgb / max(sampled.a, 0.00001);
+    let source_rgb = select(linear_to_srgb(unpremul), unpremul, GAMMA_BLEND);
+    let source_srgb = vec4(source_rgb * sampled.a, sampled.a);
     let shadow_uv = input.uv - params.offset_uv;
     let inside = all(shadow_uv >= vec2(0.0)) && all(shadow_uv <= vec2(1.0));
     let mask = select(0.0, textureSample(blurred, source_sampler, shadow_uv).a, inside);
     let shadow_alpha = mask * params.color.a;
     let shadow = vec4(params.color.rgb * shadow_alpha, shadow_alpha);
     let result = source_srgb + shadow * (1.0 - source_srgb.a);
+    if (GAMMA_BLEND) {
+        return result;
+    }
     let straight = result.rgb / max(result.a, 0.00001);
     return vec4(srgb_to_linear(straight) * result.a, result.a);
 }
@@ -661,7 +703,7 @@ fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
     // Match compositor orientation: flip V when sampling render-targets as textures
     let uv = vec2<f32>(inp.uv.x, 1.0 - inp.uv.y);
     let a = textureSample(mask_tex, mask_smp, uv).r;
-    return vec4<f32>(sc.color.rgb * a, sc.color.a * a);
+    return encode_output(vec4<f32>(sc.color.rgb * a, sc.color.a * a));
 } 
 "#;
 
@@ -810,7 +852,7 @@ fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
         // alpha: max(RGB) expands dark edges, while separate RGB tinting fringes
         // colored text. Equal-channel grayscale masks pass through unchanged.
         let coverage = dot(m.rgb, vec3<f32>(1.0 / 3.0));
-        return inp.color * coverage;
+        return encode_output(inp.color * coverage);
     } else {
         // Fully transparent mask pixel: discard so we don't write depth for empty texels.
         discard;
@@ -873,7 +915,9 @@ struct ImageParams {
     opacity: f32,
     premultiplied_input: f32,
     clip_enabled: f32,
-    _pad1: f32,
+    // 1 when sampling decodes to linear (an `*Srgb` texture); 0 when the
+    // texture already holds values in the target's blend space.
+    source_linear: f32,
     // Rounded-rect clip in device pixels: (x, y, width, height).
     clip_rect: vec4<f32>,
     // Per-corner radii in device pixels: (top-left, top-right, bottom-right, bottom-left).
@@ -918,6 +962,9 @@ fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
         color = vec4<f32>(color.rgb * aa, color.a * aa);
     }
 
+    if img_params.source_linear > 0.5 {
+        return encode_output(color);
+    }
     return color;
 }
 "#;

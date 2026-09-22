@@ -8,10 +8,13 @@ pub struct BasicSolidRenderer {
 }
 
 impl BasicSolidRenderer {
+    /// `gamma_blend`: the color target blends sRGB-encoded values (see
+    /// `jag_shaders::with_blend_space`).
     pub fn new(
         device: Arc<wgpu::Device>,
         target_format: wgpu::TextureFormat,
         sample_count: u32,
+        gamma_blend: bool,
     ) -> Self {
         Self::new_with_depth_state(
             device,
@@ -19,6 +22,7 @@ impl BasicSolidRenderer {
             sample_count,
             true,
             wgpu::CompareFunction::LessEqual,
+            gamma_blend,
         )
     }
 
@@ -27,6 +31,7 @@ impl BasicSolidRenderer {
         target_format: wgpu::TextureFormat,
         sample_count: u32,
         depth_write_enabled: bool,
+        gamma_blend: bool,
     ) -> Self {
         Self::new_with_depth_state(
             device,
@@ -34,6 +39,7 @@ impl BasicSolidRenderer {
             sample_count,
             depth_write_enabled,
             wgpu::CompareFunction::LessEqual,
+            gamma_blend,
         )
     }
 
@@ -43,10 +49,13 @@ impl BasicSolidRenderer {
         sample_count: u32,
         depth_write_enabled: bool,
         depth_compare: wgpu::CompareFunction,
+        gamma_blend: bool,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("solid-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SOLID_WGSL.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                jag_shaders::with_blend_space(jag_shaders::SOLID_WGSL, gamma_blend).into(),
+            ),
         });
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -191,10 +200,16 @@ pub struct OverlaySolidRenderer {
 }
 
 impl OverlaySolidRenderer {
-    pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        gamma_blend: bool,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("overlay-solid-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SOLID_WGSL.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                jag_shaders::with_blend_space(jag_shaders::SOLID_WGSL, gamma_blend).into(),
+            ),
         });
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -295,10 +310,16 @@ pub struct ScrimSolidRenderer {
 }
 
 impl ScrimSolidRenderer {
-    pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        gamma_blend: bool,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scrim-solid-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SOLID_WGSL.into()),
+            source: wgpu::ShaderSource::Wgsl(
+                jag_shaders::with_blend_space(jag_shaders::SOLID_WGSL, gamma_blend).into(),
+            ),
         });
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

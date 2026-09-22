@@ -28,6 +28,7 @@ struct Slot {
     z: i32,
     opacity: f32,
     premultiplied: bool,
+    source_linear: bool,
     rounded_clip: Option<crate::RoundedRectClipGpu>,
 }
 
@@ -104,6 +105,7 @@ impl CompositeResources {
         z_layout: &wgpu::BindGroupLayout,
         draw: &ExtractedExternalTextureDraw,
         view: &Arc<wgpu::TextureView>,
+        source_linear: bool,
         vertices: &Arc<wgpu::Buffer>,
         base_vertex: i32,
     ) -> Arc<ExtResource> {
@@ -129,16 +131,19 @@ impl CompositeResources {
             }
             if slot.opacity != draw.opacity
                 || slot.premultiplied != draw.premultiplied
+                || slot.source_linear != source_linear
                 || slot.rounded_clip != draw.rounded_clip
             {
                 (resource.5, resource.7) = renderer.params_bind_group_clipped(
                     device,
                     draw.opacity,
                     draw.premultiplied,
+                    source_linear,
                     draw.rounded_clip.as_ref(),
                 );
                 slot.opacity = draw.opacity;
                 slot.premultiplied = draw.premultiplied;
+                slot.source_linear = source_linear;
                 slot.rounded_clip = draw.rounded_clip;
             }
             return slot.resource.clone();
@@ -165,6 +170,7 @@ impl CompositeResources {
             device,
             draw.opacity,
             draw.premultiplied,
+            source_linear,
             draw.rounded_clip.as_ref(),
         );
         let resource = Arc::new((
@@ -185,6 +191,7 @@ impl CompositeResources {
                 z: draw.z,
                 opacity: draw.opacity,
                 premultiplied: draw.premultiplied,
+                source_linear,
                 rounded_clip: draw.rounded_clip,
             });
         }
