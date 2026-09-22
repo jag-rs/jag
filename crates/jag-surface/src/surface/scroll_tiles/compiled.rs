@@ -158,7 +158,77 @@ impl CompiledScene {
             owners.len() == 1 && clips.len() == 1 && transforms.len() == 1,
             "unclosed committed paint scope"
         );
+        result.split_interleaved_runs(scale);
         Ok(result)
+    }
+
+    /// A run's tiles composite at its lowest z, so content above another
+    /// layer's z must not share them: a fixed overlay emitted after the whole
+    /// document would otherwise cover later-painted content baked into the
+    /// document's first tiles. Split each run where it crosses the composite
+    /// z of any other op, until no run straddles one.
+    fn split_interleaved_runs(&mut self, scale: f32) {
+        loop {
+            let thresholds: std::collections::BTreeSet<i32> = self
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    Op::Run { data, .. } => data.z,
+                    Op::Draw { command, .. } => command.z_index(),
+                    Op::ClipPush(_) | Op::ClipPop => None,
+                })
+                .collect();
+            let mut changed = false;
+            let mut ops = Vec::with_capacity(self.ops.len());
+            for op in std::mem::take(&mut self.ops) {
+                let Op::Run {
+                    owner,
+                    segment,
+                    clip,
+                    data,
+                } = op
+                else {
+                    ops.push(op);
+                    continue;
+                };
+                let bands = split_at_thresholds(&data.commands, &thresholds);
+                if bands.len() < 2 {
+                    ops.push(Op::Run {
+                        owner,
+                        segment,
+                        clip,
+                        data,
+                    });
+                    continue;
+                }
+                changed = true;
+                for band in bands {
+                    ops.push(Op::Run {
+                        owner,
+                        segment,
+                        clip,
+                        data: RasterRun::new(
+                            band,
+                            scale,
+                            self.source.dpi_scale,
+                            self.source.provider.as_ref(),
+                        ),
+                    });
+                }
+            }
+            self.ops = ops;
+            if !changed {
+                break;
+            }
+        }
+        // Tile identities are keyed by (owner, segment): keep them unique.
+        let mut next = vec![0usize; self.properties.len()];
+        for op in &mut self.ops {
+            if let Op::Run { owner, segment, .. } = op {
+                *segment = next[*owner];
+                next[*owner] += 1;
+            }
+        }
     }
 
     fn flush(
@@ -294,3 +364,43 @@ impl JagSurface {
         Ok(())
     }
 }
+
+/// Split a run (z non-decreasing, since runs break where z falls) before the
+/// first command whose z reaches a threshold above the current band's start.
+/// Transforms open at a split close in the earlier band and reopen in the
+/// next; each `PushTransform` carries its composed world transform.
+fn split_at_thresholds(
+    commands: &[Command],
+    thresholds: &std::collections::BTreeSet<i32>,
+) -> Vec<Vec<Command>> {
+    let mut bands = vec![Vec::new()];
+    let mut open: Vec<Command> = Vec::new();
+    let mut band_start: Option<i32> = None;
+    for command in commands {
+        if let Some(z) = command.z_index() {
+            match band_start {
+                None => band_start = Some(z),
+                Some(start) if z > start && thresholds.range(start + 1..=z).next().is_some() => {
+                    let band = bands.last_mut().unwrap();
+                    band.extend(open.iter().map(|_| Command::PopTransform));
+                    bands.push(open.clone());
+                    band_start = Some(z);
+                }
+                Some(_) => {}
+            }
+        }
+        match command {
+            Command::PushTransform(_) => open.push(command.clone()),
+            Command::PopTransform => {
+                open.pop();
+            }
+            _ => {}
+        }
+        bands.last_mut().unwrap().push(command.clone());
+    }
+    bands
+}
+
+#[cfg(test)]
+#[path = "compiled_tests.rs"]
+mod tests;
