@@ -52,7 +52,6 @@ impl ScrollTiles {
 struct Owner {
     key: String,
     origin: [f32; 2],
-    segment: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -60,6 +59,27 @@ struct Clip {
     rect: Rect,
     authored: Rect,
     rounded: Option<jag_draw::RoundedRectClipGpu>,
+}
+
+/// An item recorded while flattening, composited once every run is known.
+enum Pending {
+    Command(Command),
+    Run {
+        commands: Vec<Command>,
+        key: String,
+        origin: [f32; 2],
+        clip: Clip,
+    },
+}
+
+impl Pending {
+    /// The z this item composites at: a run's lowest z.
+    fn z(&self) -> Option<i32> {
+        match self {
+            Pending::Command(command) => command.z_index(),
+            Pending::Run { commands, .. } => commands.iter().filter_map(Command::z_index).min(),
+        }
+    }
 }
 
 fn intersect(a: Rect, b: Rect) -> Rect {
@@ -135,7 +155,7 @@ impl JagSurface {
         let mut transforms = vec![Transform2D::identity()];
         let mut owners: Vec<Owner> = Vec::new();
         let mut run = Vec::new();
-        let mut out = Vec::new();
+        let mut out: Vec<Pending> = Vec::new();
         for command in commands {
             // Preserve hit metadata without allowing its z to fragment paint.
             if matches!(
@@ -144,7 +164,7 @@ impl JagSurface {
                     | Command::HitRegionRoundedRect { .. }
                     | Command::HitRegionEllipse { .. }
             ) {
-                out.push(command.clone());
+                out.push(Pending::Command(command.clone()));
                 continue;
             }
             let boundary = matches!(
@@ -166,31 +186,38 @@ impl JagSurface {
                 .z_index()
                 .zip(run.last().and_then(Command::z_index))
                 .is_some_and(|(z, last)| z < last);
-            if boundary || reversed_z {
-                if let Some(owner) = owners.last_mut() {
-                    self.raster_scroll_run(
-                        &mut run,
-                        owner,
-                        *clips.last().unwrap(),
-                        scale,
-                        provider,
-                        &mut out,
-                    )?;
+            if (boundary || reversed_z)
+                && let Some(owner) = owners.last()
+                && !run.is_empty()
+            {
+                let mut commands = std::mem::take(&mut run);
+                for command in &mut commands {
+                    normalize(command, owner.origin);
                 }
+                out.push(Pending::Run {
+                    commands,
+                    key: owner.key.clone(),
+                    origin: owner.origin,
+                    clip: *clips.last().unwrap(),
+                });
             }
             match command {
                 Command::DrawScrollScene {
                     scene,
                     base,
                     inputs,
-                } => self.compose_committed_scene(
-                    scene,
-                    *base,
-                    inputs,
-                    *clips.last().unwrap(),
-                    scale,
-                    &mut out,
-                )?,
+                } => {
+                    let mut composed = Vec::new();
+                    self.compose_committed_scene(
+                        scene,
+                        *base,
+                        inputs,
+                        *clips.last().unwrap(),
+                        scale,
+                        &mut composed,
+                    )?;
+                    out.extend(composed.into_iter().map(Pending::Command));
+                }
                 Command::PushScrollLayer { key, origin, .. } => {
                     let key = owners.last().map_or_else(
                         || key.clone(),
@@ -199,7 +226,6 @@ impl JagSurface {
                     owners.push(Owner {
                         key,
                         origin: *origin,
-                        segment: 0,
                     });
                 }
                 Command::PopScrollLayer => {
@@ -207,12 +233,12 @@ impl JagSurface {
                 }
                 Command::PushTransform(t) => {
                     transforms.push(*t);
-                    out.push(command.clone());
+                    out.push(Pending::Command(command.clone()));
                 }
                 Command::PopTransform => {
                     ensure!(transforms.len() > 1, "unbalanced transform");
                     transforms.pop();
-                    out.push(command.clone());
+                    out.push(Pending::Command(command.clone()));
                 }
                 Command::PushClip(clip) => {
                     let parent = *clips.last().unwrap();
@@ -222,7 +248,7 @@ impl JagSurface {
                         authored: rect,
                         rounded: parent.rounded,
                     });
-                    out.push(command.clone());
+                    out.push(Pending::Command(command.clone()));
                 }
                 Command::ScrollClipRadii(radii) => {
                     let clip = clips.last_mut().unwrap();
@@ -239,7 +265,7 @@ impl JagSurface {
                 Command::PopClip => {
                     ensure!(clips.len() > 1, "unbalanced clip");
                     clips.pop();
-                    out.push(command.clone());
+                    out.push(Pending::Command(command.clone()));
                 }
                 Command::PushOpacity(_)
                 | Command::PopOpacity
@@ -249,35 +275,78 @@ impl JagSurface {
                 | Command::DrawExternalTexture { .. }
                 | Command::HitRegionRect { .. }
                 | Command::HitRegionRoundedRect { .. }
-                | Command::HitRegionEllipse { .. } => out.push(command.clone()),
-                _ if owners.is_empty() => out.push(command.clone()),
+                | Command::HitRegionEllipse { .. } => out.push(Pending::Command(command.clone())),
+                _ if owners.is_empty() => out.push(Pending::Command(command.clone())),
                 _ => run.push(command.clone()),
             }
         }
         ensure!(owners.is_empty(), "unclosed scroll owner");
-        Ok(out)
+        self.composite_pending(out, scale, provider)
     }
 
-    fn raster_scroll_run(
+    /// Composite recorded runs in order. A run's tiles composite at its lowest
+    /// z, so each run is first split where it straddles the z of any other
+    /// item — a fixed overlay recorded after the document would otherwise
+    /// cover later-painted content baked into the document's tiles.
+    fn composite_pending(
         &mut self,
-        run: &mut Vec<Command>,
-        owner: &mut Owner,
-        clip: Clip,
+        mut pending: Vec<Pending>,
         scale: f32,
         provider: Option<&Arc<dyn TextProvider + Send + Sync>>,
-        out: &mut Vec<Command>,
-    ) -> Result<()> {
-        if run.is_empty() {
-            return Ok(());
+    ) -> Result<Vec<Command>> {
+        loop {
+            let thresholds: std::collections::BTreeSet<i32> =
+                pending.iter().filter_map(Pending::z).collect();
+            let mut changed = false;
+            let mut split = Vec::with_capacity(pending.len());
+            for item in pending {
+                let Pending::Run {
+                    commands,
+                    key,
+                    origin,
+                    clip,
+                } = item
+                else {
+                    split.push(item);
+                    continue;
+                };
+                let bands = compiled::split_at_thresholds(&commands, &thresholds);
+                changed |= bands.len() > 1;
+                split.extend(bands.into_iter().map(|commands| Pending::Run {
+                    commands,
+                    key: key.clone(),
+                    origin,
+                    clip,
+                }));
+            }
+            pending = split;
+            if !changed {
+                break;
+            }
         }
-        let segment = owner.segment;
-        owner.segment += 1;
-        let mut commands = std::mem::take(run);
-        for command in &mut commands {
-            normalize(command, owner.origin);
+        let mut segments: HashMap<String, usize> = HashMap::new();
+        let mut out = Vec::new();
+        for item in pending {
+            match item {
+                Pending::Command(command) => out.push(command),
+                Pending::Run {
+                    commands,
+                    key,
+                    origin,
+                    clip,
+                } => {
+                    let next = segments.entry(key.clone()).or_default();
+                    let segment = *next;
+                    *next += 1;
+                    let data = RasterRun::new(commands, scale, self.dpi_scale, provider);
+                    let owner = Owner { key, origin };
+                    self.composite_scroll_run(
+                        &data, &owner, segment, clip, scale, provider, &mut out,
+                    )?;
+                }
+            }
         }
-        let data = RasterRun::new(commands, scale, self.dpi_scale, provider);
-        self.composite_scroll_run(&data, owner, segment, clip, scale, provider, out)
+        Ok(out)
     }
 
     fn composite_scroll_run(

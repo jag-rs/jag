@@ -333,7 +333,6 @@ impl JagSurface {
                     let delta = deltas[*owner];
                     let owner = Owner {
                         key: property.key.clone(),
-                        segment: *segment,
                         origin: [property.origin[0] + delta[0], property.origin[1] + delta[1]],
                     };
                     self.composite_scroll_run(
@@ -369,7 +368,7 @@ impl JagSurface {
 /// first command whose z reaches a threshold above the current band's start.
 /// Transforms open at a split close in the earlier band and reopen in the
 /// next; each `PushTransform` carries its composed world transform.
-fn split_at_thresholds(
+pub(super) fn split_at_thresholds(
     commands: &[Command],
     thresholds: &std::collections::BTreeSet<i32>,
 ) -> Vec<Vec<Command>> {
