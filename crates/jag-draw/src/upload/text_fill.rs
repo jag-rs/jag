@@ -144,10 +144,15 @@ fn tint_glyph_with_brush(
                 let x = origin[0] + (col as f32 + 0.5) / dpi;
                 let y = origin[1] + (row as f32 + 0.5) / dpi;
                 let local = [a * x + c * y + e, b * x + d * y + f];
-                let color = brush_color_at(brush, local);
-                for (channel, value) in color.iter().enumerate() {
-                    data[idx * 4 + channel] = (value * cov * 255.0).round().clamp(0.0, 255.0) as u8;
+                let [r, g, b, a] = brush_color_at(brush, local);
+                // The text shader passes color-mask texels straight through (the
+                // emoji path), so they must already be premultiplied sRGB.
+                let srgb = ColorLinPremul { r, g, b, a }.to_srgba_u8();
+                let alpha = a * cov;
+                for channel in 0..3 {
+                    data[idx * 4 + channel] = (srgb[channel] as f32 * alpha).round() as u8;
                 }
+                data[idx * 4 + 3] = (alpha * 255.0).round().clamp(0.0, 255.0) as u8;
             }
         }
     }

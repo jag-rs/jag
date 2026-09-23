@@ -137,3 +137,11 @@ fn radial_and_conic_sample_by_distance_and_angle() {
     let east = brush_color_at(&conic, [10.0, 0.0]);
     assert!(east[0] > east[2]);
 }
+
+#[test]
+fn filled_texels_are_srgb_encoded_like_color_glyphs() {
+    let red = ColorLinPremul::rgba(239, 68, 68, 255);
+    let text = draw(Transform2D::identity(), Some(Brush::Solid(red)));
+    let (tinted, _) = text.glyph_for_draw(&solid_glyph(1, 1), [0.0, 0.0], 1.0);
+    assert_eq!(pixel(&tinted, 1, 0, 0), [239, 68, 68, 255]);
+}
