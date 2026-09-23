@@ -133,3 +133,32 @@ fn rounded_rect_gradient_blends_in_srgb_within_half_an_output_step() {
         );
     }
 }
+
+#[test]
+fn hard_stop_switches_color_at_its_line() {
+    // `red 50%, blue 50%`: left half flat red, right half flat blue.
+    let v = fill(
+        [0.0, 30.0],
+        [100.0, 30.0],
+        &[(0.0, RED), (0.5, RED), (0.5, BLUE), (1.0, BLUE)],
+    );
+    for vertex in &v {
+        let expected = if vertex.pos[0] < 50.0 - 1e-3 {
+            RED
+        } else if vertex.pos[0] > 50.0 + 1e-3 {
+            BLUE
+        } else {
+            continue;
+        };
+        let close = (0..4).all(|i| (vertex.color[i] - expected[i]).abs() < 1e-4);
+        assert!(close, "at x={}: {:?}", vertex.pos[0], vertex.color);
+    }
+    // Both colors meet at x = 50, one band on each side.
+    let at_line: Vec<_> = v
+        .iter()
+        .filter(|vertex| (vertex.pos[0] - 50.0).abs() < 1e-3)
+        .map(|vertex| vertex.color)
+        .collect();
+    let near = |c: &[f32; 4], e: [f32; 4]| (0..4).all(|i| (c[i] - e[i]).abs() < 1e-4);
+    assert!(at_line.iter().any(|c| near(c, RED)) && at_line.iter().any(|c| near(c, BLUE)));
+}

@@ -3,7 +3,7 @@
 
 use crate::scene::{Rect, Transform2D};
 
-use super::gradients::{lerp_color, linear_to_srgb, sample_gradient_stops};
+use super::gradients::{lerp_color, linear_to_srgb};
 use super::types::Vertex;
 use super::verts::apply_transform;
 
@@ -60,20 +60,29 @@ pub(crate) fn push_convex_linear_gradient(
     }
     // Position of `p` along the gradient line, 0 at `start` and 1 at `end`.
     let along = |p: [f32; 2]| ((p[0] - start[0]) * axis[0] + (p[1] - start[1]) * axis[1]) / len_sq;
-    let mut limits = vec![f32::NEG_INFINITY, stops[0].0];
+    // Each band is `(lo, hi, c0, c1)`: its limits along the line and the colors
+    // of the stop span it lies in. A band takes its colors from its own span,
+    // so two stops at one position (a hard stop) switch color at that line.
+    let (first, last) = (stops[0], stops[stops.len() - 1]);
+    let mut bands = vec![(f32::NEG_INFINITY, first.0, first, first)];
     for pair in stops.windows(2) {
-        let ((t0, c0), (t1, c1)) = (pair[0], pair[1]);
-        if t1 > t0 {
-            for f in srgb_split_points(c0, c1) {
-                limits.push(t0 + (t1 - t0) * f);
-            }
+        let (s0, s1) = (pair[0], pair[1]);
+        if s1.0 <= s0.0 {
+            continue;
         }
-        limits.push(t1);
+        let mut lo = s0.0;
+        for f in srgb_split_points(s0.1, s1.1)
+            .into_iter()
+            .chain(std::iter::once(1.0))
+        {
+            let hi = s0.0 + (s1.0 - s0.0) * f;
+            bands.push((lo, hi, s0, s1));
+            lo = hi;
+        }
     }
-    limits.push(f32::INFINITY);
+    bands.push((last.0, f32::INFINITY, last, last));
 
-    for pair in limits.windows(2) {
-        let (lo, hi) = (pair[0], pair[1]);
+    for (lo, hi, (t0, c0), (t1, c1)) in bands {
         if hi <= lo {
             continue;
         }
@@ -81,11 +90,18 @@ pub(crate) fn push_convex_linear_gradient(
         if band.len() < 3 {
             continue;
         }
+        let color_at = |p: [f32; 2]| {
+            if t1 > t0 {
+                lerp_color(c0, c1, ((along(p) - t0) / (t1 - t0)).clamp(0.0, 1.0))
+            } else {
+                c0
+            }
+        };
         let base = vertices.len() as u16;
         for p in &band {
             vertices.push(Vertex {
                 pos: apply_transform(*p, t),
-                color: sample_gradient_stops(stops, along(*p)),
+                color: color_at(*p),
                 z_index: z,
             });
         }
