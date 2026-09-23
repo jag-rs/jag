@@ -1,8 +1,7 @@
 use crate::scene::{Rect, RoundedRect, Transform2D};
 
 use super::tessellate::{
-    rounded_rect_to_path, tessellate_path_fill_subdivided_with_color_fn,
-    tessellate_path_fill_with_color_fn,
+    rounded_rect_polygon, rounded_rect_to_path, tessellate_path_fill_subdivided_with_color_fn,
 };
 use super::types::Vertex;
 use super::verts::apply_transform;
@@ -70,7 +69,7 @@ fn normalize_gradient_stops(stops: &[(f32, [f32; 4])]) -> Vec<(f32, [f32; 4])> {
     out
 }
 
-fn linear_to_srgb(c: f32) -> f32 {
+pub(crate) fn linear_to_srgb(c: f32) -> f32 {
     let x = c.clamp(0.0, 1.0);
     if x <= 0.0031308 {
         12.92 * x
@@ -296,33 +295,10 @@ pub(crate) fn push_rounded_rect_linear_gradient(
     t: Transform2D,
 ) {
     let packed = normalize_gradient_stops(stops);
-    if packed.len() < 2 {
-        return;
-    }
-
-    let path = rounded_rect_to_path(rrect);
-    let dx = end[0] - start[0];
-    let dy = end[1] - start[1];
-    let denom = (dx * dx + dy * dy).max(1e-6);
-    let color_at = |p: [f32; 2]| {
-        let proj = ((p[0] - start[0]) * dx + (p[1] - start[1]) * dy) / denom;
-        sample_gradient_stops(&packed, proj)
-    };
-
-    // The path-fill triangulation samples gradient color only at its (coarse)
-    // vertices and interpolates linearly across triangles. A 2-3 stop gradient
-    // is smooth enough for that, but a many-stop gradient (e.g. CSS
-    // `background-repeat` tiling of a gradient into a border ring) has sharp
-    // transitions the coarse rounded-corner triangulation cannot follow,
-    // producing diagonal seams. Subdivide so color is sampled densely enough to
-    // track the stops. Gated on stop count to keep smooth gradients cheap.
-    if packed.len() > 3 {
-        tessellate_path_fill_subdivided_with_color_fn(
-            vertices, indices, &path, z, t, 1.5, color_at,
-        );
-    } else {
-        tessellate_path_fill_with_color_fn(vertices, indices, &path, z, t, None, color_at);
-    }
+    let poly = rounded_rect_polygon(rrect);
+    super::rect_gradient::push_convex_linear_gradient(
+        vertices, indices, &poly, start, end, &packed, t, z,
+    );
 }
 
 pub(crate) fn push_rounded_rect_radial_gradient(
