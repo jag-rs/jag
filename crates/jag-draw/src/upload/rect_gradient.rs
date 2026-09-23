@@ -11,8 +11,8 @@ use super::verts::apply_transform;
 ///
 /// Each stop-to-stop span is the rect clipped to the band between the two
 /// stops' perpendicular lines. Color is affine inside a band, so per-vertex
-/// colors reproduce the gradient exactly. The first and last bands extend
-/// past the line, where CSS paints the end colors.
+/// colors reproduce the gradient exactly. Past the first and last stops,
+/// flat bands paint the end colors, as CSS does.
 pub(crate) fn push_rect_linear_gradient(
     vertices: &mut Vec<Vertex>,
     indices: &mut Vec<u16>,
@@ -39,11 +39,14 @@ pub(crate) fn push_rect_linear_gradient(
         [rect.x + rect.w, rect.y + rect.h],
         [rect.x, rect.y + rect.h],
     ];
-    let last = stops.len() - 2;
-    for (i, pair) in stops.windows(2).enumerate() {
-        let (t0, t1) = (pair[0].0, pair[1].0);
-        let lo = if i == 0 { f32::NEG_INFINITY } else { t0 };
-        let hi = if i == last { f32::INFINITY } else { t1 };
+    // One band per stop span, plus a flat band before the first stop and after
+    // the last: color is affine inside each, so per-vertex colors are exact.
+    let limits: Vec<f32> = std::iter::once(f32::NEG_INFINITY)
+        .chain(stops.iter().map(|stop| stop.0))
+        .chain(std::iter::once(f32::INFINITY))
+        .collect();
+    for pair in limits.windows(2) {
+        let (lo, hi) = (pair[0], pair[1]);
         if hi <= lo {
             continue;
         }

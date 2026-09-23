@@ -62,4 +62,7 @@ fn rect_beyond_the_line_takes_end_colors() {
     let v = fill([25.0, 30.0], [75.0, 30.0], &[(0.0, BLACK_40), (1.0, CLEAR)]);
     assert!((alpha_at(&v, [0.0, 0.0]) - 0.4).abs() < 1e-4);
     assert!(alpha_at(&v, [100.0, 0.0]).abs() < 1e-4);
+    // The ramp runs only between the line's ends, not across the whole rect.
+    assert!((alpha_at(&v, [25.0, 0.0]) - 0.4).abs() < 1e-4);
+    assert!(alpha_at(&v, [75.0, 60.0]).abs() < 1e-4);
 }
