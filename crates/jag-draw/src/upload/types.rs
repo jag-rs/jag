@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::allocator::OwnedBuffer;
 use crate::display_list::ExternalTextureId;
-use crate::scene::{Rect, TextRun, Transform2D};
+use crate::scene::{Brush, Rect, TextRun, Transform2D};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
@@ -28,6 +28,9 @@ pub struct ExtractedTextDraw {
     /// Clip rect (in logical scene coordinates) inherited from the display list
     /// clip stack. `None` means no clipping.
     pub clip: Option<Rect>,
+    /// Paint the glyphs with this brush instead of `run.color`; see
+    /// [`Command::DrawText`](crate::Command::DrawText).
+    pub fill: Option<Brush>,
 }
 
 /// Extracted image draw from DisplayList (placeholder for future)

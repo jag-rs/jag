@@ -185,9 +185,18 @@ fn render_commands_to_content(content: &mut Content, list: &DisplayList, _font_r
                 draw_path(content, path, *transform);
                 content.stroke();
             }
-            Command::DrawText { run, transform, .. } => {
+            Command::DrawText {
+                run,
+                transform,
+                fill,
+                ..
+            } => {
                 let (x, y) = apply_translation(run.pos[0], run.pos[1], *transform);
-                set_fill_color(content, run.color);
+                let color = fill
+                    .as_ref()
+                    .and_then(brush_solid_color)
+                    .unwrap_or(run.color);
+                set_fill_color(content, color);
                 content.begin_text();
                 content.set_font(Name(b"F1"), run.size.max(1.0));
                 content.set_text_matrix([1.0, 0.0, 0.0, 1.0, x, y]);

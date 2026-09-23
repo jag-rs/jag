@@ -8,6 +8,7 @@ mod path_clip;
 mod rect_gradient;
 mod shapes;
 mod tessellate;
+mod text_fill;
 mod types;
 mod unified;
 mod verts;

@@ -409,7 +409,8 @@ impl JagSurface {
                         origin[0] = snap(origin[0]);
                         origin[1] = snap(origin[1]);
                     }
-                    glyph_draws.push((origin, g.clone(), run.color, text_draw.z, text_draw.clip));
+                    let (glyph, color) = text_draw.glyph_for_draw(g, origin, sf);
+                    glyph_draws.push((origin, glyph, color, text_draw.z, text_draw.clip));
                 }
             }
         }

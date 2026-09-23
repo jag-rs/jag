@@ -78,6 +78,9 @@ pub enum Command {
         transform: Transform2D,
         id: u64,
         dynamic: bool,
+        /// Paint the glyphs with this brush, in the run's local space, instead
+        /// of `run.color` (CSS `background-clip: text`).
+        fill: Option<Brush>,
     },
     DrawEllipse {
         center: [f32; 2],

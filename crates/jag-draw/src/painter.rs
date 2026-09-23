@@ -203,6 +203,21 @@ impl Painter {
             transform: t,
             id,
             dynamic,
+            fill: None,
+        });
+    }
+
+    /// Draw text whose glyphs are painted with `fill` (in the same local space
+    /// as `run.pos`) instead of `run.color`.
+    pub fn text_with_fill(&mut self, run: TextRun, fill: Brush, z: i32) {
+        let t = self.current_transform();
+        self.list.commands.push(Command::DrawText {
+            run,
+            z,
+            transform: t,
+            id: 0,
+            dynamic: false,
+            fill: Some(fill),
         });
     }
 
