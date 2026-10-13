@@ -1073,6 +1073,11 @@ impl JagTextProvider {
                     Family::SansSerif,
                     Family::Name("Arial".into()),
                     Family::Name("Helvetica Neue".into()),
+                    // Linux: fontdb does not apply fontconfig aliases, so
+                    // `Family::SansSerif` ("Arial") misses on Debian.
+                    Family::Name("Noto Sans".into()),
+                    Family::Name("DejaVu Sans".into()),
+                    Family::Name("Liberation Sans".into()),
                 ],
                 weight: Weight::NORMAL,
                 stretch: Stretch::Normal,
