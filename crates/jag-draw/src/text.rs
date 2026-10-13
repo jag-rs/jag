@@ -1394,6 +1394,9 @@ impl JagTextProvider {
                     Family::SansSerif,
                     Family::Name("Arial"),
                     Family::Name("Helvetica Neue"),
+                    Family::Name("Noto Sans"),
+                    Family::Name("DejaVu Sans"),
+                    Family::Name("Liberation Sans"),
                 ],
                 GenericFamily::Monospace => vec![
                     Family::Name("SF Mono"),
@@ -1425,6 +1428,9 @@ impl JagTextProvider {
                     Family::SansSerif,
                     Family::Name("Arial"),
                     Family::Name("Helvetica Neue"),
+                    Family::Name("Noto Sans"),
+                    Family::Name("DejaVu Sans"),
+                    Family::Name("Liberation Sans"),
                 ],
                 GenericFamily::Cursive => vec![
                     Family::Cursive,
