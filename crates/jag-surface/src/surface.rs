@@ -202,6 +202,8 @@ pub struct JagSurface {
     surface_format: wgpu::TextureFormat,
     pass: PassManager,
     extended_color_composition: bool,
+    web_srgb_composition: bool,
+    native_extended_color_composition: bool,
     extended_group_pass: Option<PassManager>,
     allocator: RenderAllocator,
     /// When true, render directly to the surface; otherwise render offscreen then composite.

@@ -71,22 +71,38 @@ impl PassManager {
         target_format: wgpu::TextureFormat,
         offscreen_format: wgpu::TextureFormat,
     ) -> Self {
+        Self::new_with_color_space(device, target_format, offscreen_format, false)
+    }
+
+    /// Float web targets retain alpha precision while blending in encoded sRGB.
+    pub fn new_with_color_space(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        offscreen_format: wgpu::TextureFormat,
+        web_srgb: bool,
+    ) -> Self {
         // MSAA>1 interacts poorly with our current depth setup (depth textures
         // are 1×). Keep sample count at 1 and rely on SMAA / pixel snapping
         // for edge smoothing to avoid crashes and validation errors.
         let msaa_count = 1;
         // A target that does not encode sRGB on write blends sRGB-encoded
         // color, as browsers do; the offscreen format follows the target.
-        let direct_gamma = !target_format.is_srgb()
-            && !matches!(
-                target_format,
-                wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float
-            );
-        let gamma_blend = direct_gamma
-            && !matches!(
-                offscreen_format,
-                wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float
-            );
+        let float_target = matches!(
+            target_format,
+            wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float
+        );
+        let direct_gamma = (web_srgb && float_target)
+            || (!target_format.is_srgb()
+                && !matches!(
+                    target_format,
+                    wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float
+                ));
+        let gamma_blend = web_srgb
+            || direct_gamma
+                && !matches!(
+                    offscreen_format,
+                    wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float
+                );
         crate::text::set_gamma_blend_coverage(gamma_blend);
         let solid_offscreen =
             BasicSolidRenderer::new(device.clone(), offscreen_format, msaa_count, gamma_blend);
@@ -112,10 +128,11 @@ impl PassManager {
             BasicSolidRenderer::new(device.clone(), target_format, 1, direct_gamma);
         let overlay_solid = OverlaySolidRenderer::new(device.clone(), target_format, direct_gamma);
         let scrim_solid = ScrimSolidRenderer::new(device.clone(), target_format, direct_gamma);
-        let compositor = Compositor::with_output_encoding(
+        let compositor = Compositor::with_output_conversion(
             device.clone(),
             target_format,
             direct_gamma && !gamma_blend,
+            !direct_gamma && gamma_blend,
         );
         let blitter = Blitter::new(device.clone(), target_format);
         let smaa = SmaaRenderer::new(device.clone(), target_format);

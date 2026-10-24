@@ -1,4 +1,4 @@
-//! Opt-in extended linear composition for native WebGPU canvas content.
+//! Float composition with explicit native-linear or browser-sRGB blending.
 use super::{JagSurface, opacity::LayerGeometry};
 use anyhow::Result;
 use jag_draw::{Command, ExternalTextureId, PassManager, SurfaceEffect, TextProvider, wgpu};
@@ -9,20 +9,49 @@ impl JagSurface {
     /// contain colors outside sRGB. The final display format stays unchanged.
     /// Ordinary surfaces retain the existing bounded SDR rendering path.
     pub fn enable_extended_color_composition(&mut self) {
+        if !self.web_srgb_composition {
+            self.native_extended_color_composition = true;
+        }
         if self.extended_color_composition {
             return;
         }
-        let mut pass = PassManager::new_with_offscreen_format(
-            self.device.clone(),
-            self.surface_format,
-            wgpu::TextureFormat::Rgba16Float,
-        );
+        self.rebuild_color_composition();
+    }
+
+    /// Browser CSS compositing uses encoded sRGB with exact authored alpha.
+    /// Float intermediates preserve precision; sources project into the sRGB page gamut.
+    pub fn enable_web_color_composition(&mut self) {
+        self.set_web_color_composition(true);
+    }
+
+    /// Select the page blend space when a host switches between web and native IR.
+    pub fn set_web_color_composition(&mut self, enabled: bool) {
+        if self.web_srgb_composition == enabled {
+            return;
+        }
+        self.web_srgb_composition = enabled;
+        self.extended_group_pass = None;
+        self.rebuild_color_composition();
+    }
+
+    fn rebuild_color_composition(&mut self) {
+        self.extended_color_composition =
+            self.web_srgb_composition || self.native_extended_color_composition;
+        let mut pass = if self.extended_color_composition {
+            PassManager::new_with_color_space(
+                self.device.clone(),
+                self.surface_format,
+                wgpu::TextureFormat::Rgba16Float,
+                self.web_srgb_composition,
+            )
+        } else {
+            PassManager::new(self.device.clone(), self.surface_format)
+        };
         self.pass.copy_external_textures_to(&mut pass);
         pass.set_scroll_offset(self.pass.scroll_offset());
         std::mem::swap(&mut self.pass.image_cache, &mut pass.image_cache);
         std::mem::swap(&mut self.pass.svg_cache, &mut pass.svg_cache);
         self.pass = pass;
-        self.extended_color_composition = true;
         self.frame_cache = None;
         self.retained_layers.clear();
         self.scroll_tiles = Default::default();
@@ -47,13 +76,14 @@ impl JagSurface {
                 stable_id,
             );
         }
-        // Effect-group targets must preserve the same extended values as the
-        // root. A cached float-target pass keeps its shader formats consistent.
+        // Effect groups use the root's precision and blend space. A cached
+        // float-target pass keeps its shader formats and transfer consistent.
         let mut group_pass = self.extended_group_pass.take().unwrap_or_else(|| {
-            PassManager::new_with_offscreen_format(
+            PassManager::new_with_color_space(
                 self.device.clone(),
                 wgpu::TextureFormat::Rgba16Float,
                 wgpu::TextureFormat::Rgba16Float,
+                self.web_srgb_composition,
             )
         });
         group_pass.begin_composite_frame();

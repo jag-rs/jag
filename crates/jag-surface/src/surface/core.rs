@@ -55,6 +55,8 @@ impl JagSurface {
             surface_format,
             pass,
             extended_color_composition: false,
+            web_srgb_composition: false,
+            native_extended_color_composition: false,
             extended_group_pass: None,
             allocator,
             direct: false,
