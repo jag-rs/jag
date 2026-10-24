@@ -271,6 +271,7 @@ impl PassManager {
             scrim_stencil_tex: None,
             external_textures: std::collections::HashMap::new(),
             linear_external_textures: std::collections::HashSet::new(),
+            external_texture_owners: Default::default(),
             composite_direct: Default::default(),
             composite_offscreen: Default::default(),
         }
@@ -295,6 +296,8 @@ impl PassManager {
     pub fn clear_compositor_textures(&mut self) {
         self.external_textures
             .retain(|id, _| id.0 < 0x7000_0000_0000_0000);
+        self.external_texture_owners
+            .retain(|id, _| self.external_textures.contains_key(id));
     }
 
     /// Create a z-index bind group for the given z-index value.
