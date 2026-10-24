@@ -5,8 +5,10 @@
 mod display_list;
 mod gradients;
 mod path_clip;
+mod rect_gradient;
 mod shapes;
 mod tessellate;
+mod text_fill;
 mod types;
 mod unified;
 mod verts;
@@ -17,10 +19,11 @@ pub use types::{
     ExtractedExternalTextureDraw, ExtractedImageDraw, ExtractedSvgDraw, ExtractedTextDraw,
     GpuScene, SolidBatch, TransparentBatch, UnifiedSceneData, Vertex,
 };
-pub use unified::upload_display_list_unified;
+pub use unified::{upload_display_list_unified, upload_display_list_unified_with_scale};
 
 #[cfg(test)]
 mod shape_aa_tests {
+    use super::gradients::{push_ellipse, push_ellipse_radial_gradient};
     use super::shapes::{push_rounded_rect_aa, push_rounded_rect_stroke_aa};
     use crate::scene::{Rect, RoundedRadii, RoundedRect, Stroke, Transform2D};
 
@@ -52,11 +55,22 @@ mod shape_aa_tests {
             [0.2, 0.4, 0.6, 1.0],
             3.0,
             Transform2D::identity(),
+            0.5,
         );
 
         assert!(!indices.is_empty());
         assert!(vertices.iter().any(|v| v.color[3] == 1.0));
         assert!(vertices.iter().any(|v| v.color[3] == 0.0));
+        assert!(
+            vertices
+                .iter()
+                .any(|v| v.color[3] == 1.0 && (v.pos[0] - 89.5).abs() < 0.001)
+        );
+        assert!(
+            vertices
+                .iter()
+                .any(|v| v.color[3] == 0.0 && v.pos[0] > 90.0)
+        );
     }
 
     #[test]
@@ -71,10 +85,92 @@ mod shape_aa_tests {
             [0.2, 0.4, 0.6, 1.0],
             3.0,
             Transform2D::identity(),
+            0.5,
         );
 
         assert!(!indices.is_empty());
         assert!(vertices.iter().any(|v| v.color[3] == 1.0));
+        assert!(vertices.iter().any(|v| v.color[3] == 0.0));
+    }
+
+    #[test]
+    fn ellipse_aa_emits_a_transparent_outer_fringe() {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        push_ellipse(
+            &mut vertices,
+            &mut indices,
+            [20.0, 20.0],
+            [8.0, 6.0],
+            [0.2, 0.4, 0.6, 1.0],
+            3.0,
+            Transform2D::identity(),
+            0.5,
+        );
+
+        assert!(!indices.is_empty());
+        assert!(vertices.iter().any(|v| v.color[3] == 1.0));
+        assert!(vertices.iter().any(|v| v.color[3] == 0.0));
+        assert!(
+            vertices
+                .iter()
+                .any(|v| v.color[3] == 1.0 && (v.pos[0] - 27.5).abs() < 0.001)
+        );
+        assert!(
+            vertices
+                .iter()
+                .any(|v| v.color[3] == 0.0 && (v.pos[0] - 28.5).abs() < 0.001)
+        );
+    }
+
+    #[test]
+    fn ellipse_aa_stays_one_device_pixel_wide_at_two_x_dpi() {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let device_scale = 2.0;
+        let edge_aa = 0.5 / device_scale;
+        push_ellipse(
+            &mut vertices,
+            &mut indices,
+            [20.0, 20.0],
+            [8.0, 6.0],
+            [0.2, 0.4, 0.6, 1.0],
+            3.0,
+            Transform2D::identity(),
+            edge_aa,
+        );
+
+        let opaque_x = vertices
+            .iter()
+            .filter(|v| v.color[3] == 1.0)
+            .map(|v| v.pos[0])
+            .fold(f32::NEG_INFINITY, f32::max);
+        let transparent_x = vertices
+            .iter()
+            .filter(|v| v.color[3] == 0.0)
+            .map(|v| v.pos[0])
+            .fold(f32::NEG_INFINITY, f32::max);
+
+        assert!(((transparent_x - opaque_x) * device_scale - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn radial_ellipse_aa_preserves_gradient_and_fades_edge() {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        push_ellipse_radial_gradient(
+            &mut vertices,
+            &mut indices,
+            [20.0, 20.0],
+            [8.0, 6.0],
+            &[(0.0, [0.1, 0.2, 0.3, 1.0]), (1.0, [0.8, 0.7, 0.6, 1.0])],
+            3.0,
+            Transform2D::identity(),
+            0.5,
+        );
+
+        assert!(!indices.is_empty());
+        assert!(vertices.iter().any(|v| v.color == [0.8, 0.7, 0.6, 1.0]));
         assert!(vertices.iter().any(|v| v.color[3] == 0.0));
     }
 }

@@ -1,5 +1,5 @@
 use crate::display_list::Command;
-use crate::scene::{Rect, TextRun};
+use crate::scene::{Brush, Rect, TextRun};
 
 use super::super::types::{
     ExtractedExternalTextureDraw, ExtractedImageDraw, ExtractedSvgDraw, ExtractedTextDraw,
@@ -10,7 +10,11 @@ use super::UnifiedBuilder;
 impl UnifiedBuilder {
     pub(super) fn handle_text(&mut self, cmd: &Command) {
         let Command::DrawText {
-            run, z, transform, ..
+            run,
+            z,
+            transform,
+            fill,
+            ..
         } = cmd
         else {
             return;
@@ -25,13 +29,38 @@ impl UnifiedBuilder {
             text_run.color.b *= opa;
             text_run.color.a *= opa;
         }
+        let fill = fill
+            .clone()
+            .map(|brush| Self::brush_with_opacity(brush, opa));
         let clip = self.current_clip();
         self.text_draws.push(ExtractedTextDraw {
             run: text_run,
             z: *z,
             transform: final_transform,
             clip,
+            fill,
         });
+    }
+
+    fn brush_with_opacity(mut brush: Brush, opa: f32) -> Brush {
+        if opa >= 0.999 {
+            return brush;
+        }
+        let scale = |c: &mut crate::scene::ColorLinPremul| {
+            c.r *= opa;
+            c.g *= opa;
+            c.b *= opa;
+            c.a *= opa;
+        };
+        match &mut brush {
+            Brush::Solid(c) => scale(c),
+            Brush::LinearGradient { stops, .. }
+            | Brush::RadialGradient { stops, .. }
+            | Brush::ConicGradient { stops, .. } => {
+                stops.iter_mut().for_each(|(_, c)| scale(c));
+            }
+        }
+        brush
     }
 
     pub(super) fn handle_hyperlink(&mut self, cmd: &Command) {
@@ -60,7 +89,7 @@ impl UnifiedBuilder {
             text: hyperlink.text.clone(),
             pos: hyperlink.pos,
             size: hyperlink.size,
-            logical_size: 0.0,
+            logical_size: hyperlink.size,
             color: link_color,
             weight: hyperlink.weight,
             style: hyperlink.style,
@@ -72,6 +101,7 @@ impl UnifiedBuilder {
             z: *z,
             transform: final_transform,
             clip,
+            fill: None,
         });
 
         // Draw underline if enabled
@@ -137,6 +167,7 @@ impl UnifiedBuilder {
 
     pub(super) fn handle_image(&mut self, cmd: &Command) {
         let Command::DrawImage {
+            fit,
             path,
             origin,
             size,
@@ -151,6 +182,7 @@ impl UnifiedBuilder {
         let world_origin = apply_transform(*origin, final_transform);
         let opa = self.current_opacity();
         self.image_draws.push(ExtractedImageDraw {
+            fit: *fit,
             path: path.clone(),
             origin: world_origin,
             size: *size,
@@ -210,6 +242,31 @@ impl UnifiedBuilder {
                 z: *z,
                 opacity: *opacity * opa,
                 premultiplied: *premultiplied,
+                uv: [0.0, 0.0, 1.0, 1.0],
+                rounded_clip: None,
             });
+    }
+
+    pub(super) fn handle_composite_tile(&mut self, cmd: &Command) {
+        if let Command::DrawCompositeTile {
+            rect,
+            texture_id,
+            uv,
+            rounded_clip,
+            z,
+        } = cmd
+        {
+            self.external_texture_draws
+                .push(ExtractedExternalTextureDraw {
+                    texture_id: *texture_id,
+                    origin: [rect.x, rect.y],
+                    size: [rect.w, rect.h],
+                    z: *z,
+                    opacity: self.current_opacity(),
+                    premultiplied: true,
+                    uv: *uv,
+                    rounded_clip: *rounded_clip,
+                });
+        }
     }
 }

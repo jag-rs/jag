@@ -50,7 +50,7 @@ impl JagSurface {
                 text: run.text.clone(),
                 pos: [0.0, 0.0],
                 size: (logical_size * sf).max(1.0),
-                logical_size: 0.0,
+                logical_size,
                 color: run.color,
                 weight: run.weight,
                 style: run.style,
@@ -65,10 +65,11 @@ impl JagSurface {
                 if logical_size <= 15.0 {
                     origin = [snap(origin[0]), snap(origin[1])];
                 }
+                let (glyph, color) = text_draw.glyph_for_draw(glyph, origin, sf);
                 glyph_draws.push((
                     origin,
-                    Self::grayscale_glyph_for_compositing(glyph),
-                    run.color,
+                    Self::grayscale_glyph_for_compositing(&glyph),
+                    color,
                     text_draw.z,
                     text_draw.clip,
                 ));

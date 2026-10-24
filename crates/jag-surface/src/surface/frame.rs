@@ -5,7 +5,6 @@ use anyhow::Result;
 use jag_draw::{ColorLinPremul, Command, HitIndex, Painter, Viewport, wgpu};
 
 use crate::canvas::Canvas;
-use crate::gpu_readback::wait_for_gpu;
 
 use super::{
     CachedFrameData, JagSurface, apply_transform_to_point, calculate_image_fit,
@@ -61,6 +60,8 @@ impl JagSurface {
         // Build final display list from painter
         let mut list = canvas.painter.finish();
         self.reset_synthetic_external_texture_ids();
+        list.commands =
+            self.flatten_scroll_layers(&list.commands, list.viewport, text_provider.as_ref())?;
         let width = canvas.viewport.width.max(1);
         let height = canvas.viewport.height.max(1);
         let has_backdrop_blur = !canvas.backdrop_blur_draws.is_empty();
@@ -137,8 +138,14 @@ impl JagSurface {
             .ensure_depth_texture(&mut self.allocator, width, height);
 
         // Extract unified scene data (solids + text/image/svg draws) from the display list.
-        let unified_scene =
-            jag_draw::upload_display_list_unified(&mut self.allocator, &self.queue, &list)?;
+        let device_scale =
+            jag_draw::logical_multiplier(self.logical_pixels, self.dpi_scale, self.ui_scale);
+        let unified_scene = jag_draw::upload_display_list_unified_with_scale(
+            &mut self.allocator,
+            &self.queue,
+            &list,
+            device_scale,
+        )?;
 
         // Sort SVG draws by z-index and resolve paths for app bundle
         let mut svg_draws: Vec<_> = canvas
@@ -314,77 +321,11 @@ impl JagSurface {
             ));
         }
 
-        // Merge glyphs supplied explicitly via Canvas (draw_text_run/draw_text_direct)
-        // with text runs extracted from the display list (e.g., hyperlinks) for
-        // unified text rendering.
-        let mut glyph_draws = canvas.glyph_draws.clone();
-
-        if let Some(ref provider) = canvas.text_provider {
-            // Use the same snapping strategy as direct text paths so small
-            // text (e.g., 13–15px) lands cleanly on device pixels.
-            let sf = if self.dpi_scale.is_finite() && self.dpi_scale > 0.0 {
-                self.dpi_scale
-            } else {
-                1.0
-            };
-            let snap = |v: f32| -> f32 { (v * sf).round() / sf };
-
-            for text_draw in &unified_scene.text_draws {
-                let run = &text_draw.run;
-                let [a, b, c, d, e, f] = text_draw.transform.m;
-
-                // Transform the run origin (baseline-left) into world coordinates.
-                let origin_x = a * run.pos[0] + c * run.pos[1] + e;
-                let origin_y = b * run.pos[0] + d * run.pos[1] + f;
-
-                // Infer uniform scale from the linear part of the transform so
-                // text respects any explicit scaling in the display list.
-                let sx = (a * a + b * b).sqrt();
-                let sy = (c * c + d * d).sqrt();
-                let mut s = if sx.is_finite() && sy.is_finite() {
-                    if sx > 0.0 && sy > 0.0 {
-                        (sx + sy) * 0.5
-                    } else {
-                        sx.max(sy).max(1.0)
-                    }
-                } else {
-                    1.0
-                };
-                if !s.is_finite() || s <= 0.0 {
-                    s = 1.0;
-                }
-
-                // Rasterize at *physical* pixel size (scaled by DPI) to match
-                // the direct canvas text path. PassManager assumes glyph bitmaps
-                // are at physical resolution and divides quad sizes by DPI.
-                let logical_size = (run.size * s).max(1.0);
-                let physical_size = (logical_size * sf).max(1.0);
-                let run_for_provider = jag_draw::TextRun {
-                    text: run.text.clone(),
-                    pos: [0.0, 0.0],
-                    size: physical_size,
-                    logical_size: 0.0,
-                    color: run.color,
-                    weight: run.weight,
-                    style: run.style,
-                    family: run.family.clone(),
-                };
-
-                // Rasterize glyphs for this run and push into glyph_draws.
-                // Provider offsets are in *physical* pixels (proportional to physical_size).
-                // Convert back into logical coordinates so PassManager's DPI scaling
-                // keeps geometry and text aligned.
-                let glyphs = jag_draw::rasterize_run_cached(provider.as_ref(), &run_for_provider);
-                for g in glyphs.iter() {
-                    let mut origin = [origin_x + g.offset[0] / sf, origin_y + g.offset[1] / sf];
-                    if logical_size <= 15.0 {
-                        origin[0] = snap(origin[0]);
-                        origin[1] = snap(origin[1]);
-                    }
-                    glyph_draws.push((origin, g.clone(), run.color, text_draw.z, text_draw.clip));
-                }
-            }
-        }
+        let glyph_draws = self.prepare_frame_glyphs(
+            canvas.glyph_draws.clone(),
+            text_provider.as_ref(),
+            &unified_scene.text_draws,
+        );
 
         // Unified solids + text/images/SVGs pass
         let preserve_surface = self.preserve_surface;
@@ -525,7 +466,10 @@ impl JagSurface {
         crate::gpu_commands::submit_command_encoder(&self.queue, encoder);
         self.queue.present(frame);
         if let Some((gpu_scene, transparent_gpu_scene)) = reusable_gpu_scenes {
-            wait_for_gpu(&self.device);
+            // The next queue.write_buffer is ordered after this submission.
+            // Pooling these handles does not require waiting for GPU completion;
+            // wgpu retains in-flight resources and retires them asynchronously.
+            let _ = self.device.poll(wgpu::PollType::Poll);
             self.allocator.release_buffer(gpu_scene.vertex);
             self.allocator.release_buffer(gpu_scene.index);
             self.allocator.release_buffer(transparent_gpu_scene.vertex);
@@ -534,3 +478,6 @@ impl JagSurface {
         Ok(())
     }
 }
+
+#[path = "frame_glyphs.rs"]
+mod frame_glyphs;

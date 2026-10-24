@@ -7,7 +7,7 @@ use crate::scene::Brush;
 
 use super::gradients::{
     push_ellipse, push_ellipse_radial_gradient, push_rect_conic_gradient,
-    push_rect_linear_gradient, push_rounded_rect_conic_gradient, push_rounded_rect_linear_gradient,
+    push_rounded_rect_conic_gradient, push_rounded_rect_linear_gradient,
     push_rounded_rect_radial_gradient,
 };
 use super::shapes::{push_rect_stroke, push_rounded_rect, push_rounded_rect_stroke};
@@ -47,8 +47,7 @@ pub fn upload_display_list(
                         vertices.extend_from_slice(&v);
                         indices.extend(i.iter().map(|idx| base + idx));
                     }
-                    Brush::LinearGradient { stops, .. } => {
-                        // Only handle horizontal gradients for now: map t along x within rect
+                    Brush::LinearGradient { start, end, stops } => {
                         let mut packed: Vec<(f32, [f32; 4])> = stops
                             .iter()
                             .map(|(tpos, c)| (*tpos, [c.r, c.g, c.b, c.a]))
@@ -65,10 +64,12 @@ pub fn upload_display_list(
                             let c = packed.last().unwrap().1;
                             packed.push((1.0, c));
                         }
-                        push_rect_linear_gradient(
+                        super::rect_gradient::push_rect_linear_gradient(
                             &mut vertices,
                             &mut indices,
                             *rect,
+                            *start,
+                            *end,
                             &packed,
                             *transform,
                             *z as f32,
@@ -244,6 +245,7 @@ pub fn upload_display_list(
                         color,
                         *z as f32,
                         *transform,
+                        0.5,
                     );
                 }
                 Brush::RadialGradient {
@@ -274,6 +276,7 @@ pub fn upload_display_list(
                         &packed,
                         *z as f32,
                         *transform,
+                        0.5,
                     );
                 }
                 _ => {}

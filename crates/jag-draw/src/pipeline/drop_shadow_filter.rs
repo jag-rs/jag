@@ -9,11 +9,11 @@ pub struct DropShadowFilterRenderer {
 }
 
 impl DropShadowFilterRenderer {
-    pub fn new(device: Arc<wgpu::Device>, format: wgpu::TextureFormat) -> Self {
+    pub fn new(device: Arc<wgpu::Device>, format: wgpu::TextureFormat, gamma_blend: bool) -> Self {
         let shader = crate::gpu_bindings::create_wgsl_shader(
             &device,
             "drop-shadow-filter-shader",
-            jag_shaders::DROP_SHADOW_FILTER_WGSL,
+            &jag_shaders::with_blend_space(jag_shaders::DROP_SHADOW_FILTER_WGSL, gamma_blend),
         );
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
             binding,

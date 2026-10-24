@@ -1,7 +1,7 @@
 use jag_draw::{Brush, ColorLinPremul, FontStyle, RasterizedGlyph, TextRun};
 
 use super::Canvas;
-use super::helpers::{clip_glyph_to_rect, tint_glyph_mask_with_gradient};
+use super::helpers::clip_glyph_to_rect;
 
 impl Canvas {
     /// Draw text using direct rasterization (recommended).
@@ -194,12 +194,11 @@ impl Canvas {
         }
     }
 
-    /// Draw text with per-glyph gradient color sampling.
+    /// Draw text whose glyphs are painted with `brush` (CSS
+    /// `background-clip: text`).
     ///
-    /// Works like `draw_text_run_styled` but instead of a single flat color,
-    /// each glyph is tinted by sampling the provided `Brush` at the glyph's
-    /// normalised horizontal position (`t = glyph_x / text_width`).
-    /// This implements CSS `background-clip: text` with gradient backgrounds.
+    /// `brush` is in the same local space as `origin`. The run goes through
+    /// the display list so the fill follows scroll, opacity, and filter layers.
     #[allow(clippy::too_many_arguments)]
     pub fn draw_text_run_gradient(
         &mut self,
@@ -210,168 +209,21 @@ impl Canvas {
         style: FontStyle,
         family: Option<String>,
         brush: &Brush,
-        element_width: f32,
-        gradient_x_offset: f32,
         z: i32,
     ) {
-        if let Some(ref provider) = self.text_provider
-            && !self.painter.has_active_effect()
-        {
-            let transform = self.painter.current_transform();
-            let [a, b, c, d, e, f] = transform.m;
-            let transformed_origin = [
-                a * origin[0] + c * origin[1] + e,
-                b * origin[0] + d * origin[1] + f,
-            ];
-
-            let sf = if self.dpi_scale.is_finite() && self.dpi_scale > 0.0 {
-                self.dpi_scale
-            } else {
-                1.0
-            };
-
-            // Solid fallback colour (first gradient stop or white).
-            let solid_fallback = match brush {
-                Brush::Solid(c) => *c,
-                Brush::LinearGradient { stops, .. } => stops.first().map_or(
-                    ColorLinPremul {
-                        r: 1.0,
-                        g: 1.0,
-                        b: 1.0,
-                        a: 1.0,
-                    },
-                    |s| s.1,
-                ),
-                Brush::RadialGradient { stops, .. } | Brush::ConicGradient { stops, .. } => {
-                    stops.first().map_or(
-                        ColorLinPremul {
-                            r: 1.0,
-                            g: 1.0,
-                            b: 1.0,
-                            a: 1.0,
-                        },
-                        |s| s.1,
-                    )
-                }
-            };
-
-            let run = TextRun {
+        self.painter.text_with_fill(
+            TextRun {
                 text,
-                pos: [0.0, 0.0],
-                size: (size_px * sf).max(1.0),
+                pos: origin,
+                size: size_px,
                 logical_size: size_px,
-                color: solid_fallback,
+                color: ColorLinPremul::default(),
                 weight,
                 style,
                 family,
-            };
-
-            let glyphs = jag_draw::rasterize_run_cached(provider.as_ref(), &run);
-            let current_clip = self.clip_stack.last().cloned().unwrap_or(None);
-            let ew = element_width.max(1.0);
-            let gx_offset = gradient_x_offset;
-
-            // Pre-convert gradient stops for the sampling function.
-            let grad_stops: Vec<(f32, [f32; 4])> = match brush {
-                Brush::LinearGradient { stops, .. }
-                | Brush::RadialGradient { stops, .. }
-                | Brush::ConicGradient { stops, .. } => stops
-                    .iter()
-                    .map(|(t, c)| (*t, [c.r, c.g, c.b, c.a]))
-                    .collect(),
-                _ => Vec::new(),
-            };
-
-            let white = ColorLinPremul {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-                a: 1.0,
-            };
-
-            for g in glyphs.iter() {
-                let mut glyph_origin_logical = [
-                    transformed_origin[0] + g.offset[0] / sf,
-                    transformed_origin[1] + g.offset[1] / sf,
-                ];
-                if size_px <= 15.0 {
-                    glyph_origin_logical[0] = (glyph_origin_logical[0] * sf).round() / sf;
-                    glyph_origin_logical[1] = (glyph_origin_logical[1] * sf).round() / sf;
-                }
-
-                // Pre-tint the glyph mask per-pixel-column with the gradient color.
-                // The gradient spans the full element width (CSS background-clip: text spec).
-                // gx_offset positions the text run within the element for correct sampling.
-                let tinted = if grad_stops.is_empty() {
-                    g.clone()
-                } else {
-                    let glyph_x_device = g.offset[0];
-                    let offset_device = gx_offset * sf;
-                    tint_glyph_mask_with_gradient(
-                        g,
-                        offset_device + glyph_x_device,
-                        sf,
-                        ew,
-                        &grad_stops,
-                    )
-                };
-
-                let glyph_origin_device =
-                    [glyph_origin_logical[0] * sf, glyph_origin_logical[1] * sf];
-
-                if let Some(clip) = current_clip {
-                    if let Some((clipped_mask, clipped_origin_device)) =
-                        clip_glyph_to_rect(&tinted.mask, glyph_origin_device, clip)
-                    {
-                        let clipped = RasterizedGlyph {
-                            offset: [0.0, 0.0],
-                            mask: clipped_mask,
-                        };
-                        let mut clipped_origin_logical =
-                            [clipped_origin_device[0] / sf, clipped_origin_device[1] / sf];
-                        if size_px <= 15.0 {
-                            clipped_origin_logical[0] =
-                                (clipped_origin_logical[0] * sf).round() / sf;
-                            clipped_origin_logical[1] =
-                                (clipped_origin_logical[1] * sf).round() / sf;
-                        }
-                        self.glyph_draws
-                            .push((clipped_origin_logical, clipped, white, z, None));
-                    }
-                } else {
-                    self.glyph_draws
-                        .push((glyph_origin_logical, tinted, white, z, None));
-                }
-            }
-        } else {
-            // Fallback: extract solid color and use display list path.
-            let fallback_color = match brush {
-                Brush::Solid(c) => *c,
-                Brush::LinearGradient { stops, .. }
-                | Brush::RadialGradient { stops, .. }
-                | Brush::ConicGradient { stops, .. } => stops.first().map_or(
-                    ColorLinPremul {
-                        r: 1.0,
-                        g: 1.0,
-                        b: 1.0,
-                        a: 1.0,
-                    },
-                    |s| s.1,
-                ),
-            };
-            self.painter.text(
-                TextRun {
-                    text,
-                    pos: origin,
-                    size: size_px,
-                    logical_size: size_px,
-                    color: fallback_color,
-                    weight,
-                    style,
-                    family,
-                },
-                z,
-            );
-        }
+            },
+            brush.clone(),
+            z,
+        );
     }
 }

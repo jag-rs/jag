@@ -186,8 +186,9 @@ fn push_surface(
     });
 }
 
-fn command_bounds(command: &Command) -> Option<Rect> {
+pub fn command_bounds(command: &Command) -> Option<Rect> {
     let (rect, transform) = match command {
+        Command::DrawCompositeTile { rect, .. } => (*rect, Transform2D::identity()),
         Command::DrawRect {
             rect, transform, ..
         } => (*rect, *transform),

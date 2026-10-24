@@ -7,11 +7,15 @@ pub struct ScrimStencilMaskRenderer {
 }
 
 impl ScrimStencilMaskRenderer {
-    pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        gamma_blend: bool,
+    ) -> Self {
         let shader = crate::gpu_bindings::create_wgsl_shader(
             &device,
             "scrim-stencil-mask-shader",
-            jag_shaders::SOLID_WGSL,
+            &jag_shaders::with_blend_space(jag_shaders::SOLID_WGSL, gamma_blend),
         );
 
         let bgl = crate::gpu_bindings::create_bind_group_layout(
@@ -132,11 +136,15 @@ pub struct ScrimStencilRenderer {
 }
 
 impl ScrimStencilRenderer {
-    pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
+    pub fn new(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        gamma_blend: bool,
+    ) -> Self {
         let shader = crate::gpu_bindings::create_wgsl_shader(
             &device,
             "scrim-stencil-shader",
-            jag_shaders::SOLID_WGSL,
+            &jag_shaders::with_blend_space(jag_shaders::SOLID_WGSL, gamma_blend),
         );
 
         let bgl = crate::gpu_bindings::create_bind_group_layout(

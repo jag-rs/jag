@@ -18,6 +18,7 @@ impl JagSurface {
         frame: wgpu::SurfaceTexture,
         scroll_delta: [f32; 2],
     ) -> Result<()> {
+        self.pass.begin_composite_frame();
         let cache = self
             .frame_cache
             .as_ref()
@@ -132,6 +133,8 @@ impl JagSurface {
         self.pass.set_scale_factor(self.dpi_scale);
         self.pass.set_logical_pixels(self.logical_pixels);
         self.pass.set_ui_scale(self.ui_scale);
+        self.pending_image_loads = false;
+        self.pass.poll_image_loads(&self.queue);
 
         // Build final display list from painter
         let text_provider = canvas.text_provider.clone();
@@ -141,6 +144,8 @@ impl JagSurface {
         // Build final display list from painter
         let mut list = canvas.painter.finish();
         self.reset_synthetic_external_texture_ids();
+        list.commands =
+            self.flatten_scroll_layers(&list.commands, list.viewport, text_provider.as_ref())?;
         let width = canvas.viewport.width.max(1);
         let height = canvas.viewport.height.max(1);
 
@@ -180,8 +185,14 @@ impl JagSurface {
             .ensure_depth_texture(&mut self.allocator, width, height);
 
         // Extract unified scene data
-        let unified_scene =
-            jag_draw::upload_display_list_unified(&mut self.allocator, &self.queue, &list)?;
+        let device_scale =
+            jag_draw::logical_multiplier(self.logical_pixels, self.dpi_scale, self.ui_scale);
+        let unified_scene = jag_draw::upload_display_list_unified_with_scale(
+            &mut self.allocator,
+            &self.queue,
+            &list,
+            device_scale,
+        )?;
 
         // Process text draws from display list via text provider
         let mut glyph_draws = canvas.glyph_draws.clone();
@@ -221,7 +232,7 @@ impl JagSurface {
                     text: run.text.clone(),
                     pos: [0.0, 0.0],
                     size: physical_size,
-                    logical_size: 0.0,
+                    logical_size,
                     color: run.color,
                     weight: run.weight,
                     style: run.style,
@@ -235,7 +246,8 @@ impl JagSurface {
                         origin[0] = snap(origin[0]);
                         origin[1] = snap(origin[1]);
                     }
-                    glyph_draws.push((origin, g.clone(), run.color, text_draw.z, text_draw.clip));
+                    let (glyph, color) = text_draw.glyph_for_draw(g, origin, sf);
+                    glyph_draws.push((origin, glyph, color, text_draw.z, text_draw.clip));
                 }
             }
         }

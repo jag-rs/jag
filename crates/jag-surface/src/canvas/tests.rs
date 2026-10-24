@@ -44,7 +44,7 @@ mod side_channel_opacity_tests {
                 .display_list()
                 .commands
                 .iter()
-                .any(|command| matches!(command, Command::DrawSvg { style: None, .. }))
+                .any(|command| matches!(command, Command::DrawSvg { style: Some(style), .. } if *style == jag_draw::SvgStyle::default()))
         );
     }
 
@@ -142,23 +142,25 @@ mod side_channel_opacity_tests {
 
         canvas.draw_svg(svg, [10.0, 20.0], [24.0, 24.0], 7);
 
-        let transform = canvas
+        let (origin, transform) = canvas
             .display_list()
             .commands
             .iter()
             .find_map(|command| match command {
-                Command::FillPath { transform, .. } | Command::StrokePath { transform, .. } => {
-                    Some(*transform)
-                }
+                Command::DrawSvg {
+                    origin, transform, ..
+                } => Some((*origin, *transform)),
                 _ => None,
             })
-            .expect("simple SVG should import vector path commands");
+            .expect("simple SVG must retain the DPI-aware raster command inside effects");
         assert_eq!(
-            transform.m[4], 110.0,
+            origin[0] + transform.m[4],
+            110.0,
             "parent translation must not be composed twice"
         );
         assert_eq!(
-            transform.m[5], 70.0,
+            origin[1] + transform.m[5],
+            70.0,
             "parent translation must not be composed twice"
         );
     }
@@ -408,44 +410,5 @@ mod fill_rect_rounded_clip_tests {
         assert_eq!(clip.rect.w, 180.0);
         assert_eq!(clip.rect.h, 120.0);
         assert_eq!(clip.radii, [8.0, 10.0, 12.0, 14.0]);
-    }
-}
-
-#[cfg(test)]
-mod gradient_text_mask_tests {
-    use super::super::helpers::tint_glyph_mask_with_gradient;
-    use jag_draw::{GlyphMask, MaskFormat, RasterizedGlyph, SubpixelMask};
-
-    #[test]
-    fn gradient_tint_uploads_subpixel_masks_as_color_masks() {
-        let glyph = RasterizedGlyph {
-            offset: [0.0, 0.0],
-            mask: GlyphMask::Subpixel(SubpixelMask {
-                width: 2,
-                height: 1,
-                format: MaskFormat::Rgba8,
-                data: vec![255, 255, 255, 0, 128, 128, 128, 0],
-            }),
-        };
-
-        let tinted = tint_glyph_mask_with_gradient(
-            &glyph,
-            0.0,
-            1.0,
-            2.0,
-            &[(0.0, [0.0, 1.0, 0.0, 1.0]), (1.0, [0.0, 0.5, 0.0, 1.0])],
-        );
-
-        let GlyphMask::Color(mask) = tinted.mask else {
-            panic!("gradient text should upload as a color mask");
-        };
-        assert_eq!(mask.data.len(), 8);
-        assert_eq!(mask.data[0], 0);
-        assert_eq!(mask.data[1], 255);
-        assert_eq!(mask.data[2], 0);
-        assert_eq!(mask.data[3], 255);
-        assert!(mask.data[5] > mask.data[4]);
-        assert!(mask.data[5] > mask.data[6]);
-        assert_eq!(mask.data[7], 128);
     }
 }

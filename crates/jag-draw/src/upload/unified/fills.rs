@@ -1,8 +1,9 @@
 use crate::display_list::Command;
-use crate::scene::Brush;
+use crate::scene::{Brush, RoundedRadii, RoundedRect};
 
 use super::super::gradients::{
-    push_ellipse, push_ellipse_radial_gradient, push_rect_conic_gradient, push_rect_linear_gradient,
+    push_ellipse, push_ellipse_radial_gradient, push_rect_conic_gradient,
+    push_rounded_rect_radial_gradient,
 };
 use super::super::verts::rect_to_verts;
 use super::UnifiedBuilder;
@@ -41,8 +42,7 @@ impl UnifiedBuilder {
                     self.indices.extend(i.iter().map(|idx| base + idx));
                 }
             }
-            Brush::LinearGradient { stops, .. } => {
-                // Only handle horizontal gradients for now: map t along x within rect
+            Brush::LinearGradient { start, end, stops } => {
                 let mut packed: Vec<(f32, [f32; 4])> = stops
                     .iter()
                     .map(|(tpos, c)| (*tpos, Self::premul_opa([c.r, c.g, c.b, c.a], opa)))
@@ -62,10 +62,12 @@ impl UnifiedBuilder {
                 let gradient_transparent = packed.iter().any(|(_, c)| Self::is_transparent(c[3]));
                 if gradient_transparent {
                     let index_start = self.transparent_indices.len();
-                    push_rect_linear_gradient(
+                    super::super::rect_gradient::push_rect_linear_gradient(
                         &mut self.transparent_vertices,
                         &mut self.transparent_indices,
                         *rect,
+                        *start,
+                        *end,
                         &packed,
                         final_transform,
                         *z as f32,
@@ -74,10 +76,12 @@ impl UnifiedBuilder {
                     let clip = self.current_clip();
                     self.record_transparent_batch(*z, index_start, index_end, clip);
                 } else {
-                    push_rect_linear_gradient(
+                    super::super::rect_gradient::push_rect_linear_gradient(
                         &mut self.vertices,
                         &mut self.indices,
                         *rect,
+                        *start,
+                        *end,
                         &packed,
                         final_transform,
                         *z as f32,
@@ -125,7 +129,51 @@ impl UnifiedBuilder {
                     );
                 }
             }
-            _ => {}
+            Brush::RadialGradient {
+                center,
+                radius,
+                stops,
+            } => {
+                let packed: Vec<(f32, [f32; 4])> = stops
+                    .iter()
+                    .map(|(tpos, c)| (*tpos, Self::premul_opa([c.r, c.g, c.b, c.a], opa)))
+                    .collect();
+                if packed.is_empty() {
+                    return;
+                }
+                let rrect = RoundedRect {
+                    rect: *rect,
+                    radii: RoundedRadii::default(),
+                };
+                let gradient_transparent = packed.iter().any(|(_, c)| Self::is_transparent(c[3]));
+                if gradient_transparent {
+                    let index_start = self.transparent_indices.len();
+                    push_rounded_rect_radial_gradient(
+                        &mut self.transparent_vertices,
+                        &mut self.transparent_indices,
+                        rrect,
+                        *center,
+                        *radius,
+                        &packed,
+                        *z as f32,
+                        final_transform,
+                    );
+                    let index_end = self.transparent_indices.len();
+                    let clip = self.current_clip();
+                    self.record_transparent_batch(*z, index_start, index_end, clip);
+                } else {
+                    push_rounded_rect_radial_gradient(
+                        &mut self.vertices,
+                        &mut self.indices,
+                        rrect,
+                        *center,
+                        *radius,
+                        &packed,
+                        *z as f32,
+                        final_transform,
+                    );
+                }
+            }
         }
     }
 
@@ -146,31 +194,22 @@ impl UnifiedBuilder {
         match brush {
             Brush::Solid(col) => {
                 let color = Self::premul_opa([col.r, col.g, col.b, col.a], opa);
-                if Self::is_transparent(color[3]) {
-                    let index_start = self.transparent_indices.len();
-                    push_ellipse(
-                        &mut self.transparent_vertices,
-                        &mut self.transparent_indices,
-                        *center,
-                        *radii,
-                        color,
-                        *z as f32,
-                        final_transform,
-                    );
-                    let index_end = self.transparent_indices.len();
-                    let clip = self.current_clip();
-                    self.record_transparent_batch(*z, index_start, index_end, clip);
-                } else {
-                    push_ellipse(
-                        &mut self.vertices,
-                        &mut self.indices,
-                        *center,
-                        *radii,
-                        color,
-                        *z as f32,
-                        final_transform,
-                    );
-                }
+                // Ellipse geometry always includes a transparent coverage fringe,
+                // so keep it in the blended stream even when the fill is opaque.
+                let index_start = self.transparent_indices.len();
+                push_ellipse(
+                    &mut self.transparent_vertices,
+                    &mut self.transparent_indices,
+                    *center,
+                    *radii,
+                    color,
+                    *z as f32,
+                    final_transform,
+                    self.edge_aa,
+                );
+                let index_end = self.transparent_indices.len();
+                let clip = self.current_clip();
+                self.record_transparent_batch(*z, index_start, index_end, clip);
             }
             Brush::RadialGradient {
                 center: _gcenter,
@@ -192,34 +231,63 @@ impl UnifiedBuilder {
                     let c = packed.last().unwrap().1;
                     packed.push((1.0, c));
                 }
-                let gradient_transparent = packed.iter().any(|(_, c)| Self::is_transparent(c[3]));
-                if gradient_transparent {
-                    let index_start = self.transparent_indices.len();
-                    push_ellipse_radial_gradient(
-                        &mut self.transparent_vertices,
-                        &mut self.transparent_indices,
-                        *center,
-                        *radii,
-                        &packed,
-                        *z as f32,
-                        final_transform,
-                    );
-                    let index_end = self.transparent_indices.len();
-                    let clip = self.current_clip();
-                    self.record_transparent_batch(*z, index_start, index_end, clip);
-                } else {
-                    push_ellipse_radial_gradient(
-                        &mut self.vertices,
-                        &mut self.indices,
-                        *center,
-                        *radii,
-                        &packed,
-                        *z as f32,
-                        final_transform,
-                    );
-                }
+                let index_start = self.transparent_indices.len();
+                push_ellipse_radial_gradient(
+                    &mut self.transparent_vertices,
+                    &mut self.transparent_indices,
+                    *center,
+                    *radii,
+                    &packed,
+                    *z as f32,
+                    final_transform,
+                    self.edge_aa,
+                );
+                let index_end = self.transparent_indices.len();
+                let clip = self.current_clip();
+                self.record_transparent_batch(*z, index_start, index_end, clip);
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scene::{ColorLinPremul, Rect, Transform2D};
+
+    #[test]
+    fn rectangular_radial_gradient_emits_transparent_geometry() {
+        let mut builder = UnifiedBuilder::new(1.0);
+        builder.handle_rect(&Command::DrawRect {
+            rect: Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 800.0,
+                h: 400.0,
+            },
+            brush: Brush::RadialGradient {
+                center: [400.0, 200.0],
+                radius: 400.0,
+                stops: vec![
+                    (
+                        0.0,
+                        ColorLinPremul {
+                            r: 0.4,
+                            g: 0.1,
+                            b: 0.8,
+                            a: 0.8,
+                        },
+                    ),
+                    (1.0, ColorLinPremul::default()),
+                ],
+            },
+            z: -1,
+            transform: Transform2D::identity(),
+        });
+
+        assert!(!builder.transparent_vertices.is_empty());
+        assert!(!builder.transparent_indices.is_empty());
+        assert_eq!(builder.transparent_batches.len(), 1);
     }
 }

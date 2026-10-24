@@ -133,6 +133,36 @@ pub fn try_make_surface_config(
     surface_config_from_capabilities(&surface.get_capabilities(adapter), width, height)
 }
 
+/// Choose a surface format for sRGB encoding on write.
+pub fn select_srgb_surface_format(formats: &[wgpu::TextureFormat]) -> Option<wgpu::TextureFormat> {
+    formats
+        .iter()
+        .copied()
+        .find(wgpu::TextureFormat::is_srgb)
+        .or_else(|| formats.first().copied())
+}
+/// Choose an unencoded surface so CSS colors can blend in sRGB.
+pub fn select_gamma_blend_surface_format(
+    formats: &[wgpu::TextureFormat],
+) -> Option<wgpu::TextureFormat> {
+    formats
+        .iter()
+        .copied()
+        .find(|format| !format.is_srgb())
+        .or_else(|| formats.first().copied())
+}
+pub fn make_gamma_blend_surface_config(
+    adapter: &wgpu::Adapter,
+    surface: &wgpu::Surface,
+    width: u32,
+    height: u32,
+) -> wgpu::SurfaceConfiguration {
+    let mut config = make_surface_config(adapter, surface, width, height);
+    config.format = select_gamma_blend_surface_format(&surface.get_capabilities(adapter).formats)
+        .expect("surface must expose a format");
+    config
+}
+
 pub fn choose_srgb_surface_format(
     adapter: &wgpu::Adapter,
     surface: &wgpu::Surface,
@@ -185,7 +215,7 @@ fn surface_config_from_capabilities(
         present_mode: selected.present_mode,
         alpha_mode: selected.alpha_mode,
         view_formats: vec![],
-        desired_maximum_frame_latency: 1,
+        desired_maximum_frame_latency: if cfg!(target_os = "macos") { 2 } else { 1 },
     })
 }
 

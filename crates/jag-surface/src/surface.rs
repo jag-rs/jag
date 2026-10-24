@@ -14,7 +14,11 @@ mod core;
 mod frame;
 mod masks;
 mod opacity;
+mod retained_layers;
+mod scroll_tiles;
 mod text_mask;
+
+pub use retained_layers::RetainedLayerStats;
 
 /// Cached GPU resources from a previous `end_frame` call, enabling scroll-only
 /// frames to skip the expensive IR walk, display list build, and GPU upload.
@@ -224,4 +228,6 @@ pub struct JagSurface {
     /// scroll-only replay.
     frame_cache_enabled: bool,
     pending_image_loads: bool,
+    retained_layers: retained_layers::RetainedLayers,
+    scroll_tiles: scroll_tiles::ScrollTiles,
 }

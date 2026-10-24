@@ -191,7 +191,7 @@ fn fs_main(inp: VsOut) -> @location(0) vec4<f32> {
     }
     let cov = coverage(inp.lower, inp.upper, inp.world, inp.params.x, inp.params.y);
     // color is premultiplied linear; scaling by coverage keeps it premultiplied.
-    return inp.color * cov;
+    return encode_output(inp.color * cov);
 }
 "#;
 

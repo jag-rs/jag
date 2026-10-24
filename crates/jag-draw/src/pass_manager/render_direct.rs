@@ -135,13 +135,24 @@ impl PassManager {
             {
                 let base_w = w.max(1) as f32;
                 let base_h = h.max(1) as f32;
-                let scale = (max_size[0] / base_w).min(max_size[1] / base_h).max(0.0);
+                let plan = crate::svg_scale::svg_raster_plan(
+                    [base_w, base_h],
+                    *max_size,
+                    inv_logical.recip(),
+                    *transform,
+                );
 
-                if let Some((view_scaled, _sw, _sh)) =
-                    self.rasterize_svg_to_view(std::path::Path::new(path), scale, *style, queue)
-                {
-                    let draw_w = base_w * scale;
-                    let draw_h = base_h * scale;
+                if let Some((plan, (view_scaled, _sw, _sh))) = plan.and_then(|plan| {
+                    self.rasterize_svg_to_view(
+                        std::path::Path::new(path),
+                        plan.raster_scale,
+                        *style,
+                        queue,
+                    )
+                    .map(|view| (plan, view))
+                }) {
+                    let draw_w = base_w * plan.layout_scale;
+                    let draw_h = base_h * plan.layout_scale;
                     let transformed_quad =
                         transformed_quad_points(*origin, [draw_w, draw_h], *transform);
                     svg_views.push((
@@ -167,7 +178,7 @@ impl PassManager {
 
         let (image_z_vals, image_resources) = self.prep_image_direct(&image_views);
         let (svg_z_vals, svg_resources) = self.prep_svg_direct(&svg_views);
-        let (ext_z_vals, ext_resources) = self.prep_ext_direct(external_texture_draws);
+        let (ext_z_vals, ext_resources) = self.prep_ext_direct(external_texture_draws, queue);
 
         // Build depth attachment after all mutable borrows on self are finished
         let depth_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
@@ -348,10 +359,18 @@ impl PassManager {
                     }
                 }
                 DrawItem::ExternalTexture(i) => {
-                    let (vbuf, ibuf, vp_bg_ext, z_bg_ext, tex_bg, params_bg, _, _) =
-                        &ext_resources[i];
-                    self.image.record(
-                        &mut pass, vp_bg_ext, z_bg_ext, tex_bg, params_bg, vbuf, ibuf, 6,
+                    let (vbuf, ibuf, vp_bg_ext, z_bg_ext, tex_bg, params_bg, _, _, base_vertex) =
+                        &*ext_resources[i];
+                    self.image.record_at_vertex(
+                        &mut pass,
+                        vp_bg_ext,
+                        z_bg_ext,
+                        tex_bg,
+                        params_bg,
+                        vbuf,
+                        ibuf,
+                        6,
+                        *base_vertex,
                     );
                 }
             }

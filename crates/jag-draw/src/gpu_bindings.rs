@@ -3,7 +3,7 @@
 pub(crate) fn create_wgsl_shader(
     device: &wgpu::Device,
     label: &str,
-    source: &'static str,
+    source: &str,
 ) -> wgpu::ShaderModule {
     device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),

@@ -24,11 +24,12 @@ impl ShadowInstanceRenderer {
         device: Arc<wgpu::Device>,
         target_format: wgpu::TextureFormat,
         sample_count: u32,
+        gamma_blend: bool,
     ) -> Self {
         let shader = crate::gpu_bindings::create_wgsl_shader(
             &device,
             "shadow-instance-shader",
-            jag_shaders::SHADOW_INSTANCE_WGSL,
+            &jag_shaders::with_blend_space(jag_shaders::SHADOW_INSTANCE_WGSL, gamma_blend),
         );
 
         // Same viewport-uniform layout as the solid renderer (group 0, binding 0).

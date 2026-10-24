@@ -18,12 +18,18 @@ fn validate(src: &str) {
 #[test]
 fn shadow_instance_shader_parses_and_validates() {
     // Panics with a diagnostic if the shader is malformed; passing is the assertion.
-    validate(jag_shaders::SHADOW_INSTANCE_WGSL);
+    for gamma_blend in [false, true] {
+        validate(&jag_shaders::with_blend_space(
+            jag_shaders::SHADOW_INSTANCE_WGSL,
+            gamma_blend,
+        ));
+    }
 }
 
 #[test]
 fn shadow_instance_shader_has_both_entry_points() {
-    let module = naga::front::wgsl::parse_str(jag_shaders::SHADOW_INSTANCE_WGSL).unwrap();
+    let source = jag_shaders::with_blend_space(jag_shaders::SHADOW_INSTANCE_WGSL, false);
+    let module = naga::front::wgsl::parse_str(&source).unwrap();
     let stages: Vec<_> = module
         .entry_points
         .iter()

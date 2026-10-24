@@ -120,14 +120,25 @@ impl PassManager {
             {
                 let base_w = w.max(1) as f32;
                 let base_h = h.max(1) as f32;
-                let scale = (max_size[0] / base_w).min(max_size[1] / base_h).max(0.0);
+                let plan = crate::svg_scale::svg_raster_plan(
+                    [base_w, base_h],
+                    *max_size,
+                    inv_logical.recip(),
+                    *transform,
+                );
 
-                if let Some((view_scaled, _sw, _sh)) =
-                    self.rasterize_svg_to_view(std::path::Path::new(path), scale, *style, queue)
-                {
+                if let Some((plan, (view_scaled, _sw, _sh))) = plan.and_then(|plan| {
+                    self.rasterize_svg_to_view(
+                        std::path::Path::new(path),
+                        plan.raster_scale,
+                        *style,
+                        queue,
+                    )
+                    .map(|view| (plan, view))
+                }) {
                     // Use logical size, not rasterized pixel dimensions (see note above).
-                    let draw_w = base_w * scale;
-                    let draw_h = base_h * scale;
+                    let draw_w = base_w * plan.layout_scale;
+                    let draw_h = base_h * plan.layout_scale;
                     let transformed_quad =
                         transformed_quad_points(*origin, [draw_w, draw_h], *transform);
                     svg_views_off.push((
@@ -155,7 +166,8 @@ impl PassManager {
 
         let (image_z_vals_off, image_resources_off) = self.prep_image_offscreen(&image_views_off);
         let (svg_z_vals_off, svg_resources_off) = self.prep_svg_offscreen(&svg_views_off);
-        let (ext_z_vals_off, ext_resources_off) = self.prep_ext_offscreen(external_texture_draws);
+        let (ext_z_vals_off, ext_resources_off) =
+            self.prep_ext_offscreen(external_texture_draws, queue);
 
         let depth_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
             view: self.depth_view(),
@@ -226,7 +238,9 @@ impl PassManager {
         //
         // Limitation: all overlapping shadows read the same pre-shadow
         // snapshot, so they do not accumulate against each other. Accepted.
-        if !self.shadow_instances.is_empty() {
+        if !self.shadow_instances.is_empty() && self.gamma_blend {
+            self.record_blended_shadows(encoder, &targets);
+        } else if !self.shadow_instances.is_empty() {
             let shadow_buf = create_transient_upload(
                 &self.device,
                 "shadow-instances",
@@ -448,10 +462,18 @@ impl PassManager {
                         }
                     }
                     DrawItemOff::ExternalTexture(i) => {
-                        let (vbuf, ibuf, vp_bg_ext, z_bg_ext, tex_bg, params_bg, _, _) =
-                            &ext_resources_off[i];
-                        self.image_offscreen.record(
-                            &mut pass, vp_bg_ext, z_bg_ext, tex_bg, params_bg, vbuf, ibuf, 6,
+                        let (vbuf, ibuf, vp_bg_ext, z_bg_ext, tex_bg, params_bg, _, _, base_vertex) =
+                            &*ext_resources_off[i];
+                        self.image_offscreen.record_at_vertex(
+                            &mut pass,
+                            vp_bg_ext,
+                            z_bg_ext,
+                            tex_bg,
+                            params_bg,
+                            vbuf,
+                            ibuf,
+                            6,
+                            *base_vertex,
                         );
                     }
                 }

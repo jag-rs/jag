@@ -9,10 +9,10 @@ use super::JagSurface;
 pub(super) const SYNTHETIC_EXTERNAL_TEXTURE_ID_START: u64 = 0x7000_0000_0000_0000;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct LayerGeometry {
-    origin: [f32; 2],
-    logical_size: [f32; 2],
-    pixel_size: [u32; 2],
+pub(super) struct LayerGeometry {
+    pub origin: [f32; 2],
+    pub logical_size: [f32; 2],
+    pub pixel_size: [u32; 2],
 }
 
 fn layer_geometry(bounds: Rect, viewport: Viewport, scale: f32) -> Option<LayerGeometry> {
@@ -70,12 +70,19 @@ fn localize_clips(commands: &mut [Command], origin: [f32; 2], scale: f32) {
                 clip.0.w *= scale;
                 clip.0.h *= scale;
             }
+            Command::DrawCompositeTile {
+                rounded_clip: Some(clip),
+                ..
+            } => {
+                clip.rect[0] -= origin[0] * scale;
+                clip.rect[1] -= origin[1] * scale;
+            }
             _ => {}
         }
     }
 }
 
-fn transformed_rect_bounds(rect: Rect, transform: Transform2D) -> Rect {
+pub(super) fn transformed_rect_bounds(rect: Rect, transform: Transform2D) -> Rect {
     let [a, b, c, d, e, f] = transform.m;
     let points = [
         [rect.x, rect.y],
@@ -115,6 +122,10 @@ impl JagSurface {
         // of retaining one new registration per effect per repaint. Cached
         // scroll-only frames do not enter this path and keep their views.
         self.next_synthetic_external_texture_id = SYNTHETIC_EXTERNAL_TEXTURE_ID_START;
+        self.retained_layers.begin_frame();
+        self.scroll_tiles.begin_frame();
+        self.pass.clear_compositor_textures();
+        self.pass.begin_composite_frame();
     }
 
     fn allocate_synthetic_external_texture_id(&mut self) -> ExternalTextureId {
@@ -128,13 +139,14 @@ impl JagSurface {
         commands.iter().filter_map(Command::z_index).min()
     }
 
-    fn render_effect_group_layer(
+    pub(super) fn render_effect_group_layer(
         &mut self,
         geometry: LayerGeometry,
         mut commands: Vec<Command>,
         effect: jag_draw::SurfaceEffect,
         text_provider: Option<&Arc<dyn jag_draw::TextProvider + Send + Sync>>,
         logical_scale: f32,
+        stable_id: Option<ExternalTextureId>,
     ) -> Result<ExternalTextureId> {
         let needs_text_clip = matches!(
             &effect,
@@ -142,6 +154,33 @@ impl JagSurface {
                 if group.layers.iter().any(|layer| layer.text_clip)
         );
         localize_clips(&mut commands, geometry.origin, logical_scale);
+        let tex_id = stable_id.unwrap_or_else(|| self.allocate_synthetic_external_texture_id());
+        let images_ready = commands.iter().all(|command| match command {
+            Command::DrawImage { path, .. } => {
+                self.pass.is_image_ready(&crate::resolve_asset_path(path))
+            }
+            _ => true,
+        });
+        let retained_key = images_ready
+            .then(|| {
+                self.retained_layers.key(
+                    &commands,
+                    &effect,
+                    geometry.origin,
+                    geometry.pixel_size,
+                    logical_scale,
+                    text_provider,
+                )
+            })
+            .flatten();
+        if let Some(key) = &retained_key
+            && let Some(view) = self.retained_layers.lookup(tex_id, key)
+        {
+            self.pass.register_shared_external_texture(tex_id, view);
+            return Ok(tex_id);
+        }
+        self.retained_layers
+            .rasterized(retained_key.is_some(), geometry.pixel_size);
         let backdrop_draws = commands
             .iter()
             .filter_map(|command| match command {
@@ -164,8 +203,14 @@ impl JagSurface {
             commands,
         };
 
-        let group_scene =
-            jag_draw::upload_display_list_unified(&mut self.allocator, &self.queue, &group_list)?;
+        let device_scale =
+            jag_draw::logical_multiplier(self.logical_pixels, self.dpi_scale, self.ui_scale);
+        let group_scene = jag_draw::upload_display_list_unified_with_scale(
+            &mut self.allocator,
+            &self.queue,
+            &group_list,
+            device_scale,
+        )?;
         let group_glyphs =
             self.build_glyph_draws_from_text_draws(&group_scene.text_draws, text_provider);
 
@@ -173,14 +218,20 @@ impl JagSurface {
             .svg_draws
             .iter()
             .map(|draw| {
+                // Extraction has already transformed the origin. Keep that
+                // translation once, while preserving the linear transform for
+                // the quad geometry and physical SVG raster resolution.
+                let mut transform = draw.transform;
+                transform.m[4] = draw.origin[0];
+                transform.m[5] = draw.origin[1];
                 (
                     crate::resolve_asset_path(&draw.path),
-                    draw.origin,
+                    [0.0, 0.0],
                     draw.size,
                     draw.style,
                     draw.z,
                     draw.opacity,
-                    Transform2D::identity(),
+                    transform,
                     None, // no clip for opacity group internals
                     None, // no rounded clip for opacity group internals
                 )
@@ -199,11 +250,20 @@ impl JagSurface {
         )> = Vec::new();
         for draw in &group_scene.image_draws {
             let resolved_path = crate::resolve_asset_path(&draw.path);
-            if self.pass.try_get_image_view(&resolved_path).is_some() {
-                group_images.push((
-                    resolved_path,
+            if let Some((_, image_width, image_height)) =
+                self.pass.try_get_image_view(&resolved_path)
+            {
+                let (origin, size) = super::calculate_image_fit(
                     draw.origin,
                     draw.size,
+                    image_width as f32,
+                    image_height as f32,
+                    draw.fit,
+                );
+                group_images.push((
+                    resolved_path,
+                    origin,
+                    size,
                     draw.z,
                     draw.opacity,
                     None,
@@ -303,8 +363,15 @@ impl JagSurface {
         };
         crate::gpu_commands::submit_command_encoder(&self.queue, encoder);
 
-        let tex_id = self.allocate_synthetic_external_texture_id();
-        crate::gpu_texture::register_external_texture(&mut self.pass, tex_id, layer_view);
+        let layer_view = Arc::new(layer_view);
+        if let Some(key) = retained_key {
+            let bytes_per_pixel = self.surface_format.block_copy_size(None).unwrap_or(16);
+            let bytes = u64::from(width) * u64::from(height) * u64::from(bytes_per_pixel);
+            self.retained_layers
+                .insert(tex_id, key, layer_view.clone(), bytes);
+        }
+        self.pass
+            .register_shared_external_texture(tex_id, layer_view);
         Ok(tex_id)
     }
 
@@ -329,6 +396,11 @@ impl JagSurface {
                         .find(|surface| surface.parent.is_none() && surface.commands.start == i + 1)
                         .expect("validated compositor plan must own each root opacity scope");
                     let mut raw_group = commands[surface.commands.clone()].to_vec();
+                    // Draws store complete transforms, but clip commands store
+                    // local rects. Preserve the transform active at scope entry
+                    // when replaying an isolated group (including nested ones).
+                    raw_group.insert(0, Command::PushTransform(surface.inherited_transform));
+                    raw_group.push(Command::PopTransform);
                     if let Some(clip) = surface.inherited_clip {
                         raw_group.insert(0, Command::PushClip(jag_draw::ClipRect(clip)));
                         raw_group.push(Command::PopClip);
@@ -372,6 +444,7 @@ impl JagSurface {
                                 surface.effect.clone(),
                                 text_provider,
                                 logical_scale,
+                                None,
                             )?;
                             out.push(Command::DrawExternalTexture {
                                 rect: Rect {

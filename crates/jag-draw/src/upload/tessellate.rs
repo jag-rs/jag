@@ -181,11 +181,7 @@ fn tessellate_path_fill_geometry(
 
     let lyon_path: LyonPath = builder.build();
     let mut tess = FillTessellator::new();
-    let tol = std::env::var("LYON_TOLERANCE")
-        .ok()
-        .and_then(|v| v.parse::<f32>().ok())
-        .unwrap_or(0.1);
-    let base_opts = FillOptions::default().with_tolerance(tol);
+    let base_opts = FillOptions::default().with_tolerance(fill_tolerance());
     let options = match path.fill_rule {
         FillRule::NonZero => base_opts.with_fill_rule(lyon_tessellation::FillRule::NonZero),
         FillRule::EvenOdd => base_opts.with_fill_rule(lyon_tessellation::FillRule::EvenOdd),
@@ -377,6 +373,45 @@ pub(crate) fn tessellate_path_stroke(
 
 /// Build a Path representing a rounded rectangle using cubic Beziers (kappa approximation).
 /// This path is then tessellated by lyon for precise coverage (avoids fan artifacts on small radii).
+/// Curve flattening tolerance for fills, in local pixels.
+fn fill_tolerance() -> f32 {
+    std::env::var("LYON_TOLERANCE")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+        .unwrap_or(0.1)
+}
+
+/// Outline of a rounded rect as a polygon, flattened with the fill tolerance.
+pub(crate) fn rounded_rect_polygon(rrect: RoundedRect) -> Vec<[f32; 2]> {
+    use lyon_geom::{CubicBezierSegment, point};
+
+    let mut poly: Vec<[f32; 2]> = Vec::new();
+    let mut current = [0.0, 0.0];
+    for cmd in rounded_rect_to_path(rrect).cmds {
+        match cmd {
+            PathCmd::MoveTo(p) | PathCmd::LineTo(p) => {
+                poly.push(p);
+                current = p;
+            }
+            PathCmd::CubicTo(c1, c2, p) => {
+                let curve = CubicBezierSegment {
+                    from: point(current[0], current[1]),
+                    ctrl1: point(c1[0], c1[1]),
+                    ctrl2: point(c2[0], c2[1]),
+                    to: point(p[0], p[1]),
+                };
+                curve.for_each_flattened(fill_tolerance(), &mut |line| {
+                    poly.push([line.to.x, line.to.y]);
+                });
+                current = p;
+            }
+            PathCmd::QuadTo(..) => unreachable!("rounded_rect_to_path emits no quadratics"),
+            PathCmd::Close => {}
+        }
+    }
+    poly
+}
+
 pub(crate) fn rounded_rect_to_path(rrect: RoundedRect) -> Path {
     let rect = rrect.rect;
     let mut tl = rrect.radii.tl.min(rect.w * 0.5).min(rect.h * 0.5);

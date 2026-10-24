@@ -1,0 +1,46 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Lucide stroke coverage reference</title>
+<pre id="results">measuring</pre>
+<script type="module">
+const bell = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#171717" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>`;
+const source = `data:image/svg+xml,${encodeURIComponent(bell)}`;
+
+async function measure(size, dpr) {
+  const pixels = size * dpr;
+  const canvas = document.createElement("canvas");
+  canvas.width = pixels;
+  canvas.height = pixels;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const image = new Image();
+  image.src = source;
+  await image.decode();
+  context.drawImage(image, 0, 0, pixels, pixels);
+  const rgba = context.getImageData(0, 0, pixels, pixels).data;
+  let alphaSum = 0;
+  let inkPixels = 0;
+  let opaquePixels = 0;
+  for (let index = 3; index < rgba.length; index += 4) {
+    const alpha = rgba[index];
+    alphaSum += alpha;
+    inkPixels += alpha > 0 ? 1 : 0;
+    opaquePixels += alpha === 255 ? 1 : 0;
+  }
+  return {
+    size,
+    dpr,
+    raster: `${pixels}x${pixels}`,
+    alphaSum,
+    inkPixels,
+    opaquePixels,
+    logicalAlpha: Math.round(alphaSum / (dpr * dpr)),
+  };
+}
+
+const results = [];
+for (const size of [16, 20, 24]) {
+  for (const dpr of [1, 2, 3]) results.push(await measure(size, dpr));
+}
+document.querySelector("#results").textContent = JSON.stringify(results, null, 2);
+window.referenceResults = results;
+</script>
