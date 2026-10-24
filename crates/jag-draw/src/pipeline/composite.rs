@@ -8,11 +8,21 @@ pub struct Compositor {
 
 impl Compositor {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
-        let shader = crate::gpu_bindings::create_wgsl_shader(
-            &device,
-            "compositor-shader",
-            jag_shaders::COMPOSITOR_WGSL,
+        Self::with_output_encoding(device, target_format, false)
+    }
+
+    pub(crate) fn with_output_encoding(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        encode: bool,
+    ) -> Self {
+        // Project a completed linear page only at the final unencoded SDR target.
+        let source = jag_shaders::COMPOSITOR_WGSL.replace(
+            "return c; // premultiplied color flows through",
+            "if (GAMMA_BLEND) { return vec4(jag_linear_to_srgb(clamp(c.rgb, vec3(0.0), vec3(1.0))), c.a); } return c;",
         );
+        let source = jag_shaders::with_blend_space(&source, encode);
+        let shader = crate::gpu_bindings::create_wgsl_shader(&device, "compositor-shader", &source);
 
         let bgl = crate::gpu_bindings::create_bind_group_layout(
             &device,

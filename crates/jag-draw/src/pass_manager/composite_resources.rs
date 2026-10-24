@@ -16,6 +16,7 @@ pub(super) type ExtResource = (
     wgpu::Buffer,
     wgpu::Buffer,
     i32,
+    Option<crate::Rect>,
 );
 
 const MAX_SLOTS: usize = 256;
@@ -121,6 +122,7 @@ impl CompositeResources {
                 .expect("composite resources still borrowed at frame boundary");
             resource.0 = vertices.clone();
             resource.8 = base_vertex;
+            resource.9 = draw.clip;
             if slot.z != draw.z {
                 upload_buffer(queue, &resource.6, 0, bytemuck::bytes_of(&(draw.z as f32)));
                 slot.z = draw.z;
@@ -186,6 +188,7 @@ impl CompositeResources {
             zbuf,
             params_buf,
             base_vertex,
+            draw.clip,
         ));
         if index < MAX_SLOTS && index == self.slots.len() && vertices.size() <= MAX_VERTEX_BYTES {
             self.slots.push(Slot {
@@ -205,19 +208,19 @@ impl CompositeResources {
 fn quad_vertices(draw: &ExtractedExternalTextureDraw) -> [ImageQuadVtx; 4] {
     [
         ImageQuadVtx {
-            pos: draw.origin,
+            pos: draw.quad[0],
             uv: [draw.uv[0], draw.uv[1]],
         },
         ImageQuadVtx {
-            pos: [draw.origin[0] + draw.size[0], draw.origin[1]],
+            pos: draw.quad[1],
             uv: [draw.uv[2], draw.uv[1]],
         },
         ImageQuadVtx {
-            pos: [draw.origin[0] + draw.size[0], draw.origin[1] + draw.size[1]],
+            pos: draw.quad[2],
             uv: [draw.uv[2], draw.uv[3]],
         },
         ImageQuadVtx {
-            pos: [draw.origin[0], draw.origin[1] + draw.size[1]],
+            pos: draw.quad[3],
             uv: [draw.uv[0], draw.uv[3]],
         },
     ]

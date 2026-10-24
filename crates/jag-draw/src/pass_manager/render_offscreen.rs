@@ -1,9 +1,4 @@
-//! Offscreen (intermediate target) path of `render_unified`.
-//!
-//! Verbatim extraction of the offscreen branch body that previously lived
-//! inline in `render_unified`. Resource preparation that must outlive the
-//! render pass is delegated to the `prep_*` helpers (see `text_prep` /
-//! `quad_prep`); everything else is unchanged. No logic changed.
+//! Render the unified scene into an intermediate, then project to the display.
 
 use super::{PassManager, set_scissor_for_clip, transformed_quad_points};
 use crate::allocator::RenderAllocator;
@@ -462,8 +457,23 @@ impl PassManager {
                         }
                     }
                     DrawItemOff::ExternalTexture(i) => {
-                        let (vbuf, ibuf, vp_bg_ext, z_bg_ext, tex_bg, params_bg, _, _, base_vertex) =
-                            &*ext_resources_off[i];
+                        let (
+                            vbuf,
+                            ibuf,
+                            vp_bg_ext,
+                            z_bg_ext,
+                            tex_bg,
+                            params_bg,
+                            _,
+                            _,
+                            base_vertex,
+                            clip,
+                        ) = &*ext_resources_off[i];
+                        if let Some(c) = clip {
+                            if !set_scissor_for_clip(&mut pass, *c, width, height) {
+                                continue;
+                            }
+                        }
                         self.image_offscreen.record_at_vertex(
                             &mut pass,
                             vp_bg_ext,
@@ -475,6 +485,9 @@ impl PassManager {
                             6,
                             *base_vertex,
                         );
+                        if clip.is_some() {
+                            pass.set_scissor_rect(0, 0, width, height);
+                        }
                     }
                 }
             }

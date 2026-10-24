@@ -1,49 +1,12 @@
-use std::sync::Arc;
-
-use anyhow::Result;
-
-use jag_draw::{ColorLinPremul, Command, HitIndex, Painter, Viewport, wgpu};
-
-use crate::canvas::Canvas;
-
 use super::{
     CachedFrameData, JagSurface, apply_transform_to_point, calculate_image_fit,
     set_last_raw_image_rect,
 };
-
+use crate::canvas::Canvas;
+use anyhow::Result;
+use jag_draw::{ColorLinPremul, Command, HitIndex, wgpu};
+use std::sync::Arc;
 impl JagSurface {
-    /// Pre-allocate intermediate texture at the given size.
-    /// This should be called after surface reconfiguration to avoid jitter.
-    pub fn prepare_for_resize(&mut self, width: u32, height: u32) {
-        self.pass
-            .ensure_intermediate_texture(&mut self.allocator, width, height);
-    }
-
-    /// Begin a canvas frame of the given size (in pixels).
-    pub fn begin_frame(&self, width: u32, height: u32) -> Canvas {
-        let vp = Viewport { width, height };
-        Canvas {
-            viewport: vp,
-            painter: Painter::begin_frame(vp),
-            clear_color: None,
-            text_provider: None,
-            glyph_draws: Vec::new(),
-            svg_draws: Vec::new(),
-            image_draws: Vec::new(),
-            backdrop_blur_draws: Vec::new(),
-            raw_image_draws: Vec::new(),
-            dpi_scale: self.dpi_scale,
-            clip_stack: vec![None],
-            rounded_clip_stack: vec![None],
-            overlay_draws: Vec::new(),
-            scrim_draws: Vec::new(),
-            opacity_stack: vec![1.0],
-            generated_mask_textures: Vec::new(),
-            url_mask_textures: Vec::new(),
-            next_generated_mask_texture_id: 0x6000_0000_0000_0000,
-        }
-    }
-
     /// Finish the frame by rendering accumulated commands to the provided surface texture.
     pub fn end_frame(&mut self, frame: wgpu::SurfaceTexture, canvas: Canvas) -> Result<()> {
         // Keep passes in sync with DPI/logical settings
@@ -52,11 +15,9 @@ impl JagSurface {
         self.pass.set_ui_scale(self.ui_scale);
         self.pending_image_loads = false;
         self.pass.poll_image_loads(&self.queue);
-
         let text_provider = canvas.text_provider.clone();
         self.register_generated_mask_textures(&canvas.generated_mask_textures);
         self.register_url_mask_textures(&canvas.url_mask_textures);
-
         // Build final display list from painter
         let mut list = canvas.painter.finish();
         self.reset_synthetic_external_texture_ids();
@@ -73,7 +34,6 @@ impl JagSurface {
             .commands
             .iter()
             .any(|cmd| matches!(cmd, Command::BoxShadow { .. }));
-
         // Determine the render target: prefer intermediate when SMAA, Vello-style
         // resizing, or framebuffer-sampling effects are in use.
         let use_intermediate =
@@ -329,7 +289,7 @@ impl JagSurface {
 
         // Unified solids + text/images/SVGs pass
         let preserve_surface = self.preserve_surface;
-        let direct = if has_backdrop_blur {
+        let direct = if has_backdrop_blur || self.extended_color_composition {
             false
         } else {
             self.direct || !use_intermediate

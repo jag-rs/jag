@@ -56,6 +56,13 @@ fn layer_geometry(bounds: Rect, viewport: Viewport, scale: f32) -> Option<LayerG
 fn localize_clips(commands: &mut [Command], origin: [f32; 2], scale: f32) {
     let mut transforms = vec![Transform2D::identity()];
     for command in commands {
+        if let Command::DrawExternalTexture {
+            clip: Some(clip), ..
+        } = command
+        {
+            clip.x -= origin[0] * scale;
+            clip.y -= origin[1] * scale;
+        }
         match command {
             Command::PushTransform(transform) => transforms.push(*transform),
             Command::PopTransform => {
@@ -71,6 +78,10 @@ fn localize_clips(commands: &mut [Command], origin: [f32; 2], scale: f32) {
                 clip.0.h *= scale;
             }
             Command::DrawCompositeTile {
+                rounded_clip: Some(clip),
+                ..
+            }
+            | Command::DrawExternalTexture {
                 rounded_clip: Some(clip),
                 ..
             } => {
@@ -139,7 +150,7 @@ impl JagSurface {
         commands.iter().filter_map(Command::z_index).min()
     }
 
-    pub(super) fn render_effect_group_layer(
+    pub(super) fn render_effect_group_layer_inner(
         &mut self,
         geometry: LayerGeometry,
         mut commands: Vec<Command>,
@@ -458,6 +469,8 @@ impl JagSurface {
                                 transform: Transform2D::identity(),
                                 opacity: layer_opacity,
                                 premultiplied: true,
+                                rounded_clip: None,
+                                clip: None,
                             });
                         }
                     }

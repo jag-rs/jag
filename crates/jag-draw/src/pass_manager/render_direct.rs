@@ -359,8 +359,23 @@ impl PassManager {
                     }
                 }
                 DrawItem::ExternalTexture(i) => {
-                    let (vbuf, ibuf, vp_bg_ext, z_bg_ext, tex_bg, params_bg, _, _, base_vertex) =
-                        &*ext_resources[i];
+                    let (
+                        vbuf,
+                        ibuf,
+                        vp_bg_ext,
+                        z_bg_ext,
+                        tex_bg,
+                        params_bg,
+                        _,
+                        _,
+                        base_vertex,
+                        clip,
+                    ) = &*ext_resources[i];
+                    if let Some(c) = clip {
+                        if !set_scissor_for_clip(&mut pass, *c, width, height) {
+                            continue;
+                        }
+                    }
                     self.image.record_at_vertex(
                         &mut pass,
                         vp_bg_ext,
@@ -372,6 +387,9 @@ impl PassManager {
                         6,
                         *base_vertex,
                     );
+                    if clip.is_some() {
+                        pass.set_scissor_rect(0, 0, width, height);
+                    }
                 }
             }
         }

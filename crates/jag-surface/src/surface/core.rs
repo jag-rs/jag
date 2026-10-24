@@ -2,9 +2,44 @@ use std::sync::Arc;
 
 use jag_draw::{HitIndex, PassManager, RenderAllocator, wgpu};
 
+use crate::canvas::Canvas;
+use jag_draw::{Painter, Viewport};
+
 use super::{CachedFrameData, JagSurface, OverlayCallback};
 
 impl JagSurface {
+    /// Pre-allocate intermediate texture at the given size.
+    /// This should be called after surface reconfiguration to avoid jitter.
+    pub fn prepare_for_resize(&mut self, width: u32, height: u32) {
+        self.pass
+            .ensure_intermediate_texture(&mut self.allocator, width, height);
+    }
+
+    /// Begin a canvas frame of the given size (in pixels).
+    pub fn begin_frame(&self, width: u32, height: u32) -> Canvas {
+        let vp = Viewport { width, height };
+        Canvas {
+            viewport: vp,
+            painter: Painter::begin_frame(vp),
+            clear_color: None,
+            text_provider: None,
+            glyph_draws: Vec::new(),
+            svg_draws: Vec::new(),
+            image_draws: Vec::new(),
+            backdrop_blur_draws: Vec::new(),
+            raw_image_draws: Vec::new(),
+            dpi_scale: self.dpi_scale,
+            clip_stack: vec![None],
+            rounded_clip_stack: vec![None],
+            overlay_draws: Vec::new(),
+            scrim_draws: Vec::new(),
+            opacity_stack: vec![1.0],
+            generated_mask_textures: Vec::new(),
+            url_mask_textures: Vec::new(),
+            next_generated_mask_texture_id: 0x6000_0000_0000_0000,
+        }
+    }
+
     /// Create a new surface wrapper using an existing device/queue and the chosen surface format.
     pub fn new(
         device: Arc<wgpu::Device>,
@@ -19,6 +54,8 @@ impl JagSurface {
             queue,
             surface_format,
             pass,
+            extended_color_composition: false,
+            extended_group_pass: None,
             allocator,
             direct: false,
             preserve_surface: false,

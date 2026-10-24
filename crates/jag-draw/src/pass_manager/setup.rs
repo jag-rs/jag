@@ -61,18 +61,37 @@ impl PassManager {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
         // Try Rgba16Float for better gradient quality, fallback to Rgba8Unorm if not supported
         let offscreen_format = Self::choose_offscreen_format(&device, target_format);
+        Self::new_with_offscreen_format(device, target_format, offscreen_format)
+    }
+
+    /// Explicit precision for hosts compositing extended linear color values.
+    /// The caller supplies a supported renderable/filterable intermediate format.
+    pub fn new_with_offscreen_format(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        offscreen_format: wgpu::TextureFormat,
+    ) -> Self {
         // MSAA>1 interacts poorly with our current depth setup (depth textures
         // are 1×). Keep sample count at 1 and rely on SMAA / pixel snapping
         // for edge smoothing to avoid crashes and validation errors.
         let msaa_count = 1;
         // A target that does not encode sRGB on write blends sRGB-encoded
         // color, as browsers do; the offscreen format follows the target.
-        let gamma_blend = !target_format.is_srgb();
+        let direct_gamma = !target_format.is_srgb()
+            && !matches!(
+                target_format,
+                wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float
+            );
+        let gamma_blend = direct_gamma
+            && !matches!(
+                offscreen_format,
+                wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float
+            );
         crate::text::set_gamma_blend_coverage(gamma_blend);
         let solid_offscreen =
             BasicSolidRenderer::new(device.clone(), offscreen_format, msaa_count, gamma_blend);
         let solid_direct =
-            BasicSolidRenderer::new(device.clone(), target_format, msaa_count, gamma_blend);
+            BasicSolidRenderer::new(device.clone(), target_format, msaa_count, direct_gamma);
         let transparent_solid_offscreen = BasicSolidRenderer::new_with_depth_state(
             device.clone(),
             offscreen_format,
@@ -87,43 +106,48 @@ impl PassManager {
             msaa_count,
             false,
             wgpu::CompareFunction::LessEqual,
-            gamma_blend,
+            direct_gamma,
         );
         let solid_direct_no_msaa =
-            BasicSolidRenderer::new(device.clone(), target_format, 1, gamma_blend);
-        let overlay_solid = OverlaySolidRenderer::new(device.clone(), target_format, gamma_blend);
-        let scrim_solid = ScrimSolidRenderer::new(device.clone(), target_format, gamma_blend);
-        let compositor = Compositor::new(device.clone(), target_format);
+            BasicSolidRenderer::new(device.clone(), target_format, 1, direct_gamma);
+        let overlay_solid = OverlaySolidRenderer::new(device.clone(), target_format, direct_gamma);
+        let scrim_solid = ScrimSolidRenderer::new(device.clone(), target_format, direct_gamma);
+        let compositor = Compositor::with_output_encoding(
+            device.clone(),
+            target_format,
+            direct_gamma && !gamma_blend,
+        );
         let blitter = Blitter::new(device.clone(), target_format);
         let smaa = SmaaRenderer::new(device.clone(), target_format);
-        let scrim_mask = ScrimStencilMaskRenderer::new(device.clone(), target_format, gamma_blend);
-        let scrim_stencil = ScrimStencilRenderer::new(device.clone(), target_format, gamma_blend);
+        let scrim_mask = ScrimStencilMaskRenderer::new(device.clone(), target_format, direct_gamma);
+        let scrim_stencil = ScrimStencilRenderer::new(device.clone(), target_format, direct_gamma);
         // Shadow/blur pipelines
         let mask_renderer =
             // Coverage mask, not color: no blend-space encoding.
             BasicSolidRenderer::new(device.clone(), wgpu::TextureFormat::R8Unorm, 1, false);
         let blur_r8 = BlurRenderer::new(device.clone(), wgpu::TextureFormat::R8Unorm);
         let blur_rgba = BlurRenderer::new(device.clone(), target_format);
-        let color_filter = ColorFilterRenderer::new(device.clone(), target_format, gamma_blend);
+        let color_filter = ColorFilterRenderer::new(device.clone(), target_format, direct_gamma);
         let drop_shadow_filter =
-            DropShadowFilterRenderer::new(device.clone(), target_format, gamma_blend);
+            DropShadowFilterRenderer::new(device.clone(), target_format, direct_gamma);
         let mask_filter = MaskFilterRenderer::new(device.clone(), target_format);
         let backdrop_blur = BackdropBlurRenderer::new(device.clone(), offscreen_format);
-        let shadow_comp = ShadowCompositeRenderer::new(device.clone(), target_format, gamma_blend);
+        let shadow_comp = ShadowCompositeRenderer::new(device.clone(), target_format, direct_gamma);
         let shadow_offscreen =
             ShadowInstanceRenderer::new(device.clone(), offscreen_format, msaa_count, gamma_blend);
         let shadow_direct =
-            ShadowInstanceRenderer::new(device.clone(), target_format, msaa_count, gamma_blend);
+            ShadowInstanceRenderer::new(device.clone(), target_format, msaa_count, direct_gamma);
         let shadow_composite =
             ShadowCompositeInstanceRenderer::new(device.clone(), offscreen_format, msaa_count);
-        let text = TextRenderer::new(device.clone(), target_format, gamma_blend);
+        let text = TextRenderer::new(device.clone(), target_format, direct_gamma);
         let text_offscreen = TextRenderer::new(device.clone(), offscreen_format, gamma_blend);
-        let image = crate::pipeline::ImageRenderer::new(device.clone(), target_format, gamma_blend);
+        let image =
+            crate::pipeline::ImageRenderer::new(device.clone(), target_format, direct_gamma);
         let image_offscreen =
             crate::pipeline::ImageRenderer::new(device.clone(), offscreen_format, gamma_blend);
         let svg_cache = crate::svg::SvgRasterCache::new(device.clone());
         let image_cache = crate::image_cache::ImageCache::new(device.clone());
-        let bg = BackgroundRenderer::new(device.clone(), target_format, gamma_blend);
+        let bg = BackgroundRenderer::new(device.clone(), target_format, direct_gamma);
         let vp_buffer = allocate_buffer_resource(
             &device,
             "viewport-uniform",
@@ -255,46 +279,6 @@ impl PassManager {
     /// Expose the device for scenes that need to create textures.
     pub fn device(&self) -> Arc<wgpu::Device> {
         self.device.clone()
-    }
-
-    /// Register an externally-rendered texture for compositing in the current frame.
-    pub fn register_external_texture(
-        &mut self,
-        id: crate::display_list::ExternalTextureId,
-        view: wgpu::TextureView,
-    ) {
-        self.register_shared_external_texture(id, Arc::new(view));
-    }
-
-    /// Register a retained surface without transferring its cache ownership.
-    pub fn register_shared_external_texture(
-        &mut self,
-        id: crate::display_list::ExternalTextureId,
-        view: Arc<wgpu::TextureView>,
-    ) {
-        self.linear_external_textures.remove(&id);
-        self.external_textures.insert(id, view);
-    }
-
-    /// Register a texture whose sampling yields linear values (an `*Srgb`
-    /// format), such as a 3D viewport; the image shader encodes it for the
-    /// target's blend space. [`Self::register_external_texture`] textures
-    /// already hold blend-space values.
-    pub fn register_linear_external_texture(
-        &mut self,
-        id: crate::display_list::ExternalTextureId,
-        view: wgpu::TextureView,
-    ) {
-        self.external_textures.insert(id, Arc::new(view));
-        self.linear_external_textures.insert(id);
-    }
-
-    /// Clear all registered external textures (call after frame).
-    pub fn clear_external_textures(&mut self) {
-        self.external_textures.clear();
-        self.linear_external_textures.clear();
-        self.composite_direct.release_expired_textures();
-        self.composite_offscreen.release_expired_textures();
     }
 
     /// Start a frame only after all commands from the previous frame have

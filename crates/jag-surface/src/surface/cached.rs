@@ -366,7 +366,7 @@ impl JagSurface {
             &canvas.backdrop_blur_draws,
             &unified_scene.external_texture_draws,
             clear_wgpu,
-            canvas.backdrop_blur_draws.is_empty(), // direct unless framebuffer sampling is needed
+            canvas.backdrop_blur_draws.is_empty() && !self.extended_color_composition, // float intermediates preserve gamut through blending
             &self.queue,
             false, // don't preserve surface
         );
