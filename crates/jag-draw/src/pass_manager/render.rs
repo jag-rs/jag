@@ -57,6 +57,7 @@ impl PassManager {
         queue: &wgpu::Queue,
         preserve_surface: bool,
     ) {
+        self.prune_expired_external_textures();
         // Update viewport uniform. `logical` is the combined DPI/UI scale factor
         // applied to all scene coordinates when mapping to device pixels.
         let logical =
