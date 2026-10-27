@@ -390,7 +390,9 @@ impl JagSurface {
         // Submit and wait
         crate::gpu_commands::submit_command_encoder(&self.queue, encoder);
 
-        let pixels = readback.map_tightly_packed(&self.device)?;
+        let mapped = readback.map_tightly_packed(&self.device)?;
+        let mut pixels = Vec::with_capacity(mapped.len());
+        crate::readback::append_rgba_row(&mut pixels, &mapped, self.surface_format);
 
         Ok((width, height, pixels))
     }

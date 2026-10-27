@@ -77,7 +77,7 @@ pub fn grab_last_frame_rgba(surface: &mut JagSurface) -> Result<(u32, u32, Vec<u
     Ok((width, height, pixels))
 }
 
-fn append_rgba_row(out: &mut Vec<u8>, row: &[u8], format: wgpu::TextureFormat) {
+pub(crate) fn append_rgba_row(out: &mut Vec<u8>, row: &[u8], format: wgpu::TextureFormat) {
     if matches!(
         format,
         wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
