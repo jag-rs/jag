@@ -35,7 +35,7 @@ fn surfaces() -> (JagSurface, JagSurface) {
     let adapter =
         pollster::block_on(instance.request_adapter(&Default::default())).expect("GPU adapter");
     let (device, queue) =
-        pollster::block_on(adapter.request_device(&Default::default(), None)).expect("GPU device");
+        pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
     let device = Arc::new(device);
     let queue = Arc::new(queue);
     let retained = JagSurface::new(
@@ -201,7 +201,7 @@ fn changing_external_pixels_never_reuse_a_stale_parent_surface() {
         queue.write_texture(
             texture.as_image_copy(),
             &color.repeat(64),
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(32),
                 rows_per_image: Some(8),
@@ -344,7 +344,7 @@ fn composite_slots_update_placement_depth_and_texture_without_aliasing_draws() {
             queue.write_texture(
                 texture.as_image_copy(),
                 color,
-                wgpu::ImageDataLayout {
+                wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(4),
                     rows_per_image: Some(1),

@@ -11,20 +11,15 @@ use crate::focus::FocusId;
 use super::Element;
 
 /// How the image should fit within its bounding rectangle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFit {
     /// Stretch to fill (may distort aspect ratio).
     Fill,
     /// Fit inside the rect maintaining aspect ratio (letterbox).
+    #[default]
     Contain,
     /// Fill the rect maintaining aspect ratio (may crop).
     Cover,
-}
-
-impl Default for ImageFit {
-    fn default() -> Self {
-        Self::Contain
-    }
 }
 
 impl ImageFit {

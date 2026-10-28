@@ -56,7 +56,39 @@ impl Canvas {
                 return;
             }
         }
-        self.painter.external_texture(rect, texture_id, z);
+        self.external_texture_with_params(rect, texture_id, z, 1.0, false);
+    }
+
+    /// Draw a native texture with explicit alpha convention in current effect/clip scopes.
+    pub fn external_texture_with_params(
+        &mut self,
+        rect: Rect,
+        texture_id: jag_draw::ExternalTextureId,
+        z: i32,
+        opacity: f32,
+        premultiplied: bool,
+    ) {
+        let rounded = self
+            .rounded_clip_stack
+            .iter()
+            .rev()
+            .flatten()
+            .next()
+            .cloned()
+            .map(|clip| jag_draw::RoundedRectClipGpu {
+                rect: [clip.rect.x, clip.rect.y, clip.rect.w, clip.rect.h],
+                radii: clip.radii,
+            });
+        let clip = self.clip_stack.last().copied().flatten();
+        self.painter.external_texture_clipped(
+            rect,
+            texture_id,
+            z,
+            opacity,
+            premultiplied,
+            rounded,
+            clip,
+        );
     }
 
     /// Fill a rectangle as an overlay (no depth testing).

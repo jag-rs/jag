@@ -14,7 +14,7 @@ use anyhow::Result;
 
 use jag_draw::wgpu;
 
-use crate::JagSurface;
+use crate::{JagSurface, gpu_commands, gpu_readback::ReadbackBuffer, gpu_texture};
 
 /// Copy the most-recently rendered intermediate texture into a tightly
 /// packed RGBA byte buffer (same layout as `end_frame_headless` returns).
@@ -47,72 +47,37 @@ pub fn grab_last_frame_rgba(surface: &mut JagSurface) -> Result<(u32, u32, Vec<u
     let height = intermediate.key.height;
     let format = intermediate.key.format;
 
-    // wgpu requires bytes_per_row to be a multiple of
-    // COPY_BYTES_PER_ROW_ALIGNMENT (256). Same padding rule as
-    // `end_frame_headless`.
     let bytes_per_pixel = 4u32;
-    let unpadded_bytes_per_row = width * bytes_per_pixel;
-    let padded_bytes_per_row = (unpadded_bytes_per_row + 255) & !255;
-    let buffer_size = (padded_bytes_per_row * height) as u64;
+    let bytes_per_row = width
+        .checked_mul(bytes_per_pixel)
+        .ok_or_else(|| anyhow::anyhow!("grab-last-frame row size overflow"))?;
+    let readback = ReadbackBuffer::new(&device, "grab-last-frame-readback", bytes_per_row, height)?;
 
-    let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("grab-last-frame-readback"),
-        size: buffer_size,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("grab-last-frame-encoder"),
-    });
-    encoder.copy_texture_to_buffer(
-        wgpu::ImageCopyTexture {
-            texture: &intermediate.texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::ImageCopyBuffer {
-            buffer: &readback,
-            layout: wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(padded_bytes_per_row),
-                rows_per_image: Some(height),
-            },
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
+    let mut encoder = gpu_commands::create_command_encoder(
+        &device,
+        gpu_commands::CommandEncoderDescriptor {
+            label: Some("grab-last-frame-encoder"),
         },
     );
-    queue.submit(std::iter::once(encoder.finish()));
+    gpu_texture::copy_texture_to_buffer_2d(
+        &mut encoder,
+        &intermediate.texture,
+        readback.buffer(),
+        readback.padded_bytes_per_row(),
+        [width, height],
+    );
+    gpu_commands::submit_command_encoder(&queue, encoder);
 
-    let (tx, rx) = std::sync::mpsc::channel();
-    readback
-        .slice(..)
-        .map_async(wgpu::MapMode::Read, move |result| {
-            result.expect("failed to map grab-last-frame buffer");
-            tx.send(()).expect("failed to signal grab-last-frame");
-        });
-    device.poll(wgpu::Maintain::Wait);
-    rx.recv()
-        .map_err(|e| anyhow::anyhow!("grab-last-frame recv: {}", e))?;
-
-    let mapped = readback.slice(..).get_mapped_range();
-    let mut pixels = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
-    for row in 0..height {
-        let start = (row * padded_bytes_per_row) as usize;
-        let end = start + (width * bytes_per_pixel) as usize;
-        append_rgba_row(&mut pixels, &mapped[start..end], format);
+    let mapped = readback.map_tightly_packed(&device)?;
+    let mut pixels = Vec::with_capacity(mapped.len());
+    for row in mapped.chunks_exact(bytes_per_row as usize) {
+        append_rgba_row(&mut pixels, row, format);
     }
-    drop(mapped);
-    readback.unmap();
 
     Ok((width, height, pixels))
 }
 
-fn append_rgba_row(out: &mut Vec<u8>, row: &[u8], format: wgpu::TextureFormat) {
+pub(crate) fn append_rgba_row(out: &mut Vec<u8>, row: &[u8], format: wgpu::TextureFormat) {
     if matches!(
         format,
         wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb

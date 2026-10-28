@@ -3,8 +3,9 @@
 
 use super::{PassManager, apply_transform_to_point, set_scissor_for_clip};
 use crate::allocator::{RenderAllocator, TexKey};
+use crate::gpu_commands::CommandEncoderExt as _;
+use crate::gpu_transfer::create_transient_upload;
 use crate::scene::RoundedRect;
-use wgpu::util::DeviceExt;
 
 impl PassManager {
     /// Draw a full scrim but cut out a rounded-rect hole via stencil.
@@ -43,7 +44,7 @@ impl PassManager {
             0.0,
             0.0,
         ];
-        queue.write_buffer(&self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
+        crate::gpu_transfer::upload_buffer(queue, &self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
 
         #[repr(C)]
         #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -160,64 +161,59 @@ impl PassManager {
             indices.extend_from_slice(&[0, (vertices.len() - 1) as u16, 1]);
         }
 
-        // Ensure index byte length is 4-byte aligned for write_buffer
+        // Preserve the copy-aligned index layout used by the draw path.
         if indices.len() % 2 != 0 {
             indices.push(*indices.last().unwrap_or(&0));
         }
 
-        let vsize = (vertices.len() * std::mem::size_of::<Vtx>()) as u64;
-        let isize = (indices.len() * std::mem::size_of::<u16>()) as u64;
-        let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("scrim-hole-vbuf"),
-            size: vsize.max(4),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("scrim-hole-ibuf"),
-            size: isize.max(4),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        if vsize > 0 {
-            queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&vertices));
-        }
-        if isize > 0 {
-            queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&indices));
-        }
+        let vbuf = create_transient_upload(
+            &self.device,
+            "scrim-hole-vbuf",
+            bytemuck::cast_slice(&vertices),
+            wgpu::BufferUsages::VERTEX,
+        );
+        let ibuf = create_transient_upload(
+            &self.device,
+            "scrim-hole-ibuf",
+            bytemuck::cast_slice(&indices),
+            wgpu::BufferUsages::INDEX,
+        );
 
-        let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("scrim-stencil-vp-bg"),
-            layout: self.scrim_mask.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "scrim-stencil-vp-bg",
+            self.scrim_mask.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
 
         // Pass 1: write stencil = 1 inside hole (color writes disabled)
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("scrim-stencil-mask-pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &stencil_tex.view,
-                    depth_ops: None,
-                    stencil_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0),
-                        store: wgpu::StoreOp::Store,
+            let mut pass =
+                encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                    label: Some("scrim-stencil-mask-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &stencil_tex.view,
+                        depth_ops: None,
+                        stencil_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(0),
+                            store: wgpu::StoreOp::Store,
+                        }),
                     }),
-                }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
             pass.set_stencil_reference(1);
             self.scrim_mask
                 .record(&mut pass, &vp_bg, &vbuf, &ibuf, indices.len() as u32);
@@ -247,53 +243,54 @@ impl PassManager {
             },
         ];
         let quad_idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
-        let qvbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("scrim-fullscreen-vbuf"),
-            size: (quad.len() * std::mem::size_of::<Vtx>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let qibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("scrim-fullscreen-ibuf"),
-            size: (quad_idx.len() * std::mem::size_of::<u16>()) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&qvbuf, 0, bytemuck::cast_slice(&quad));
-        queue.write_buffer(&qibuf, 0, bytemuck::cast_slice(&quad_idx));
+        let qvbuf = create_transient_upload(
+            &self.device,
+            "scrim-fullscreen-vbuf",
+            bytemuck::cast_slice(&quad),
+            wgpu::BufferUsages::VERTEX,
+        );
+        let qibuf = create_transient_upload(
+            &self.device,
+            "scrim-fullscreen-ibuf",
+            bytemuck::cast_slice(&quad_idx),
+            wgpu::BufferUsages::INDEX,
+        );
 
-        let vp_bg_scrim = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("scrim-stencil-vp-bg-scrim"),
-            layout: self.scrim_stencil.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg_scrim = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "scrim-stencil-vp-bg-scrim",
+            self.scrim_stencil.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
 
         // Pass 2: draw scrim where stencil == 0 (outside hole)
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("scrim-stencil-pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &stencil_tex.view,
-                    depth_ops: None,
-                    stencil_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
+            let mut pass =
+                encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                    label: Some("scrim-stencil-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &stencil_tex.view,
+                        depth_ops: None,
+                        stencil_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
                     }),
-                }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
             pass.set_stencil_reference(0);
             self.scrim_stencil.record(
                 &mut pass,
@@ -327,24 +324,11 @@ impl PassManager {
             format: target.key.format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
-        encoder.copy_texture_to_texture(
-            wgpu::ImageCopyTexture {
-                texture: &target.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::ImageCopyTexture {
-                texture: &snapshot.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::Extent3d {
-                width: width.max(1),
-                height: height.max(1),
-                depth_or_array_layers: 1,
-            },
+        crate::gpu_texture::copy_texture_2d(
+            encoder,
+            &target.texture,
+            &snapshot.texture,
+            [width.max(1), height.max(1)],
         );
 
         let mut filtered_views = Vec::with_capacity(draw.effects.len());
@@ -415,7 +399,8 @@ impl PassManager {
             logical,
             pad: [0.0, 0.0],
         };
-        queue.write_buffer(
+        crate::gpu_transfer::upload_buffer(
+            queue,
             &self.backdrop_blur.param_buffer,
             0,
             bytemuck::bytes_of(&params),
@@ -443,29 +428,28 @@ impl PassManager {
             BackdropVtx { pos: p3, z },
         ];
         let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
-        let vbuf = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("backdrop-blur-vbuf"),
-                contents: bytemuck::cast_slice(&verts),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        let ibuf = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("backdrop-blur-ibuf"),
-                contents: bytemuck::cast_slice(&idx),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        let vbuf = create_transient_upload(
+            &self.device,
+            "backdrop-blur-vbuf",
+            bytemuck::cast_slice(&verts),
+            wgpu::BufferUsages::VERTEX,
+        );
+        let ibuf = create_transient_upload(
+            &self.device,
+            "backdrop-blur-ibuf",
+            bytemuck::cast_slice(&idx),
+            wgpu::BufferUsages::INDEX,
+        );
 
-        let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("backdrop-blur-vp-bg"),
-            layout: self.backdrop_blur.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "backdrop-blur-vp-bg",
+            self.backdrop_blur.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
         let blur_bg = self.backdrop_blur.bind_group(&self.device, filtered);
 
         let depth_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
@@ -476,20 +460,22 @@ impl PassManager {
             }),
             stencil_ops: None,
         });
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("backdrop-blur-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &target.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: depth_attachment,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("backdrop-blur-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target.view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: depth_attachment,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
         if let Some(c) = draw.clip {
             if !set_scissor_for_clip(&mut pass, c, width, height) {
                 drop(pass);

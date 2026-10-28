@@ -8,14 +8,35 @@ pub struct Compositor {
 
 impl Compositor {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("compositor-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::COMPOSITOR_WGSL.into()),
-        });
+        Self::with_output_encoding(device, target_format, false)
+    }
 
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("compositor-bgl"),
-            entries: &[
+    pub(crate) fn with_output_encoding(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        encode: bool,
+    ) -> Self {
+        Self::with_output_conversion(device, target_format, encode, false)
+    }
+
+    pub(crate) fn with_output_conversion(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        encode: bool,
+        decode: bool,
+    ) -> Self {
+        // Project a completed linear page only at the final unencoded SDR target.
+        let source = jag_shaders::COMPOSITOR_WGSL.replace(
+            "return c; // premultiplied color flows through",
+            if decode {"return decode_output(c);"} else {"if (GAMMA_BLEND) { return vec4(jag_linear_to_srgb(clamp(c.rgb, vec3(0.0), vec3(1.0))), c.a); } return c;"},
+        );
+        let source = jag_shaders::with_blend_space(&source, encode);
+        let shader = crate::gpu_bindings::create_wgsl_shader(&device, "compositor-shader", &source);
+
+        let bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "compositor-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -33,42 +54,45 @@ impl Compositor {
                     count: None,
                 },
             ],
-        });
+        );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("compositor-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "compositor-pipeline-layout",
+            &[&bgl],
+        );
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("compositor-pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &[],
+        let pipeline = crate::gpu_pipeline::create_render_pipeline(
+            &device,
+            crate::gpu_pipeline::RenderPipelineDescriptor {
+                label: Some("compositor-pipeline"),
+                layout: Some(&layout),
+                vertex: crate::gpu_pipeline::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &[],
+                },
+                fragment: Some(crate::gpu_pipeline::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
+        );
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("compositor-sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -87,10 +111,11 @@ impl Compositor {
         device: &wgpu::Device,
         tex_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("compositor-bg"),
-            layout: &self.bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "compositor-bg",
+            &self.bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(tex_view),
@@ -100,7 +125,7 @@ impl Compositor {
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
                 },
             ],
-        })
+        )
     }
 
     pub fn record<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, bg: &'a wgpu::BindGroup) {
@@ -118,14 +143,13 @@ pub struct Blitter {
 
 impl Blitter {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("blit-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::BLIT_WGSL.into()),
-        });
+        let shader =
+            crate::gpu_bindings::create_wgsl_shader(&device, "blit-shader", jag_shaders::BLIT_WGSL);
 
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("blit-bgl"),
-            entries: &[
+        let bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "blit-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -143,43 +167,43 @@ impl Blitter {
                     count: None,
                 },
             ],
-        });
+        );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("blit-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout =
+            crate::gpu_bindings::create_pipeline_layout(&device, "blit-pipeline-layout", &[&bgl]);
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("blit-pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &[],
+        let pipeline = crate::gpu_pipeline::create_render_pipeline(
+            &device,
+            crate::gpu_pipeline::RenderPipelineDescriptor {
+                label: Some("blit-pipeline"),
+                layout: Some(&layout),
+                vertex: crate::gpu_pipeline::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &[],
+                },
+                fragment: Some(crate::gpu_pipeline::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
+        );
 
         // Use nearest-neighbor sampling for fastest blit
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("blit-sampler"),
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -198,10 +222,11 @@ impl Blitter {
         device: &wgpu::Device,
         tex_view: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("blit-bg"),
-            layout: &self.bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "blit-bg",
+            &self.bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(tex_view),
@@ -211,7 +236,7 @@ impl Blitter {
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
                 },
             ],
-        })
+        )
     }
 
     pub fn record<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, bg: &'a wgpu::BindGroup) {

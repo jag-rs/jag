@@ -3,6 +3,7 @@ use anyhow::Result;
 use jag_draw::{ColorLinPremul, Command, wgpu};
 
 use crate::canvas::Canvas;
+use crate::gpu_readback::ReadbackBuffer;
 
 use super::{JagSurface, apply_transform_to_point, calculate_image_fit};
 
@@ -43,9 +44,7 @@ impl JagSurface {
         // Set the scroll delta as GPU uniform
         self.pass.set_scroll_offset(scroll_delta);
 
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let view = crate::gpu_texture::create_default_texture_view(&frame.texture);
         let scene_view = if use_intermediate {
             self.pass
                 .ensure_intermediate_texture(&mut self.allocator, width, height);
@@ -54,20 +53,17 @@ impl JagSurface {
                 .intermediate_texture
                 .as_ref()
                 .expect("intermediate render target not allocated");
-            scene_target
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default())
+            crate::gpu_texture::create_default_texture_view(&scene_target.texture)
         } else {
-            frame
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default())
+            crate::gpu_texture::create_default_texture_view(&frame.texture)
         };
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = crate::gpu_commands::create_command_encoder(
+            &self.device,
+            crate::gpu_commands::CommandEncoderDescriptor {
                 label: Some("jag-surface-cached-encoder"),
-            });
+            },
+        );
 
         self.pass
             .ensure_depth_texture(&mut self.allocator, width, height);
@@ -117,9 +113,8 @@ impl JagSurface {
             }
         }
 
-        let cb = encoder.finish();
-        self.queue.submit(std::iter::once(cb));
-        frame.present();
+        crate::gpu_commands::submit_command_encoder(&self.queue, encoder);
+        self.queue.present(frame);
 
         // Reset scroll offset for subsequent full rebuilds
         self.pass.set_scroll_offset([0.0, 0.0]);
@@ -332,28 +327,25 @@ impl JagSurface {
         }
 
         // Create offscreen render target
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("headless-render-target"),
-            size: wgpu::Extent3d {
+        let texture = crate::gpu_texture::create_texture_2d(
+            &self.device,
+            "headless-render-target",
+            crate::gpu_texture::Texture2dSpec {
                 width,
                 height,
-                depth_or_array_layers: 1,
+                format: self.surface_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.surface_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        );
+        let texture_view = crate::gpu_texture::create_default_texture_view(&texture);
 
         // Command encoder
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = crate::gpu_commands::create_command_encoder(
+            &self.device,
+            crate::gpu_commands::CommandEncoderDescriptor {
                 label: Some("headless-encoder"),
-            });
+            },
+        );
 
         // Render unified pass directly to the offscreen texture
         self.pass
@@ -374,70 +366,33 @@ impl JagSurface {
             &canvas.backdrop_blur_draws,
             &unified_scene.external_texture_draws,
             clear_wgpu,
-            canvas.backdrop_blur_draws.is_empty(), // direct unless framebuffer sampling is needed
+            canvas.backdrop_blur_draws.is_empty() && !self.extended_color_composition, // float intermediates preserve gamut through blending
             &self.queue,
             false, // don't preserve surface
         );
 
         // Copy rendered texture to a CPU-readable buffer
         let bytes_per_pixel = 4u32;
-        let unpadded_bytes_per_row = width * bytes_per_pixel;
-        let padded_bytes_per_row = (unpadded_bytes_per_row + 255) & !255;
-        let buffer_size = (padded_bytes_per_row * height) as u64;
+        let bytes_per_row = width
+            .checked_mul(bytes_per_pixel)
+            .ok_or_else(|| anyhow::anyhow!("headless readback row size overflow"))?;
+        let readback =
+            ReadbackBuffer::new(&self.device, "headless-readback", bytes_per_row, height)?;
 
-        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("headless-readback"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-
-        encoder.copy_texture_to_buffer(
-            wgpu::ImageCopyTexture {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::ImageCopyBuffer {
-                buffer: &readback,
-                layout: wgpu::ImageDataLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded_bytes_per_row),
-                    rows_per_image: Some(height),
-                },
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
+        crate::gpu_texture::copy_texture_to_buffer_2d(
+            &mut encoder,
+            &texture,
+            readback.buffer(),
+            readback.padded_bytes_per_row(),
+            [width, height],
         );
 
         // Submit and wait
-        self.queue.submit(std::iter::once(encoder.finish()));
+        crate::gpu_commands::submit_command_encoder(&self.queue, encoder);
 
-        let (tx, rx) = std::sync::mpsc::channel();
-        readback
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                result.expect("failed to map readback buffer");
-                tx.send(()).expect("failed to signal readback");
-            });
-        self.device.poll(wgpu::Maintain::Wait);
-        rx.recv()
-            .map_err(|e| anyhow::anyhow!("readback recv: {}", e))?;
-
-        // Extract tightly-packed RGBA pixels (strip row padding)
-        let mapped = readback.slice(..).get_mapped_range();
-        let mut pixels = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
-        for row in 0..height {
-            let start = (row * padded_bytes_per_row) as usize;
-            let end = start + (width * bytes_per_pixel) as usize;
-            pixels.extend_from_slice(&mapped[start..end]);
-        }
-        drop(mapped);
-        readback.unmap();
+        let mapped = readback.map_tightly_packed(&self.device)?;
+        let mut pixels = Vec::with_capacity(mapped.len());
+        crate::readback::append_rgba_row(&mut pixels, &mapped, self.surface_format);
 
         Ok((width, height, pixels))
     }

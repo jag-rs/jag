@@ -8,14 +8,14 @@ use super::*;
 #[test]
 fn rebuilt_frames_reuse_effect_texture_ids() {
     let instance = wgpu::Instance::default();
-    let Some(adapter) =
+    let Ok(adapter) =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
     else {
         eprintln!("skipping effect texture ID test: no GPU adapter available");
         return;
     };
     let Ok((device, queue)) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
     else {
         eprintln!("skipping effect texture ID test: GPU device unavailable");
         return;

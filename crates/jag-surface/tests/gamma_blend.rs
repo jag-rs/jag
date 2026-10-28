@@ -10,10 +10,10 @@ use jag_surface::JagSurface;
 fn surface(format: wgpu::TextureFormat) -> Option<JagSurface> {
     let instance = wgpu::Instance::default();
     let adapter =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))?;
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
             .ok()?;
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()?;
     let mut surface = JagSurface::new(Arc::new(device), Arc::new(queue), format);
     surface.set_frame_cache_enabled(false);
     Some(surface)

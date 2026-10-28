@@ -3,8 +3,8 @@
 use std::sync::{Arc, Weak};
 
 use super::ImageQuadVtx;
+use crate::gpu_transfer::{allocate_buffer_resource, initialize_buffer_resource, upload_buffer};
 use crate::{pipeline::ImageRenderer, upload::ExtractedExternalTextureDraw};
-use wgpu::util::DeviceExt;
 
 pub(super) type ExtResource = (
     Arc<wgpu::Buffer>,
@@ -16,6 +16,7 @@ pub(super) type ExtResource = (
     wgpu::Buffer,
     wgpu::Buffer,
     i32,
+    Option<crate::Rect>,
 );
 
 const MAX_SLOTS: usize = 256;
@@ -74,12 +75,12 @@ impl CompositeResources {
             .filter(|b| b.size() >= size)
             .cloned()
             .unwrap_or_else(|| {
-                Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("composite-vertex-batch"),
+                Arc::new(allocate_buffer_resource(
+                    device,
+                    "composite-vertex-batch",
                     size,
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                }))
+                    wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                ))
             });
         if index < MAX_VERTEX_BATCHES && buffer.size() <= MAX_VERTEX_BYTES {
             if let Some(slot) = self.vertices.get_mut(index) {
@@ -90,7 +91,7 @@ impl CompositeResources {
         }
         if !data.is_empty() {
             // One staging allocation and copy for all tiles in this pass.
-            queue.write_buffer(&buffer, 0, data);
+            upload_buffer(queue, &buffer, 0, data);
         }
         buffer
     }
@@ -121,8 +122,9 @@ impl CompositeResources {
                 .expect("composite resources still borrowed at frame boundary");
             resource.0 = vertices.clone();
             resource.8 = base_vertex;
+            resource.9 = draw.clip;
             if slot.z != draw.z {
-                queue.write_buffer(&resource.6, 0, bytemuck::bytes_of(&(draw.z as f32)));
+                upload_buffer(queue, &resource.6, 0, bytemuck::bytes_of(&(draw.z as f32)));
                 slot.z = draw.z;
             }
             if !Weak::ptr_eq(&slot.view, &Arc::downgrade(view)) {
@@ -148,24 +150,27 @@ impl CompositeResources {
             }
             return slot.resource.clone();
         }
-        let ibuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("composite-indices"),
-            contents: bytemuck::cast_slice(&[0u16, 1, 2, 0, 2, 3]),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        let zbuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("composite-z"),
-            contents: bytemuck::bytes_of(&(draw.z as f32)),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-        let zbg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("composite-z"),
-            layout: z_layout,
-            entries: &[wgpu::BindGroupEntry {
+        let ibuf = initialize_buffer_resource(
+            device,
+            "composite-indices",
+            bytemuck::cast_slice(&[0u16, 1, 2, 0, 2, 3]),
+            wgpu::BufferUsages::INDEX,
+        );
+        let zbuf = initialize_buffer_resource(
+            device,
+            "composite-z",
+            bytemuck::bytes_of(&(draw.z as f32)),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let zbg = crate::gpu_bindings::create_bind_group(
+            device,
+            "composite-z",
+            z_layout,
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: zbuf.as_entire_binding(),
             }],
-        });
+        );
         let (params_bg, params_buf) = renderer.params_bind_group_clipped(
             device,
             draw.opacity,
@@ -183,6 +188,7 @@ impl CompositeResources {
             zbuf,
             params_buf,
             base_vertex,
+            draw.clip,
         ));
         if index < MAX_SLOTS && index == self.slots.len() && vertices.size() <= MAX_VERTEX_BYTES {
             self.slots.push(Slot {
@@ -202,19 +208,19 @@ impl CompositeResources {
 fn quad_vertices(draw: &ExtractedExternalTextureDraw) -> [ImageQuadVtx; 4] {
     [
         ImageQuadVtx {
-            pos: draw.origin,
+            pos: draw.quad[0],
             uv: [draw.uv[0], draw.uv[1]],
         },
         ImageQuadVtx {
-            pos: [draw.origin[0] + draw.size[0], draw.origin[1]],
+            pos: draw.quad[1],
             uv: [draw.uv[2], draw.uv[1]],
         },
         ImageQuadVtx {
-            pos: [draw.origin[0] + draw.size[0], draw.origin[1] + draw.size[1]],
+            pos: draw.quad[2],
             uv: [draw.uv[2], draw.uv[3]],
         },
         ImageQuadVtx {
-            pos: [draw.origin[0], draw.origin[1] + draw.size[1]],
+            pos: draw.quad[3],
             uv: [draw.uv[0], draw.uv[3]],
         },
     ]

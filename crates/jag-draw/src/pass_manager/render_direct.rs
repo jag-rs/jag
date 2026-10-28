@@ -6,8 +6,9 @@
 //! `quad_prep`); everything else is unchanged. No logic changed.
 
 use super::{PassManager, set_scissor_for_clip, transformed_quad_points};
+use crate::gpu_commands::CommandEncoderExt as _;
+use crate::gpu_transfer::create_transient_upload;
 use crate::upload::GpuScene;
-use wgpu::util::DeviceExt;
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 impl PassManager {
@@ -55,34 +56,36 @@ impl PassManager {
         inv_logical: f32,
         transparent_text_z: &std::collections::HashSet<i32>,
     ) {
-        let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("vp-bg-direct-local"),
-            layout: self.solid_direct.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "vp-bg-direct-local",
+            self.solid_direct.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
 
         // Build the analytic box-shadow instance buffer + viewport bind group
         // before the render pass so both outlive the pass borrow. Skipped
         // entirely when there are no shadows.
         let shadow_buf = (!self.shadow_instances.is_empty()).then(|| {
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("shadow-instances"),
-                    contents: bytemuck::cast_slice(&self.shadow_instances),
-                    usage: wgpu::BufferUsages::VERTEX,
-                })
+            create_transient_upload(
+                &self.device,
+                "shadow-instances",
+                bytemuck::cast_slice(&self.shadow_instances),
+                wgpu::BufferUsages::VERTEX,
+            )
         });
-        let shadow_vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow-vp-bg-direct"),
-            layout: self.shadow_direct.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let shadow_vp_bg = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "shadow-vp-bg-direct",
+            self.shadow_direct.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
 
         // Create z-index bind group before render pass (must outlive the pass)
         let _z_bg = self.create_z_bind_group(0.0, queue);
@@ -173,8 +176,8 @@ impl PassManager {
         // Create text bind groups before render pass so they live long enough
         let vp_bg_text = self.text.vp_bind_group(&self.device, &self.vp_buffer);
 
-        let (image_z_vals, image_resources) = self.prep_image_direct(&image_views, queue);
-        let (svg_z_vals, svg_resources) = self.prep_svg_direct(&svg_views, queue);
+        let (image_z_vals, image_resources) = self.prep_image_direct(&image_views);
+        let (svg_z_vals, svg_resources) = self.prep_svg_direct(&svg_views);
         let (ext_z_vals, ext_resources) = self.prep_ext_direct(external_texture_draws, queue);
 
         // Build depth attachment after all mutable borrows on self are finished
@@ -192,24 +195,26 @@ impl PassManager {
         });
 
         // Begin unified render pass (after all resource preparation)
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("unified-render-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: surface_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: if preserve_surface {
-                        wgpu::LoadOp::Load
-                    } else {
-                        wgpu::LoadOp::Clear(clear)
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("unified-render-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: surface_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: if preserve_surface {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(clear)
+                        },
+                        store: wgpu::StoreOp::Store,
                     },
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: depth_attachment,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+                })],
+                depth_stencil_attachment: depth_attachment,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
 
         // Render opaque solids in per-clip batches. Each batch has its own
         // scissor rect so that overflow:hidden/scroll clips content correctly.
@@ -354,8 +359,23 @@ impl PassManager {
                     }
                 }
                 DrawItem::ExternalTexture(i) => {
-                    let (vbuf, ibuf, vp_bg_ext, z_bg_ext, tex_bg, params_bg, _, _, base_vertex) =
-                        &*ext_resources[i];
+                    let (
+                        vbuf,
+                        ibuf,
+                        vp_bg_ext,
+                        z_bg_ext,
+                        tex_bg,
+                        params_bg,
+                        _,
+                        _,
+                        base_vertex,
+                        clip,
+                    ) = &*ext_resources[i];
+                    if let Some(c) = clip {
+                        if !set_scissor_for_clip(&mut pass, *c, width, height) {
+                            continue;
+                        }
+                    }
                     self.image.record_at_vertex(
                         &mut pass,
                         vp_bg_ext,
@@ -367,6 +387,9 @@ impl PassManager {
                         6,
                         *base_vertex,
                     );
+                    if clip.is_some() {
+                        pass.set_scissor_rect(0, 0, width, height);
+                    }
                 }
             }
         }

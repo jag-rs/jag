@@ -2,6 +2,9 @@
 //! former monolithic `pass_manager.rs`; no logic changed.
 
 use super::PassManager;
+use crate::gpu_commands::CommandEncoderExt as _;
+use crate::gpu_texture::{Texture2dSpec, create_default_texture_view, create_texture_2d};
+use crate::gpu_transfer::create_transient_upload;
 use crate::scene::{BoxShadowSpec, RoundedRadii, RoundedRect};
 
 impl PassManager {
@@ -24,26 +27,22 @@ impl PassManager {
         let sigma = if blur > 0.0 { blur } else { 0.5 };
         let spread = spec.spread.max(0.0);
         let create_tex = |label: &str| -> wgpu::Texture {
-            self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
+            create_texture_2d(
+                &self.device,
+                label,
+                Texture2dSpec {
                     width: width.max(1),
                     height: height.max(1),
-                    depth_or_array_layers: 1,
+                    format: wgpu::TextureFormat::R8Unorm,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
                 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::R8Unorm,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
+            )
         };
         let mask_tex = create_tex("shadow-mask");
         let ping_tex = create_tex("shadow-ping");
-        let mask_view = mask_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let ping_view = ping_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let mask_view = create_default_texture_view(&mask_tex);
+        let ping_view = create_default_texture_view(&ping_tex);
 
         // Viewport for full target size (y-down)
         let logical =
@@ -64,7 +63,7 @@ impl PassManager {
             0.0,
         ];
         // debug log removed
-        queue.write_buffer(&self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
+        crate::gpu_transfer::upload_buffer(queue, &self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
 
         let shadow_radii = RoundedRadii {
             tl: (rrect.radii.tl + spread).max(0.0),
@@ -196,27 +195,21 @@ impl PassManager {
             let i2 = base + 1 + ((i + 1) % ring_len);
             indices.extend_from_slice(&[i0, i1, i2]);
         }
-        // Create GPU buffers directly
+        // Create GPU buffers through the shared transient transfer boundary.
         let vsize = (vertices.len() * std::mem::size_of::<Vtx>()) as u64;
         let isize = (indices.len() * std::mem::size_of::<u16>()) as u64;
-        let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("shadow-mask-vbuf"),
-            size: vsize.max(4),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("shadow-mask-ibuf"),
-            size: isize.max(4),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        if vsize > 0 {
-            queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&vertices));
-        }
-        if isize > 0 {
-            queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&indices));
-        }
+        let vbuf = create_transient_upload(
+            &self.device,
+            "shadow-mask-vbuf",
+            bytemuck::cast_slice(&vertices),
+            wgpu::BufferUsages::VERTEX,
+        );
+        let ibuf = create_transient_upload(
+            &self.device,
+            "shadow-mask-ibuf",
+            bytemuck::cast_slice(&indices),
+            wgpu::BufferUsages::INDEX,
+        );
         let gpu = crate::upload::GpuScene {
             vertex: crate::allocator::OwnedBuffer {
                 buffer: vbuf,
@@ -237,33 +230,36 @@ impl PassManager {
         };
 
         // Bind groups for viewport
-        let vp_bg_mask = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("vp-bg-mask"),
-            layout: self.mask_renderer.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg_mask = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "vp-bg-mask",
+            self.mask_renderer.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
         // Render mask shape to R8 texture
         // Clear to BLACK, render WHITE for shadow shape
         // After blur: soft white blob. After cutout: white ring (shadow area)
         let _z_bg = self.create_z_bind_group(0.0, queue);
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("shadow-mask-pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &mask_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+            let mut pass =
+                encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                    label: Some("shadow-mask-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &mask_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
             self.mask_renderer.record(&mut pass, &vp_bg_mask, &gpu);
         }
 
@@ -286,23 +282,30 @@ impl PassManager {
             sigma,
             _pad: 0.0,
         };
-        queue.write_buffer(&self.blur_r8.param_buffer, 0, bytemuck::bytes_of(&bp_h));
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.blur_r8.param_buffer,
+            0,
+            bytemuck::bytes_of(&bp_h),
+        );
         let bg_h = self.blur_r8.bind_group(&self.device, &mask_view);
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("shadow-blur-h"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &ping_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+            let mut pass =
+                encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                    label: Some("shadow-blur-h"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &ping_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
             self.blur_r8.record(&mut pass, &bg_h);
         }
 
@@ -313,23 +316,30 @@ impl PassManager {
             sigma,
             _pad: 0.0,
         };
-        queue.write_buffer(&self.blur_r8.param_buffer, 0, bytemuck::bytes_of(&bp_v));
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.blur_r8.param_buffer,
+            0,
+            bytemuck::bytes_of(&bp_v),
+        );
         let bg_v = self.blur_r8.bind_group(&self.device, &ping_view);
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("shadow-blur-v"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &mask_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+            let mut pass =
+                encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                    label: Some("shadow-blur-v"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &mask_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
             self.blur_r8.record(&mut pass, &bg_v);
         }
 
@@ -424,24 +434,18 @@ impl PassManager {
 
             let vsize = (cutout_vertices.len() * std::mem::size_of::<Vtx>()) as u64;
             let isize = (cutout_indices.len() * std::mem::size_of::<u16>()) as u64;
-            let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("shadow-cutout-vbuf"),
-                size: vsize.max(4),
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("shadow-cutout-ibuf"),
-                size: isize.max(4),
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            if vsize > 0 {
-                queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&cutout_vertices));
-            }
-            if isize > 0 {
-                queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&cutout_indices));
-            }
+            let vbuf = create_transient_upload(
+                &self.device,
+                "shadow-cutout-vbuf",
+                bytemuck::cast_slice(&cutout_vertices),
+                wgpu::BufferUsages::VERTEX,
+            );
+            let ibuf = create_transient_upload(
+                &self.device,
+                "shadow-cutout-ibuf",
+                bytemuck::cast_slice(&cutout_indices),
+                wgpu::BufferUsages::INDEX,
+            );
             let cutout_gpu = crate::upload::GpuScene {
                 vertex: crate::allocator::OwnedBuffer {
                     buffer: vbuf,
@@ -462,20 +466,22 @@ impl PassManager {
             };
 
             let _z_bg_cutout = self.create_z_bind_group(0.0, queue);
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("shadow-cutout"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &mask_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+            let mut pass =
+                encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                    label: Some("shadow-cutout"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &mask_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
             self.mask_renderer
                 .record(&mut pass, &vp_bg_mask, &cutout_gpu);
         }
@@ -490,23 +496,30 @@ impl PassManager {
         let scol = ShadowColor {
             color: [c.r, c.g, c.b, c.a],
         };
-        queue.write_buffer(&self.shadow_comp.color_buffer, 0, bytemuck::bytes_of(&scol));
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.shadow_comp.color_buffer,
+            0,
+            bytemuck::bytes_of(&scol),
+        );
         let bg = self.shadow_comp.bind_group(&self.device, &mask_view);
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("shadow-composite"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+            let mut pass =
+                encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                    label: Some("shadow-composite"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
             self.shadow_comp.record(&mut pass, &bg);
         }
 

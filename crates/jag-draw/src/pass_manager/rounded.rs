@@ -3,6 +3,8 @@
 
 use super::PassManager;
 use crate::allocator::RenderAllocator;
+use crate::gpu_commands::CommandEncoderExt as _;
+use crate::gpu_transfer::create_transient_upload;
 use crate::scene::RoundedRect;
 
 impl PassManager {
@@ -37,7 +39,7 @@ impl PassManager {
             0.0,
         ];
         // debug log removed
-        queue.write_buffer(&self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
+        crate::gpu_transfer::upload_buffer(queue, &self.vp_buffer, 0, bytemuck::bytes_of(&vp_data));
 
         // Tessellate rounded rect fill
         #[repr(C)]
@@ -153,24 +155,18 @@ impl PassManager {
         // Create GPU buffers
         let vsize = (vertices.len() * std::mem::size_of::<Vtx>()) as u64;
         let isize = (indices.len() * std::mem::size_of::<u16>()) as u64;
-        let vbuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rounded-rect-fill-vbuf"),
-            size: vsize.max(4),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let ibuf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("rounded-rect-fill-ibuf"),
-            size: isize.max(4),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        if vsize > 0 {
-            queue.write_buffer(&vbuf, 0, bytemuck::cast_slice(&vertices));
-        }
-        if isize > 0 {
-            queue.write_buffer(&ibuf, 0, bytemuck::cast_slice(&indices));
-        }
+        let vbuf = create_transient_upload(
+            &self.device,
+            "rounded-rect-fill-vbuf",
+            bytemuck::cast_slice(&vertices),
+            wgpu::BufferUsages::VERTEX,
+        );
+        let ibuf = create_transient_upload(
+            &self.device,
+            "rounded-rect-fill-ibuf",
+            bytemuck::cast_slice(&indices),
+            wgpu::BufferUsages::INDEX,
+        );
         let gpu = crate::upload::GpuScene {
             vertex: crate::allocator::OwnedBuffer {
                 buffer: vbuf,
@@ -191,14 +187,15 @@ impl PassManager {
         };
 
         // Bind viewport
-        let vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("vp-bg-direct-no-msaa"),
-            layout: self.solid_direct_no_msaa.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "vp-bg-direct-no-msaa",
+            self.solid_direct_no_msaa.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
 
         // Render directly to target without MSAA to preserve existing content through blending
         // MSAA+resolve doesn't apply blend state correctly for layered rendering
@@ -216,20 +213,22 @@ impl PassManager {
             }
         });
 
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("rounded-rect-fill-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: depth_attachment,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("rounded-rect-fill-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: depth_attachment,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
         self.solid_direct_no_msaa.record(&mut pass, &vp_bg, &gpu);
     }
 
@@ -254,7 +253,12 @@ impl PassManager {
             0.0,
             0.0,
         ];
-        queue.write_buffer(&self.smaa_param_buffer, 0, bytemuck::bytes_of(&texel_size));
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.smaa_param_buffer,
+            0,
+            bytemuck::bytes_of(&texel_size),
+        );
 
         let edges = self
             .smaa_edges
@@ -280,58 +284,64 @@ impl PassManager {
 
         // Pass 1: edge detect
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("smaa-edge-pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &edges.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+            let mut pass =
+                encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                    label: Some("smaa-edge-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &edges.view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
             self.smaa.record_edges(&mut pass, &edge_bg);
         }
 
         // Pass 2: blend weights
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("smaa-blend-pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &weights.view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+            let mut pass =
+                encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                    label: Some("smaa-blend-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &weights.view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
             self.smaa.record_blend(&mut pass, &blend_bg);
         }
 
         // Pass 3: resolve onto the swapchain/offscreen destination
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("smaa-resolve-pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: dst_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+            let mut pass =
+                encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                    label: Some("smaa-resolve-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: dst_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
             self.smaa.record_resolve(&mut pass, &resolve_bg);
         }
     }

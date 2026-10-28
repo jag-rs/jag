@@ -26,18 +26,17 @@ impl ShadowInstanceRenderer {
         sample_count: u32,
         gamma_blend: bool,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shadow-instance-shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                jag_shaders::with_blend_space(jag_shaders::SHADOW_INSTANCE_WGSL, gamma_blend)
-                    .into(),
-            ),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "shadow-instance-shader",
+            &jag_shaders::with_blend_space(jag_shaders::SHADOW_INSTANCE_WGSL, gamma_blend),
+        );
 
         // Same viewport-uniform layout as the solid renderer (group 0, binding 0).
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("shadow-vp-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "shadow-vp-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -47,89 +46,89 @@ impl ShadowInstanceRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("shadow-pipeline-layout"),
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
+        let layout =
+            crate::gpu_bindings::create_pipeline_layout(&device, "shadow-pipeline-layout", &[&bgl]);
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("shadow-pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                // Per-instance attributes: stride 80, stepped per instance. The
-                // quad's 6 vertices come from `@builtin(vertex_index)`, so there
-                // is no per-vertex buffer.
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: 80,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            offset: 0,
-                            shader_location: 0,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 8,
-                            shader_location: 1,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 16,
-                            shader_location: 2,
-                            format: wgpu::VertexFormat::Float32x4,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 32,
-                            shader_location: 3,
-                            format: wgpu::VertexFormat::Float32x4,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 48,
-                            shader_location: 4,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 56,
-                            shader_location: 5,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 64,
-                            shader_location: 6,
-                            format: wgpu::VertexFormat::Float32x4,
-                        },
-                    ],
-                }],
+        let pipeline = crate::gpu_pipeline::create_render_pipeline(
+            &device,
+            crate::gpu_pipeline::RenderPipelineDescriptor {
+                label: Some("shadow-pipeline"),
+                layout: Some(&layout),
+                vertex: crate::gpu_pipeline::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    // Per-instance attributes: stride 80, stepped per instance. The
+                    // quad's 6 vertices come from `@builtin(vertex_index)`, so there
+                    // is no per-vertex buffer.
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: 80,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                offset: 0,
+                                shader_location: 0,
+                                format: wgpu::VertexFormat::Float32x2,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 8,
+                                shader_location: 1,
+                                format: wgpu::VertexFormat::Float32x2,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 16,
+                                shader_location: 2,
+                                format: wgpu::VertexFormat::Float32x4,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 32,
+                                shader_location: 3,
+                                format: wgpu::VertexFormat::Float32x4,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 48,
+                                shader_location: 4,
+                                format: wgpu::VertexFormat::Float32x2,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 56,
+                                shader_location: 5,
+                                format: wgpu::VertexFormat::Float32x2,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 64,
+                                shader_location: 6,
+                                format: wgpu::VertexFormat::Float32x4,
+                            },
+                        ],
+                    }],
+                },
+                fragment: Some(crate::gpu_pipeline::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    // Shadows are transparent: test against opaque depth, don't write.
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                // Shadows are transparent: test against opaque depth, don't write.
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-        });
+        );
 
         Self { pipeline, bgl }
     }

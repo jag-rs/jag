@@ -9,7 +9,7 @@ fn surface() -> JagSurface {
         pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default()))
             .expect("GPU adapter");
     let (device, queue) =
-        pollster::block_on(adapter.request_device(&Default::default(), None)).expect("GPU device");
+        pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
     JagSurface::new(
         Arc::new(device),
         Arc::new(queue),

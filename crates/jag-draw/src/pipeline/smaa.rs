@@ -13,14 +13,13 @@ pub struct SmaaRenderer {
 
 impl SmaaRenderer {
     pub fn new(device: Arc<wgpu::Device>, output_format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("smaa-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SMAA_WGSL.into()),
-        });
+        let shader =
+            crate::gpu_bindings::create_wgsl_shader(&device, "smaa-shader", jag_shaders::SMAA_WGSL);
 
-        let edge_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("smaa-edge-bgl"),
-            entries: &[
+        let edge_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "smaa-edge-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -48,11 +47,12 @@ impl SmaaRenderer {
                     count: None,
                 },
             ],
-        });
+        );
 
-        let blend_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("smaa-blend-bgl"),
-            entries: &[
+        let blend_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "smaa-blend-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -80,11 +80,12 @@ impl SmaaRenderer {
                     count: None,
                 },
             ],
-        });
+        );
 
-        let resolve_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("smaa-resolve-bgl"),
-            entries: &[
+        let resolve_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "smaa-resolve-bgl",
+            &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -128,98 +129,104 @@ impl SmaaRenderer {
                     count: None,
                 },
             ],
-        });
+        );
 
-        let edge_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("smaa-edge-layout"),
-            bind_group_layouts: &[&edge_bgl],
-            push_constant_ranges: &[],
-        });
-        let blend_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("smaa-blend-layout"),
-            bind_group_layouts: &[&blend_bgl],
-            push_constant_ranges: &[],
-        });
-        let resolve_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("smaa-resolve-layout"),
-            bind_group_layouts: &[&resolve_bgl],
-            push_constant_ranges: &[],
-        });
+        let edge_layout =
+            crate::gpu_bindings::create_pipeline_layout(&device, "smaa-edge-layout", &[&edge_bgl]);
+        let blend_layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "smaa-blend-layout",
+            &[&blend_bgl],
+        );
+        let resolve_layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "smaa-resolve-layout",
+            &[&resolve_bgl],
+        );
 
-        let edge_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("smaa-edge-pipeline"),
-            layout: Some(&edge_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_full",
-                buffers: &[],
+        let edge_pipeline = crate::gpu_pipeline::create_render_pipeline(
+            &device,
+            crate::gpu_pipeline::RenderPipelineDescriptor {
+                label: Some("smaa-edge-pipeline"),
+                layout: Some(&edge_layout),
+                vertex: crate::gpu_pipeline::VertexState {
+                    module: &shader,
+                    entry_point: "vs_full",
+                    buffers: &[],
+                },
+                fragment: Some(crate::gpu_pipeline::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_edges",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_edges",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
+        );
 
-        let blend_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("smaa-blend-pipeline"),
-            layout: Some(&blend_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_full",
-                buffers: &[],
+        let blend_pipeline = crate::gpu_pipeline::create_render_pipeline(
+            &device,
+            crate::gpu_pipeline::RenderPipelineDescriptor {
+                label: Some("smaa-blend-pipeline"),
+                layout: Some(&blend_layout),
+                vertex: crate::gpu_pipeline::VertexState {
+                    module: &shader,
+                    entry_point: "vs_full",
+                    buffers: &[],
+                },
+                fragment: Some(crate::gpu_pipeline::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_weights",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_weights",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
+        );
 
-        let resolve_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("smaa-resolve-pipeline"),
-            layout: Some(&resolve_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_full",
-                buffers: &[],
+        let resolve_pipeline = crate::gpu_pipeline::create_render_pipeline(
+            &device,
+            crate::gpu_pipeline::RenderPipelineDescriptor {
+                label: Some("smaa-resolve-pipeline"),
+                layout: Some(&resolve_layout),
+                vertex: crate::gpu_pipeline::VertexState {
+                    module: &shader,
+                    entry_point: "vs_full",
+                    buffers: &[],
+                },
+                fragment: Some(crate::gpu_pipeline::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_resolve",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: output_format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_resolve",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: output_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
+        );
 
         let sampler_linear = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("smaa-linear-sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -229,7 +236,7 @@ impl SmaaRenderer {
             label: Some("smaa-nearest-sampler"),
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -254,10 +261,11 @@ impl SmaaRenderer {
         color_view: &wgpu::TextureView,
         params: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("smaa-edge-bg"),
-            layout: &self.edge_bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "smaa-edge-bg",
+            &self.edge_bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(color_view),
@@ -271,7 +279,7 @@ impl SmaaRenderer {
                     resource: params.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub fn blend_bind_group(
@@ -280,10 +288,11 @@ impl SmaaRenderer {
         edge_view: &wgpu::TextureView,
         params: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("smaa-blend-bg"),
-            layout: &self.blend_bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "smaa-blend-bg",
+            &self.blend_bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(edge_view),
@@ -297,7 +306,7 @@ impl SmaaRenderer {
                     resource: params.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub fn resolve_bind_group(
@@ -307,10 +316,11 @@ impl SmaaRenderer {
         weight_view: &wgpu::TextureView,
         params: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("smaa-resolve-bg"),
-            layout: &self.resolve_bgl,
-            entries: &[
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "smaa-resolve-bg",
+            &self.resolve_bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(color_view),
@@ -332,7 +342,7 @@ impl SmaaRenderer {
                     resource: params.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub fn record_edges<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, bg: &'a wgpu::BindGroup) {

@@ -279,6 +279,12 @@ pub struct PassManager {
         std::collections::HashMap<crate::display_list::ExternalTextureId, Arc<wgpu::TextureView>>,
     /// External textures registered through `register_linear_external_texture`.
     linear_external_textures: std::collections::HashSet<crate::display_list::ExternalTextureId>,
+    external_texture_lifetimes:
+        std::collections::HashMap<crate::display_list::ExternalTextureId, std::sync::Weak<()>>,
+    external_texture_owners: std::collections::HashMap<
+        crate::display_list::ExternalTextureId,
+        Arc<dyn std::any::Any + Send + Sync>,
+    >,
     composite_direct: composite_resources::CompositeResources,
     composite_offscreen: composite_resources::CompositeResources,
 }
@@ -315,3 +321,5 @@ mod scrim_cutout;
 mod setup;
 mod targets;
 mod text_prep;
+
+mod external_bindings;

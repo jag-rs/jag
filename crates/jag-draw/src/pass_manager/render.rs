@@ -57,6 +57,7 @@ impl PassManager {
         queue: &wgpu::Queue,
         preserve_surface: bool,
     ) {
+        self.prune_expired_external_textures();
         // Update viewport uniform. `logical` is the combined DPI/UI scale factor
         // applied to all scene coordinates when mapping to device pixels.
         let logical =
@@ -82,7 +83,7 @@ impl PassManager {
             0.0, // padding
         ];
         let data = bytemuck::bytes_of(&vp_data);
-        queue.write_buffer(&self.vp_buffer, 0, data);
+        crate::gpu_transfer::upload_buffer(queue, &self.vp_buffer, 0, data);
         let transparent_text_z: std::collections::HashSet<i32> =
             transparent_batches.iter().map(|b| b.z).collect();
 

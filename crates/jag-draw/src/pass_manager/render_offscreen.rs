@@ -1,14 +1,10 @@
-//! Offscreen (intermediate target) path of `render_unified`.
-//!
-//! Verbatim extraction of the offscreen branch body that previously lived
-//! inline in `render_unified`. Resource preparation that must outlive the
-//! render pass is delegated to the `prep_*` helpers (see `text_prep` /
-//! `quad_prep`); everything else is unchanged. No logic changed.
+//! Render the unified scene into an intermediate, then project to the display.
 
 use super::{PassManager, set_scissor_for_clip, transformed_quad_points};
 use crate::allocator::RenderAllocator;
+use crate::gpu_commands::CommandEncoderExt as _;
+use crate::gpu_transfer::create_transient_upload;
 use crate::upload::GpuScene;
-use wgpu::util::DeviceExt;
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 impl PassManager {
@@ -58,14 +54,15 @@ impl PassManager {
         transparent_text_z: &std::collections::HashSet<i32>,
     ) {
         // Create viewport bind group
-        let vp_bg_off = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("vp-bg-offscreen"),
-            layout: self.solid_offscreen.viewport_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let vp_bg_off = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "vp-bg-offscreen",
+            self.solid_offscreen.viewport_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.vp_buffer.as_entire_binding(),
             }],
-        });
+        );
 
         // Offscreen path - unified rendering to offscreen target
         let targets = self.alloc_targets(allocator, width.max(1), height.max(1));
@@ -162,9 +159,8 @@ impl PassManager {
             .text_offscreen
             .vp_bind_group(&self.device, &self.vp_buffer);
 
-        let (image_z_vals_off, image_resources_off) =
-            self.prep_image_offscreen(&image_views_off, queue);
-        let (svg_z_vals_off, svg_resources_off) = self.prep_svg_offscreen(&svg_views_off, queue);
+        let (image_z_vals_off, image_resources_off) = self.prep_image_offscreen(&image_views_off);
+        let (svg_z_vals_off, svg_resources_off) = self.prep_svg_offscreen(&svg_views_off);
         let (ext_z_vals_off, ext_resources_off) =
             self.prep_ext_offscreen(external_texture_draws, queue);
 
@@ -179,20 +175,22 @@ impl PassManager {
 
         let _z_bg = self.create_z_bind_group(0.0, queue);
 
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("unified-offscreen-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &targets.color.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(clear),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: depth_attachment,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("unified-offscreen-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &targets.color.view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(clear),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: depth_attachment,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
 
         // Render opaque solids in per-clip batches (offscreen path).
         if solid_batches.is_empty() {
@@ -235,26 +233,24 @@ impl PassManager {
         //
         // Limitation: all overlapping shadows read the same pre-shadow
         // snapshot, so they do not accumulate against each other. Accepted.
-        // A gamma-blend target already blends in sRGB, so hardware blending
-        // is correct there and overlapping shadows accumulate.
         if !self.shadow_instances.is_empty() && self.gamma_blend {
             self.record_blended_shadows(encoder, &targets);
         } else if !self.shadow_instances.is_empty() {
-            let shadow_buf = self
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("shadow-instances"),
-                    contents: bytemuck::cast_slice(&self.shadow_instances),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-            let shadow_vp_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("shadow-composite-vp-bg-offscreen"),
-                layout: self.shadow_composite.viewport_bgl(),
-                entries: &[wgpu::BindGroupEntry {
+            let shadow_buf = create_transient_upload(
+                &self.device,
+                "shadow-instances",
+                bytemuck::cast_slice(&self.shadow_instances),
+                wgpu::BufferUsages::VERTEX,
+            );
+            let shadow_vp_bg = crate::gpu_bindings::create_bind_group(
+                &self.device,
+                "shadow-composite-vp-bg-offscreen",
+                self.shadow_composite.viewport_bgl(),
+                &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: self.vp_buffer.as_entire_binding(),
                 }],
-            });
+            );
 
             // Snapshot of the offscreen scene target (pre-shadow). Same size +
             // format as the scene target; only needs sampling + copy-dst.
@@ -264,59 +260,49 @@ impl PassManager {
                 format: self.offscreen_format,
                 usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
             });
-            encoder.copy_texture_to_texture(
-                wgpu::ImageCopyTexture {
-                    texture: &targets.color.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::ImageCopyTexture {
-                    texture: &snapshot.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d {
-                    width: width.max(1),
-                    height: height.max(1),
-                    depth_or_array_layers: 1,
-                },
+            crate::gpu_texture::copy_texture_2d(
+                encoder,
+                &targets.color.texture,
+                &snapshot.texture,
+                [width.max(1), height.max(1)],
             );
-            let shadow_dst_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("shadow-composite-dst-bg"),
-                layout: self.shadow_composite.dst_bgl(),
-                entries: &[wgpu::BindGroupEntry {
+            let shadow_dst_bg = crate::gpu_bindings::create_bind_group(
+                &self.device,
+                "shadow-composite-dst-bg",
+                self.shadow_composite.dst_bgl(),
+                &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(&snapshot.view),
                 }],
-            });
+            );
 
             {
-                let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("unified-offscreen-shadow-composite-pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &targets.color.view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: self.depth_view(),
-                        // Depth is read-only here (pipeline depth_write=false);
-                        // load + store keeps the opaque depth intact for the
-                        // transparent interleave that follows.
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
+                let mut shadow_pass =
+                    encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                        label: Some("unified-offscreen-shadow-composite-pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &targets.color.view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: self.depth_view(),
+                            // Depth is read-only here (pipeline depth_write=false);
+                            // load + store keeps the opaque depth intact for the
+                            // transparent interleave that follows.
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
                         }),
-                        stencil_ops: None,
-                    }),
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                });
+                        occlusion_query_set: None,
+                        timestamp_writes: None,
+                    });
                 self.shadow_composite.record(
                     &mut shadow_pass,
                     &shadow_vp_bg,
@@ -383,20 +369,22 @@ impl PassManager {
                     }),
                     stencil_ops: None,
                 });
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("unified-offscreen-transparent-pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &targets.color.view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: depth_attachment,
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                });
+                let mut pass =
+                    encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                        label: Some("unified-offscreen-transparent-pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &targets.color.view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: depth_attachment,
+                        occlusion_query_set: None,
+                        timestamp_writes: None,
+                    });
 
                 match item {
                     DrawItemOff::BackdropBlur(_) => unreachable!(),
@@ -469,8 +457,23 @@ impl PassManager {
                         }
                     }
                     DrawItemOff::ExternalTexture(i) => {
-                        let (vbuf, ibuf, vp_bg_ext, z_bg_ext, tex_bg, params_bg, _, _, base_vertex) =
-                            &*ext_resources_off[i];
+                        let (
+                            vbuf,
+                            ibuf,
+                            vp_bg_ext,
+                            z_bg_ext,
+                            tex_bg,
+                            params_bg,
+                            _,
+                            _,
+                            base_vertex,
+                            clip,
+                        ) = &*ext_resources_off[i];
+                        if let Some(c) = clip {
+                            if !set_scissor_for_clip(&mut pass, *c, width, height) {
+                                continue;
+                            }
+                        }
                         self.image_offscreen.record_at_vertex(
                             &mut pass,
                             vp_bg_ext,
@@ -482,6 +485,9 @@ impl PassManager {
                             6,
                             *base_vertex,
                         );
+                        if clip.is_some() {
+                            pass.set_scissor_rect(0, 0, width, height);
+                        }
                     }
                 }
             }

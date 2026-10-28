@@ -32,15 +32,17 @@ impl ShadowCompositeInstanceRenderer {
         target_format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("shadow-instance-composite-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::SHADOW_INSTANCE_COMPOSITE_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "shadow-instance-composite-shader",
+            jag_shaders::SHADOW_INSTANCE_COMPOSITE_WGSL,
+        );
 
         // Group 0: same viewport-uniform layout as the linear shadow renderer.
-        let vp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("shadow-composite-vp-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let vp_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "shadow-composite-vp-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
@@ -50,13 +52,14 @@ impl ShadowCompositeInstanceRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
         // Group 1: the destination snapshot. Sampled via `textureLoad`, so no
         // sampler is needed and the texture is non-filterable.
-        let dst_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("shadow-composite-dst-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        let dst_bgl = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "shadow-composite-dst-bgl",
+            &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
@@ -66,90 +69,93 @@ impl ShadowCompositeInstanceRenderer {
                 },
                 count: None,
             }],
-        });
+        );
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("shadow-composite-pipeline-layout"),
-            bind_group_layouts: &[&vp_bgl, &dst_bgl],
-            push_constant_ranges: &[],
-        });
+        let layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "shadow-composite-pipeline-layout",
+            &[&vp_bgl, &dst_bgl],
+        );
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("shadow-composite-pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                // Per-instance attributes: stride 80, stepped per instance. The
-                // quad's 6 vertices come from `@builtin(vertex_index)`.
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: 80,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            offset: 0,
-                            shader_location: 0,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 8,
-                            shader_location: 1,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 16,
-                            shader_location: 2,
-                            format: wgpu::VertexFormat::Float32x4,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 32,
-                            shader_location: 3,
-                            format: wgpu::VertexFormat::Float32x4,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 48,
-                            shader_location: 4,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 56,
-                            shader_location: 5,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 64,
-                            shader_location: 6,
-                            format: wgpu::VertexFormat::Float32x4,
-                        },
-                    ],
-                }],
+        let pipeline = crate::gpu_pipeline::create_render_pipeline(
+            &device,
+            crate::gpu_pipeline::RenderPipelineDescriptor {
+                label: Some("shadow-composite-pipeline"),
+                layout: Some(&layout),
+                vertex: crate::gpu_pipeline::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    // Per-instance attributes: stride 80, stepped per instance. The
+                    // quad's 6 vertices come from `@builtin(vertex_index)`.
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: 80,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                offset: 0,
+                                shader_location: 0,
+                                format: wgpu::VertexFormat::Float32x2,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 8,
+                                shader_location: 1,
+                                format: wgpu::VertexFormat::Float32x2,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 16,
+                                shader_location: 2,
+                                format: wgpu::VertexFormat::Float32x4,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 32,
+                                shader_location: 3,
+                                format: wgpu::VertexFormat::Float32x4,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 48,
+                                shader_location: 4,
+                                format: wgpu::VertexFormat::Float32x2,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 56,
+                                shader_location: 5,
+                                format: wgpu::VertexFormat::Float32x2,
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 64,
+                                shader_location: 6,
+                                format: wgpu::VertexFormat::Float32x4,
+                            },
+                        ],
+                    }],
+                },
+                fragment: Some(crate::gpu_pipeline::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        // The shader composites against the snapshot itself, so the
+                        // output is the final pixel: write it verbatim (REPLACE).
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    // Shadows are transparent: test against opaque depth, don't write.
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    ..Default::default()
+                },
+                multiview: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: target_format,
-                    // The shader composites against the snapshot itself, so the
-                    // output is the final pixel: write it verbatim (REPLACE).
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                // Shadows are transparent: test against opaque depth, don't write.
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: sample_count,
-                ..Default::default()
-            },
-            multiview: None,
-        });
+        );
 
         Self {
             pipeline,

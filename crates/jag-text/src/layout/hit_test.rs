@@ -79,18 +79,13 @@ impl Position {
 }
 
 /// Hit test policy for handling edge cases.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum HitTestPolicy {
     /// Clamp to the nearest valid position within the text.
+    #[default]
     Clamp,
     /// Return None if the point is outside the text bounds.
     Strict,
-}
-
-impl Default for HitTestPolicy {
-    fn default() -> Self {
-        Self::Clamp
-    }
 }
 
 /// Helper to determine cursor affinity at BiDi boundaries.

@@ -193,6 +193,10 @@ pub enum Command {
         opacity: f32,
         /// Whether the source texture is already premultiplied alpha.
         premultiplied: bool,
+        /// Captured scissor in device pixels, independent of display-list sorting.
+        clip: Option<Rect>,
+        /// Active rounded image clip, in device pixels.
+        rounded_clip: Option<crate::scene::RoundedRectClipGpu>,
     },
 }
 

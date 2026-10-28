@@ -227,6 +227,8 @@ impl UnifiedBuilder {
             transform,
             opacity,
             premultiplied,
+            rounded_clip,
+            clip,
         } = cmd
         else {
             return;
@@ -237,13 +239,21 @@ impl UnifiedBuilder {
         self.external_texture_draws
             .push(ExtractedExternalTextureDraw {
                 texture_id: *texture_id,
+                quad: [
+                    [rect.x, rect.y],
+                    [rect.x + rect.w, rect.y],
+                    [rect.x + rect.w, rect.y + rect.h],
+                    [rect.x, rect.y + rect.h],
+                ]
+                .map(|p| apply_transform(p, final_transform)),
+                clip: clip.or_else(|| self.current_clip()),
+                rounded_clip: *rounded_clip,
                 origin: world_origin,
                 size: [rect.w, rect.h],
                 z: *z,
                 opacity: *opacity * opa,
                 premultiplied: *premultiplied,
                 uv: [0.0, 0.0, 1.0, 1.0],
-                rounded_clip: None,
             });
     }
 
@@ -259,6 +269,13 @@ impl UnifiedBuilder {
             self.external_texture_draws
                 .push(ExtractedExternalTextureDraw {
                     texture_id: *texture_id,
+                    quad: [
+                        [rect.x, rect.y],
+                        [rect.x + rect.w, rect.y],
+                        [rect.x + rect.w, rect.y + rect.h],
+                        [rect.x, rect.y + rect.h],
+                    ],
+                    clip: self.current_clip(),
                     origin: [rect.x, rect.y],
                     size: [rect.w, rect.h],
                     z: *z,

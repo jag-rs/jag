@@ -38,7 +38,7 @@ fn lcd_coverage_keeps_its_average_without_widening_or_tinting_edges() {
     let adapter =
         pollster::block_on(instance.request_adapter(&Default::default())).expect("GPU adapter");
     let (device, queue) =
-        pollster::block_on(adapter.request_device(&Default::default(), None)).expect("GPU device");
+        pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
     let mut surface = JagSurface::new(
         Arc::new(device),
         Arc::new(queue),

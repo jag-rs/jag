@@ -34,10 +34,7 @@ mod tests {
 
     #[test]
     fn clone_and_copy() {
-        let a = TextAlign::Center;
-        let b = a;
-        let c = a.clone();
-        assert_eq!(a, b);
-        assert_eq!(a, c);
+        fn assert_clone_copy<T: Clone + Copy>() {}
+        assert_clone_copy::<TextAlign>();
     }
 }

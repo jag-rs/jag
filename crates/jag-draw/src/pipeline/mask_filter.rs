@@ -1,5 +1,6 @@
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
+
+use crate::gpu_transfer::initialize_buffer_resource;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -24,10 +25,11 @@ pub struct MaskFilterRenderer {
 
 impl MaskFilterRenderer {
     pub fn new(device: Arc<wgpu::Device>, format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mask-filter-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::MASK_FILTER_WGSL.into()),
-        });
+        let shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "mask-filter-shader",
+            jag_shaders::MASK_FILTER_WGSL,
+        );
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -38,9 +40,10 @@ impl MaskFilterRenderer {
             },
             count: None,
         };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("mask-filter-layout"),
-            entries: &[
+        let layout = crate::gpu_bindings::create_bind_group_layout(
+            &device,
+            "mask-filter-layout",
+            &[
                 texture_entry(0),
                 texture_entry(1),
                 wgpu::BindGroupLayoutEntry {
@@ -60,60 +63,67 @@ impl MaskFilterRenderer {
                     count: None,
                 },
             ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("mask-filter-pipeline-layout"),
-            bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mask-filter-pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                buffers: &[],
+        );
+        let pipeline_layout = crate::gpu_bindings::create_pipeline_layout(
+            &device,
+            "mask-filter-pipeline-layout",
+            &[&layout],
+        );
+        let pipeline = crate::gpu_pipeline::create_render_pipeline(
+            &device,
+            crate::gpu_pipeline::RenderPipelineDescriptor {
+                label: Some("mask-filter-pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: crate::gpu_pipeline::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &[],
+                },
+                fragment: Some(crate::gpu_pipeline::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
-        let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mask-composite-shader"),
-            source: wgpu::ShaderSource::Wgsl(jag_shaders::MASK_COMPOSITE_WGSL.into()),
-        });
-        let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mask-composite-pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &composite_shader,
-                entry_point: "vs_main",
-                buffers: &[],
+        );
+        let composite_shader = crate::gpu_bindings::create_wgsl_shader(
+            &device,
+            "mask-composite-shader",
+            jag_shaders::MASK_COMPOSITE_WGSL,
+        );
+        let composite_pipeline = crate::gpu_pipeline::create_render_pipeline(
+            &device,
+            crate::gpu_pipeline::RenderPipelineDescriptor {
+                label: Some("mask-composite-pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: crate::gpu_pipeline::VertexState {
+                    module: &composite_shader,
+                    entry_point: "vs_main",
+                    buffers: &[],
+                },
+                fragment: Some(crate::gpu_pipeline::FragmentState {
+                    module: &composite_shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &composite_shader,
-                entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-        });
+        );
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
@@ -134,15 +144,17 @@ impl MaskFilterRenderer {
         mask: &wgpu::TextureView,
         params: MaskParams,
     ) -> wgpu::BindGroup {
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mask-filter-params"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("mask-filter-group"),
-            layout: &self.layout,
-            entries: &[
+        let buffer = initialize_buffer_resource(
+            device,
+            "mask-filter-params",
+            bytemuck::bytes_of(&params),
+            wgpu::BufferUsages::UNIFORM,
+        );
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "mask-filter-group",
+            &self.layout,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(source),
@@ -160,7 +172,7 @@ impl MaskFilterRenderer {
                     resource: buffer.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub(crate) fn composite_group(
@@ -177,15 +189,17 @@ impl MaskFilterRenderer {
             crate::MaskComposite::Intersect => 2,
             crate::MaskComposite::Exclude => 3,
         };
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("mask-composite-operation"),
-            contents: bytemuck::bytes_of(&params),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("mask-composite-group"),
-            layout: &self.layout,
-            entries: &[
+        let buffer = initialize_buffer_resource(
+            device,
+            "mask-composite-operation",
+            bytemuck::bytes_of(&params),
+            wgpu::BufferUsages::UNIFORM,
+        );
+        crate::gpu_bindings::create_bind_group(
+            &device,
+            "mask-composite-group",
+            &self.layout,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(accumulated),
@@ -203,7 +217,7 @@ impl MaskFilterRenderer {
                     resource: buffer.as_entire_binding(),
                 },
             ],
-        })
+        )
     }
 
     pub(crate) fn params(

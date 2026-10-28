@@ -10,13 +10,13 @@ use jag_surface::JagSurface;
 #[test]
 fn later_scroll_layer_does_not_cover_higher_z_content() {
     let instance = wgpu::Instance::default();
-    let Some(adapter) =
+    let Ok(adapter) =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
     else {
         return;
     };
     let Ok((device, queue)) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
     else {
         return;
     };

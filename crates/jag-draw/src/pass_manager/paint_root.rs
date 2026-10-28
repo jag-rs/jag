@@ -2,6 +2,8 @@
 //! former monolithic `pass_manager.rs`; no logic changed.
 
 use super::{Background, PassManager, PassTargets};
+use crate::gpu_commands::CommandEncoderExt as _;
+use crate::gpu_texture::{Texture2dSpec, create_default_texture_view, create_texture_2d};
 use crate::upload::GpuScene;
 
 impl PassManager {
@@ -15,44 +17,42 @@ impl PassManager {
         queue: &wgpu::Queue,
     ) {
         // Depth attachment for offscreen rendering (1x)
-        let depth_tex = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("solid-depth-offscreen"),
-            size: wgpu::Extent3d {
+        let depth_tex = create_texture_2d(
+            &self.device,
+            "solid-depth-offscreen",
+            Texture2dSpec {
                 width: targets.color.key.width,
                 height: targets.color.key.height,
-                depth_or_array_layers: 1,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        );
+        let depth_view = create_default_texture_view(&depth_tex);
 
         let _z_bg = self.create_z_bind_group(0.0, queue);
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("solid-offscreen-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &targets.color.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(clear_color),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("solid-offscreen-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &targets.color.view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(clear_color),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
                 }),
-                stencil_ops: None,
-            }),
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
         self.solid_offscreen.record(&mut pass, vp_bg, scene);
     }
 
@@ -66,23 +66,25 @@ impl PassManager {
         let bg = self
             .compositor
             .bind_group(&self.device, &offscreen.color.view);
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("composite-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: surface_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: match clear {
-                        Some(c) => wgpu::LoadOp::Clear(c),
-                        None => wgpu::LoadOp::Load,
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("composite-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: surface_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: match clear {
+                            Some(c) => wgpu::LoadOp::Clear(c),
+                            None => wgpu::LoadOp::Load,
+                        },
+                        store: wgpu::StoreOp::Store,
                     },
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
         self.compositor.record(&mut pass, &bg);
     }
 
@@ -110,25 +112,27 @@ impl PassManager {
     ) {
         // If solid, do a minimal clear pass
         if let Background::Solid(c) = bg {
-            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("bg-solid-pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: surface_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: c.r as f64,
-                            g: c.g as f64,
-                            b: c.b as f64,
-                            a: c.a as f64,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+            let _pass =
+                encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                    label: Some("bg-solid-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: surface_view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: c.r as f64,
+                                g: c.g as f64,
+                                b: c.b as f64,
+                                a: c.a as f64,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
             return;
         }
 
@@ -215,12 +219,23 @@ impl PassManager {
             },
         ];
 
-        queue.write_buffer(&self.bg_param_buffer, 0, bytemuck::bytes_of(&params));
-        queue.write_buffer(&self.bg_stops_buffer, 0, bytemuck::cast_slice(&stops));
-        let bg_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bg-bind"),
-            layout: self.bg.bgl(),
-            entries: &[
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_param_buffer,
+            0,
+            bytemuck::bytes_of(&params),
+        );
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_stops_buffer,
+            0,
+            bytemuck::cast_slice(&stops),
+        );
+        let bg_bind = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "bg-bind",
+            self.bg.bgl(),
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: self.bg_param_buffer.as_entire_binding(),
@@ -230,21 +245,23 @@ impl PassManager {
                     resource: self.bg_stops_buffer.as_entire_binding(),
                 },
             ],
-        });
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("bg-grad-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: surface_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+        );
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("bg-grad-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: surface_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
         self.bg.record(&mut pass, &bg_bind);
     }
 
@@ -282,12 +299,23 @@ impl PassManager {
             color: [color.r, color.g, color.b, color.a],
         }];
         // Write uniforms (only first stop used for solid mode)
-        queue.write_buffer(&self.bg_param_buffer, 0, bytemuck::bytes_of(&params));
-        queue.write_buffer(&self.bg_stops_buffer, 0, bytemuck::cast_slice(&stops));
-        let bg_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bg-bind-solid"),
-            layout: self.bg.bgl(),
-            entries: &[
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_param_buffer,
+            0,
+            bytemuck::bytes_of(&params),
+        );
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_stops_buffer,
+            0,
+            bytemuck::cast_slice(&stops),
+        );
+        let bg_bind = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "bg-bind-solid",
+            self.bg.bgl(),
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: self.bg_param_buffer.as_entire_binding(),
@@ -297,21 +325,23 @@ impl PassManager {
                     resource: self.bg_stops_buffer.as_entire_binding(),
                 },
             ],
-        });
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("bg-solid-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: surface_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+        );
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("bg-solid-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: surface_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
         self.bg.record(&mut pass, &bg_bind);
     }
 
@@ -365,12 +395,23 @@ impl PassManager {
                 color: [c1.r, c1.g, c1.b, c1.a],
             },
         ];
-        queue.write_buffer(&self.bg_param_buffer, 0, bytemuck::bytes_of(&params));
-        queue.write_buffer(&self.bg_stops_buffer, 0, bytemuck::cast_slice(&stops));
-        let bg_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("bg-bind"),
-            layout: self.bg.bgl(),
-            entries: &[
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_param_buffer,
+            0,
+            bytemuck::bytes_of(&params),
+        );
+        crate::gpu_transfer::upload_buffer(
+            queue,
+            &self.bg_stops_buffer,
+            0,
+            bytemuck::cast_slice(&stops),
+        );
+        let bg_bind = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "bg-bind",
+            self.bg.bgl(),
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: self.bg_param_buffer.as_entire_binding(),
@@ -380,21 +421,23 @@ impl PassManager {
                     resource: self.bg_stops_buffer.as_entire_binding(),
                 },
             ],
-        });
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("bg-grad-pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: surface_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+        );
+        let mut pass =
+            encoder.begin_semantic_render_pass(crate::gpu_commands::RenderPassDescriptor {
+                label: Some("bg-grad-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: surface_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
         self.bg.record(&mut pass, &bg_bind);
     }
 }

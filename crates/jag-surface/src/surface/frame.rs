@@ -1,49 +1,12 @@
-use std::sync::Arc;
-
-use anyhow::Result;
-
-use jag_draw::{ColorLinPremul, Command, HitIndex, Painter, Viewport, wgpu};
-
-use crate::canvas::Canvas;
-
 use super::{
     CachedFrameData, JagSurface, apply_transform_to_point, calculate_image_fit,
     set_last_raw_image_rect,
 };
-
+use crate::canvas::Canvas;
+use anyhow::Result;
+use jag_draw::{ColorLinPremul, Command, HitIndex, wgpu};
+use std::sync::Arc;
 impl JagSurface {
-    /// Pre-allocate intermediate texture at the given size.
-    /// This should be called after surface reconfiguration to avoid jitter.
-    pub fn prepare_for_resize(&mut self, width: u32, height: u32) {
-        self.pass
-            .ensure_intermediate_texture(&mut self.allocator, width, height);
-    }
-
-    /// Begin a canvas frame of the given size (in pixels).
-    pub fn begin_frame(&self, width: u32, height: u32) -> Canvas {
-        let vp = Viewport { width, height };
-        Canvas {
-            viewport: vp,
-            painter: Painter::begin_frame(vp),
-            clear_color: None,
-            text_provider: None,
-            glyph_draws: Vec::new(),
-            svg_draws: Vec::new(),
-            image_draws: Vec::new(),
-            backdrop_blur_draws: Vec::new(),
-            raw_image_draws: Vec::new(),
-            dpi_scale: self.dpi_scale,
-            clip_stack: vec![None],
-            rounded_clip_stack: vec![None],
-            overlay_draws: Vec::new(),
-            scrim_draws: Vec::new(),
-            opacity_stack: vec![1.0],
-            generated_mask_textures: Vec::new(),
-            url_mask_textures: Vec::new(),
-            next_generated_mask_texture_id: 0x6000_0000_0000_0000,
-        }
-    }
-
     /// Finish the frame by rendering accumulated commands to the provided surface texture.
     pub fn end_frame(&mut self, frame: wgpu::SurfaceTexture, canvas: Canvas) -> Result<()> {
         // Keep passes in sync with DPI/logical settings
@@ -52,11 +15,9 @@ impl JagSurface {
         self.pass.set_ui_scale(self.ui_scale);
         self.pending_image_loads = false;
         self.pass.poll_image_loads(&self.queue);
-
         let text_provider = canvas.text_provider.clone();
         self.register_generated_mask_textures(&canvas.generated_mask_textures);
         self.register_url_mask_textures(&canvas.url_mask_textures);
-
         // Build final display list from painter
         let mut list = canvas.painter.finish();
         self.reset_synthetic_external_texture_ids();
@@ -73,7 +34,6 @@ impl JagSurface {
             .commands
             .iter()
             .any(|cmd| matches!(cmd, Command::BoxShadow { .. }));
-
         // Determine the render target: prefer intermediate when SMAA, Vello-style
         // resizing, or framebuffer-sampling effects are in use.
         let use_intermediate =
@@ -97,9 +57,7 @@ impl JagSurface {
         list.sort_by_z();
 
         // Create target view
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let view = crate::gpu_texture::create_default_texture_view(&frame.texture);
         let scene_view = if use_intermediate {
             self.pass
                 .ensure_intermediate_texture(&mut self.allocator, width, height);
@@ -108,21 +66,18 @@ impl JagSurface {
                 .intermediate_texture
                 .as_ref()
                 .expect("intermediate render target not allocated");
-            scene_target
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default())
+            crate::gpu_texture::create_default_texture_view(&scene_target.texture)
         } else {
-            frame
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default())
+            crate::gpu_texture::create_default_texture_view(&frame.texture)
         };
 
         // Command encoder
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = crate::gpu_commands::create_command_encoder(
+            &self.device,
+            crate::gpu_commands::CommandEncoderDescriptor {
                 label: Some("jag-surface-encoder"),
-            });
+            },
+        );
 
         // Clear color or transparent
         let clear = canvas.clear_color.unwrap_or(ColorLinPremul {
@@ -260,21 +215,17 @@ impl JagSurface {
             if need_new_texture && has_new_pixels {
                 // Create texture with BGRA format to match CEF's native output
                 // This eliminates CPU-side BGRA->RGBA conversion
-                let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("cef-webview-texture"),
-                    size: wgpu::Extent3d {
+                let texture = crate::gpu_texture::create_texture_2d(
+                    &self.device,
+                    "cef-webview-texture",
+                    crate::gpu_texture::Texture2dSpec {
                         width: raw_draw.src_width,
                         height: raw_draw.src_height,
-                        depth_or_array_layers: 1,
+                        // BGRA format matches CEF native output - no conversion needed
+                        format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                     },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    // BGRA format matches CEF native output - no conversion needed
-                    format: wgpu::TextureFormat::Bgra8UnormSrgb,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                    view_formats: &[],
-                });
+                );
 
                 // Store in image cache for reuse
                 self.pass.store_loaded_image(
@@ -291,24 +242,12 @@ impl JagSurface {
                     // Always upload full frame - CEF provides complete buffer even for partial updates.
                     // The dirty_rects are informational but the buffer is always complete.
                     // This ensures no flickering from partial/stale data.
-                    self.queue.write_texture(
-                        wgpu::ImageCopyTexture {
-                            texture: &tex,
-                            mip_level: 0,
-                            origin: wgpu::Origin3d::ZERO,
-                            aspect: wgpu::TextureAspect::All,
-                        },
+                    crate::gpu_texture::upload_texture_2d(
+                        &self.queue,
+                        &tex,
+                        [raw_draw.src_width, raw_draw.src_height],
+                        raw_draw.src_width * 4,
                         &raw_draw.pixels,
-                        wgpu::ImageDataLayout {
-                            offset: 0,
-                            bytes_per_row: Some(raw_draw.src_width * 4),
-                            rows_per_image: Some(raw_draw.src_height),
-                        },
-                        wgpu::Extent3d {
-                            width: raw_draw.src_width,
-                            height: raw_draw.src_height,
-                            depth_or_array_layers: 1,
-                        },
                     );
                 }
             }
@@ -342,82 +281,15 @@ impl JagSurface {
             ));
         }
 
-        // Merge glyphs supplied explicitly via Canvas (draw_text_run/draw_text_direct)
-        // with text runs extracted from the display list (e.g., hyperlinks) for
-        // unified text rendering.
-        let mut glyph_draws = canvas.glyph_draws.clone();
-
-        if let Some(ref provider) = canvas.text_provider {
-            // Use the same snapping strategy as direct text paths so small
-            // text (e.g., 13–15px) lands cleanly on device pixels.
-            let sf = if self.dpi_scale.is_finite() && self.dpi_scale > 0.0 {
-                self.dpi_scale
-            } else {
-                1.0
-            };
-            let snap = |v: f32| -> f32 { (v * sf).round() / sf };
-
-            for text_draw in &unified_scene.text_draws {
-                let run = &text_draw.run;
-                let [a, b, c, d, e, f] = text_draw.transform.m;
-
-                // Transform the run origin (baseline-left) into world coordinates.
-                let origin_x = a * run.pos[0] + c * run.pos[1] + e;
-                let origin_y = b * run.pos[0] + d * run.pos[1] + f;
-
-                // Infer uniform scale from the linear part of the transform so
-                // text respects any explicit scaling in the display list.
-                let sx = (a * a + b * b).sqrt();
-                let sy = (c * c + d * d).sqrt();
-                let mut s = if sx.is_finite() && sy.is_finite() {
-                    if sx > 0.0 && sy > 0.0 {
-                        (sx + sy) * 0.5
-                    } else {
-                        sx.max(sy).max(1.0)
-                    }
-                } else {
-                    1.0
-                };
-                if !s.is_finite() || s <= 0.0 {
-                    s = 1.0;
-                }
-
-                // Rasterize at *physical* pixel size (scaled by DPI) to match
-                // the direct canvas text path. PassManager assumes glyph bitmaps
-                // are at physical resolution and divides quad sizes by DPI.
-                let logical_size = (run.size * s).max(1.0);
-                let physical_size = (logical_size * sf).max(1.0);
-                let run_for_provider = jag_draw::TextRun {
-                    text: run.text.clone(),
-                    pos: [0.0, 0.0],
-                    size: physical_size,
-                    logical_size,
-                    color: run.color,
-                    weight: run.weight,
-                    style: run.style,
-                    family: run.family.clone(),
-                };
-
-                // Rasterize glyphs for this run and push into glyph_draws.
-                // Provider offsets are in *physical* pixels (proportional to physical_size).
-                // Convert back into logical coordinates so PassManager's DPI scaling
-                // keeps geometry and text aligned.
-                let glyphs = jag_draw::rasterize_run_cached(provider.as_ref(), &run_for_provider);
-                for g in glyphs.iter() {
-                    let mut origin = [origin_x + g.offset[0] / sf, origin_y + g.offset[1] / sf];
-                    if logical_size <= 15.0 {
-                        origin[0] = snap(origin[0]);
-                        origin[1] = snap(origin[1]);
-                    }
-                    let (glyph, color) = text_draw.glyph_for_draw(g, origin, sf);
-                    glyph_draws.push((origin, glyph, color, text_draw.z, text_draw.clip));
-                }
-            }
-        }
+        let glyph_draws = self.prepare_frame_glyphs(
+            canvas.glyph_draws.clone(),
+            text_provider.as_ref(),
+            &unified_scene.text_draws,
+        );
 
         // Unified solids + text/images/SVGs pass
         let preserve_surface = self.preserve_surface;
-        let direct = if has_backdrop_blur {
+        let direct = if has_backdrop_blur || self.extended_color_composition {
             false
         } else {
             self.direct || !use_intermediate
@@ -551,14 +423,13 @@ impl JagSurface {
         }
 
         // Submit and present
-        let cb = encoder.finish();
-        self.queue.submit(std::iter::once(cb));
-        frame.present();
+        crate::gpu_commands::submit_command_encoder(&self.queue, encoder);
+        self.queue.present(frame);
         if let Some((gpu_scene, transparent_gpu_scene)) = reusable_gpu_scenes {
             // The next queue.write_buffer is ordered after this submission.
             // Pooling these handles does not require waiting for GPU completion;
             // wgpu retains in-flight resources and retires them asynchronously.
-            let _ = self.device.poll(wgpu::Maintain::Poll);
+            let _ = self.device.poll(wgpu::PollType::Poll);
             self.allocator.release_buffer(gpu_scene.vertex);
             self.allocator.release_buffer(gpu_scene.index);
             self.allocator.release_buffer(transparent_gpu_scene.vertex);
@@ -567,3 +438,6 @@ impl JagSurface {
         Ok(())
     }
 }
+
+#[path = "frame_glyphs.rs"]
+mod frame_glyphs;

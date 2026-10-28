@@ -56,6 +56,13 @@ fn layer_geometry(bounds: Rect, viewport: Viewport, scale: f32) -> Option<LayerG
 fn localize_clips(commands: &mut [Command], origin: [f32; 2], scale: f32) {
     let mut transforms = vec![Transform2D::identity()];
     for command in commands {
+        if let Command::DrawExternalTexture {
+            clip: Some(clip), ..
+        } = command
+        {
+            clip.x -= origin[0] * scale;
+            clip.y -= origin[1] * scale;
+        }
         match command {
             Command::PushTransform(transform) => transforms.push(*transform),
             Command::PopTransform => {
@@ -71,6 +78,10 @@ fn localize_clips(commands: &mut [Command], origin: [f32; 2], scale: f32) {
                 clip.0.h *= scale;
             }
             Command::DrawCompositeTile {
+                rounded_clip: Some(clip),
+                ..
+            }
+            | Command::DrawExternalTexture {
                 rounded_clip: Some(clip),
                 ..
             } => {
@@ -139,7 +150,7 @@ impl JagSurface {
         commands.iter().filter_map(Command::z_index).min()
     }
 
-    pub(super) fn render_effect_group_layer(
+    pub(super) fn render_effect_group_layer_inner(
         &mut self,
         geometry: LayerGeometry,
         mut commands: Vec<Command>,
@@ -277,27 +288,25 @@ impl JagSurface {
 
         let width = geometry.pixel_size[0];
         let height = geometry.pixel_size[1];
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("effect-group-layer"),
-            size: wgpu::Extent3d {
+        let texture = crate::gpu_texture::create_texture_2d(
+            &self.device,
+            "effect-group-layer",
+            crate::gpu_texture::Texture2dSpec {
                 width,
                 height,
-                depth_or_array_layers: 1,
+                format: self.surface_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.surface_format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let layer_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        );
+        let layer_view = crate::gpu_texture::create_default_texture_view(&texture);
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = crate::gpu_commands::create_command_encoder(
+            &self.device,
+            crate::gpu_commands::CommandEncoderDescriptor {
                 label: Some("effect-group-encoder"),
-            });
+            },
+        );
         // Shift world coordinates into this bounded layer's local pixel-aligned origin.
         let saved_scroll = self.pass.scroll_offset();
         self.pass
@@ -363,7 +372,7 @@ impl JagSurface {
                 text_clip_view.as_ref(),
             )?,
         };
-        self.queue.submit(std::iter::once(encoder.finish()));
+        crate::gpu_commands::submit_command_encoder(&self.queue, encoder);
 
         let layer_view = Arc::new(layer_view);
         if let Some(key) = retained_key {
@@ -460,6 +469,8 @@ impl JagSurface {
                                 transform: Transform2D::identity(),
                                 opacity: layer_opacity,
                                 premultiplied: true,
+                                rounded_clip: None,
+                                clip: None,
                             });
                         }
                     }

@@ -3184,9 +3184,9 @@ mod tests {
         let result = layout.cut_to_clipboard(&selection, &font, 16.0, None, WrapMode::NoWrap);
 
         // If clipboard is available, text should be deleted
-        if result.is_ok() {
+        if let Ok(position) = result {
             assert_eq!(layout.text(), "Hello ");
-            assert_eq!(result.unwrap(), 6);
+            assert_eq!(position, 6);
         }
     }
 
@@ -3773,7 +3773,7 @@ mod tests {
 
         // Selection should no longer be collapsed
         assert!(!extended.is_collapsed());
-        assert!(extended.len() > 0);
+        assert!(!extended.is_empty());
     }
 
     #[test]
@@ -3918,7 +3918,7 @@ mod tests {
 
         // Should span multiple lines
         assert!(!extended.is_collapsed());
-        assert!(extended.len() > 0);
+        assert!(!extended.is_empty());
 
         // Should include text from multiple lines
         let selected_text = extended.text(layout.text());

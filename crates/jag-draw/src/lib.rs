@@ -36,6 +36,16 @@ use anyhow::Result;
 /// Re-export wgpu for downstream crates while avoiding direct dependency leakage.
 pub use wgpu;
 
+mod gpu_init;
+pub use gpu_init::*;
+
+mod gpu_bindings;
+mod gpu_commands;
+mod gpu_pipeline;
+#[doc(hidden)]
+pub mod gpu_texture;
+mod gpu_transfer;
+
 mod allocator;
 mod asset_stamp;
 pub use asset_stamp::AssetStamp;
@@ -86,97 +96,6 @@ impl GraphicsEngine {
         // No-op for now.
         let _ = (&self.device, &self.queue);
         Ok(())
-    }
-}
-
-/// Choose an sRGB surface format when available; otherwise, pick the first format.
-pub fn select_srgb_surface_format(formats: &[wgpu::TextureFormat]) -> Option<wgpu::TextureFormat> {
-    formats
-        .iter()
-        .copied()
-        .find(wgpu::TextureFormat::is_srgb)
-        .or_else(|| formats.first().copied())
-}
-
-/// Query a surface and choose the format with [`select_srgb_surface_format`].
-pub fn choose_srgb_surface_format(
-    adapter: &wgpu::Adapter,
-    surface: &wgpu::Surface,
-) -> wgpu::TextureFormat {
-    let caps = surface.get_capabilities(adapter);
-    select_srgb_surface_format(&caps.formats)
-        .expect("wgpu surface capabilities must expose at least one format")
-}
-
-/// Choose a format that does not encode sRGB on write, so jag blends
-/// sRGB-encoded color the way browsers composite CSS (see
-/// `jag_shaders::with_blend_space`). Falls back to the first format.
-pub fn select_gamma_blend_surface_format(
-    formats: &[wgpu::TextureFormat],
-) -> Option<wgpu::TextureFormat> {
-    formats
-        .iter()
-        .copied()
-        .find(|format| !format.is_srgb())
-        .or_else(|| formats.first().copied())
-}
-
-/// Create a surface configuration for the given size, favoring FIFO present mode when present.
-pub fn make_surface_config(
-    adapter: &wgpu::Adapter,
-    surface: &wgpu::Surface,
-    width: u32,
-    height: u32,
-) -> wgpu::SurfaceConfiguration {
-    let format = choose_srgb_surface_format(adapter, surface);
-    surface_config_with_format(adapter, surface, format, width, height)
-}
-
-/// [`make_surface_config`] with a [`select_gamma_blend_surface_format`] format.
-pub fn make_gamma_blend_surface_config(
-    adapter: &wgpu::Adapter,
-    surface: &wgpu::Surface,
-    width: u32,
-    height: u32,
-) -> wgpu::SurfaceConfiguration {
-    let caps = surface.get_capabilities(adapter);
-    let format = select_gamma_blend_surface_format(&caps.formats)
-        .expect("wgpu surface capabilities must expose at least one format");
-    surface_config_with_format(adapter, surface, format, width, height)
-}
-
-fn surface_config_with_format(
-    adapter: &wgpu::Adapter,
-    surface: &wgpu::Surface,
-    format: wgpu::TextureFormat,
-    width: u32,
-    height: u32,
-) -> wgpu::SurfaceConfiguration {
-    let caps = surface.get_capabilities(adapter);
-    let present_mode = caps
-        .present_modes
-        .iter()
-        .copied()
-        .find(|m| *m == wgpu::PresentMode::Fifo)
-        .unwrap_or(caps.present_modes[0]);
-    let alpha_mode = caps
-        .alpha_modes
-        .iter()
-        .copied()
-        .find(|m| *m == wgpu::CompositeAlphaMode::Opaque)
-        .unwrap_or(caps.alpha_modes[0]);
-    wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format,
-        width,
-        height,
-        present_mode,
-        alpha_mode,
-        view_formats: vec![],
-        // Metal maps latency + 1 to its drawable pool. Two drawables serialize
-        // acquisition with the previous frame at Retina sizes; three let CPU
-        // encoding overlap presentation. The Mac host still paces submissions.
-        desired_maximum_frame_latency: if cfg!(target_os = "macos") { 2 } else { 1 },
     }
 }
 

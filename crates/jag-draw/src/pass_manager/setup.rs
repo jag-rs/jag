@@ -2,6 +2,7 @@
 //! former monolithic `pass_manager.rs`; no logic changed.
 
 use super::PassManager;
+use crate::gpu_transfer::{allocate_buffer_resource, initialize_buffer_resource, upload_buffer};
 use crate::pipeline::{
     BackdropBlurRenderer, BackgroundRenderer, BasicSolidRenderer, Blitter, BlurRenderer,
     ColorFilterRenderer, Compositor, DropShadowFilterRenderer, MaskFilterRenderer,
@@ -60,18 +61,53 @@ impl PassManager {
     pub fn new(device: Arc<wgpu::Device>, target_format: wgpu::TextureFormat) -> Self {
         // Try Rgba16Float for better gradient quality, fallback to Rgba8Unorm if not supported
         let offscreen_format = Self::choose_offscreen_format(&device, target_format);
+        Self::new_with_offscreen_format(device, target_format, offscreen_format)
+    }
+
+    /// Explicit precision for hosts compositing extended linear color values.
+    /// The caller supplies a supported renderable/filterable intermediate format.
+    pub fn new_with_offscreen_format(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        offscreen_format: wgpu::TextureFormat,
+    ) -> Self {
+        Self::new_with_color_space(device, target_format, offscreen_format, false)
+    }
+
+    /// Float web targets retain alpha precision while blending in encoded sRGB.
+    pub fn new_with_color_space(
+        device: Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        offscreen_format: wgpu::TextureFormat,
+        web_srgb: bool,
+    ) -> Self {
         // MSAA>1 interacts poorly with our current depth setup (depth textures
         // are 1×). Keep sample count at 1 and rely on SMAA / pixel snapping
         // for edge smoothing to avoid crashes and validation errors.
         let msaa_count = 1;
         // A target that does not encode sRGB on write blends sRGB-encoded
         // color, as browsers do; the offscreen format follows the target.
-        let gamma_blend = !target_format.is_srgb();
+        let float_target = matches!(
+            target_format,
+            wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float
+        );
+        let direct_gamma = (web_srgb && float_target)
+            || (!target_format.is_srgb()
+                && !matches!(
+                    target_format,
+                    wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float
+                ));
+        let gamma_blend = web_srgb
+            || direct_gamma
+                && !matches!(
+                    offscreen_format,
+                    wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float
+                );
         crate::text::set_gamma_blend_coverage(gamma_blend);
         let solid_offscreen =
             BasicSolidRenderer::new(device.clone(), offscreen_format, msaa_count, gamma_blend);
         let solid_direct =
-            BasicSolidRenderer::new(device.clone(), target_format, msaa_count, gamma_blend);
+            BasicSolidRenderer::new(device.clone(), target_format, msaa_count, direct_gamma);
         let transparent_solid_offscreen = BasicSolidRenderer::new_with_depth_state(
             device.clone(),
             offscreen_format,
@@ -86,98 +122,101 @@ impl PassManager {
             msaa_count,
             false,
             wgpu::CompareFunction::LessEqual,
-            gamma_blend,
+            direct_gamma,
         );
         let solid_direct_no_msaa =
-            BasicSolidRenderer::new(device.clone(), target_format, 1, gamma_blend);
-        let overlay_solid = OverlaySolidRenderer::new(device.clone(), target_format, gamma_blend);
-        let scrim_solid = ScrimSolidRenderer::new(device.clone(), target_format, gamma_blend);
-        let compositor = Compositor::new(device.clone(), target_format);
+            BasicSolidRenderer::new(device.clone(), target_format, 1, direct_gamma);
+        let overlay_solid = OverlaySolidRenderer::new(device.clone(), target_format, direct_gamma);
+        let scrim_solid = ScrimSolidRenderer::new(device.clone(), target_format, direct_gamma);
+        let compositor = Compositor::with_output_conversion(
+            device.clone(),
+            target_format,
+            direct_gamma && !gamma_blend,
+            !direct_gamma && gamma_blend,
+        );
         let blitter = Blitter::new(device.clone(), target_format);
         let smaa = SmaaRenderer::new(device.clone(), target_format);
-        let scrim_mask = ScrimStencilMaskRenderer::new(device.clone(), target_format, gamma_blend);
-        let scrim_stencil = ScrimStencilRenderer::new(device.clone(), target_format, gamma_blend);
+        let scrim_mask = ScrimStencilMaskRenderer::new(device.clone(), target_format, direct_gamma);
+        let scrim_stencil = ScrimStencilRenderer::new(device.clone(), target_format, direct_gamma);
         // Shadow/blur pipelines
         let mask_renderer =
             // Coverage mask, not color: no blend-space encoding.
             BasicSolidRenderer::new(device.clone(), wgpu::TextureFormat::R8Unorm, 1, false);
         let blur_r8 = BlurRenderer::new(device.clone(), wgpu::TextureFormat::R8Unorm);
         let blur_rgba = BlurRenderer::new(device.clone(), target_format);
-        let color_filter = ColorFilterRenderer::new(device.clone(), target_format, gamma_blend);
+        let color_filter = ColorFilterRenderer::new(device.clone(), target_format, direct_gamma);
         let drop_shadow_filter =
-            DropShadowFilterRenderer::new(device.clone(), target_format, gamma_blend);
+            DropShadowFilterRenderer::new(device.clone(), target_format, direct_gamma);
         let mask_filter = MaskFilterRenderer::new(device.clone(), target_format);
         let backdrop_blur = BackdropBlurRenderer::new(device.clone(), offscreen_format);
-        let shadow_comp = ShadowCompositeRenderer::new(device.clone(), target_format, gamma_blend);
+        let shadow_comp = ShadowCompositeRenderer::new(device.clone(), target_format, direct_gamma);
         let shadow_offscreen =
             ShadowInstanceRenderer::new(device.clone(), offscreen_format, msaa_count, gamma_blend);
         let shadow_direct =
-            ShadowInstanceRenderer::new(device.clone(), target_format, msaa_count, gamma_blend);
+            ShadowInstanceRenderer::new(device.clone(), target_format, msaa_count, direct_gamma);
         let shadow_composite =
             ShadowCompositeInstanceRenderer::new(device.clone(), offscreen_format, msaa_count);
-        let text = TextRenderer::new(device.clone(), target_format, gamma_blend);
+        let text = TextRenderer::new(device.clone(), target_format, direct_gamma);
         let text_offscreen = TextRenderer::new(device.clone(), offscreen_format, gamma_blend);
-        let image = crate::pipeline::ImageRenderer::new(device.clone(), target_format, gamma_blend);
+        let image =
+            crate::pipeline::ImageRenderer::new(device.clone(), target_format, direct_gamma);
         let image_offscreen =
             crate::pipeline::ImageRenderer::new(device.clone(), offscreen_format, gamma_blend);
         let svg_cache = crate::svg::SvgRasterCache::new(device.clone());
         let image_cache = crate::image_cache::ImageCache::new(device.clone());
-        let bg = BackgroundRenderer::new(device.clone(), target_format, gamma_blend);
-        let vp_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("viewport-uniform"),
-            size: 32, // [scale.x, scale.y, translate.x, translate.y, scroll.x, scroll.y, pad, pad]
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let bg = BackgroundRenderer::new(device.clone(), target_format, direct_gamma);
+        let vp_buffer = allocate_buffer_resource(
+            &device,
+            "viewport-uniform",
+            32, // [scale.x, scale.y, translate.x, translate.y, scroll.x, scroll.y, pad, pad]
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         // Z-index uniform buffer for dynamic depth control (Phase 2)
-        let z_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("z-index-uniform"),
-            size: 4, // Single f32 value
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let bg_param_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("background-params"),
-            size: 64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let bg_stops_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("background-stops"),
-            size: 256, // 8 stops x 32 bytes
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let smaa_param_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("smaa-params"),
-            size: 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let z_index_buffer = allocate_buffer_resource(
+            &device,
+            "z-index-uniform",
+            4, // Single f32 value
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let bg_param_buffer = allocate_buffer_resource(
+            &device,
+            "background-params",
+            64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let bg_stops_buffer = allocate_buffer_resource(
+            &device,
+            "background-stops",
+            256, // 8 stops x 32 bytes
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let smaa_param_buffer = allocate_buffer_resource(
+            &device,
+            "smaa-params",
+            16,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
         // Text pipeline GPU resources
-        let text_mask_atlas = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("text-mask-atlas"),
-            size: wgpu::Extent3d {
+        let text_mask_atlas = crate::gpu_texture::create_texture_2d(
+            &device,
+            "text-mask-atlas",
+            crate::gpu_texture::Texture2dSpec {
                 width: 4096,
                 height: 4096,
-                depth_or_array_layers: 1,
+                // Use RGBA8 so we can store RGB subpixel coverage masks directly.
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            // Use RGBA8 so we can store RGB subpixel coverage masks directly.
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
+        );
         let text_mask_atlas_view =
-            text_mask_atlas.create_view(&wgpu::TextureViewDescriptor::default());
-        let text_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("text-mask-bgl"),
-            layout: &text.tex_bgl,
-            entries: &[
+            crate::gpu_texture::create_default_texture_view(&text_mask_atlas);
+        let text_bind_group = crate::gpu_bindings::create_bind_group(
+            &device,
+            "text-mask-bgl",
+            &text.tex_bgl,
+            &[
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(&text_mask_atlas_view),
@@ -187,7 +226,7 @@ impl PassManager {
                     resource: wgpu::BindingResource::Sampler(&text.sampler),
                 },
             ],
-        });
+        );
         // Defaults: always interpret author coords as logical pixels and scale by DPI.
         let logical_default = true;
         let ui_scale = 1.0;
@@ -249,6 +288,8 @@ impl PassManager {
             scrim_stencil_tex: None,
             external_textures: std::collections::HashMap::new(),
             linear_external_textures: std::collections::HashSet::new(),
+            external_texture_owners: Default::default(),
+            external_texture_lifetimes: Default::default(),
             composite_direct: Default::default(),
             composite_offscreen: Default::default(),
         }
@@ -259,49 +300,10 @@ impl PassManager {
         self.device.clone()
     }
 
-    /// Register an externally-rendered texture for compositing in the current frame.
-    pub fn register_external_texture(
-        &mut self,
-        id: crate::display_list::ExternalTextureId,
-        view: wgpu::TextureView,
-    ) {
-        self.register_shared_external_texture(id, Arc::new(view));
-    }
-
-    /// Register a retained surface without transferring its cache ownership.
-    pub fn register_shared_external_texture(
-        &mut self,
-        id: crate::display_list::ExternalTextureId,
-        view: Arc<wgpu::TextureView>,
-    ) {
-        self.linear_external_textures.remove(&id);
-        self.external_textures.insert(id, view);
-    }
-
-    /// Register a texture whose sampling yields linear values (an `*Srgb`
-    /// format), such as a 3D viewport; the image shader encodes it for the
-    /// target's blend space. [`Self::register_external_texture`] textures
-    /// already hold blend-space values.
-    pub fn register_linear_external_texture(
-        &mut self,
-        id: crate::display_list::ExternalTextureId,
-        view: wgpu::TextureView,
-    ) {
-        self.external_textures.insert(id, Arc::new(view));
-        self.linear_external_textures.insert(id);
-    }
-
-    /// Clear all registered external textures (call after frame).
-    pub fn clear_external_textures(&mut self) {
-        self.external_textures.clear();
-        self.linear_external_textures.clear();
-        self.composite_direct.release_expired_textures();
-        self.composite_offscreen.release_expired_textures();
-    }
-
     /// Start a frame only after all commands from the previous frame have
     /// been submitted. Distinct draws in this frame must keep distinct buffers.
     pub fn begin_composite_frame(&mut self) {
+        self.prune_expired_external_textures();
         self.composite_direct.release_expired_textures();
         self.composite_offscreen.release_expired_textures();
         self.composite_direct.begin_frame();
@@ -313,20 +315,25 @@ impl PassManager {
     pub fn clear_compositor_textures(&mut self) {
         self.external_textures
             .retain(|id, _| id.0 < 0x7000_0000_0000_0000);
+        self.external_texture_owners
+            .retain(|id, _| self.external_textures.contains_key(id));
+        self.external_texture_lifetimes
+            .retain(|id, _| self.external_textures.contains_key(id));
     }
 
     /// Create a z-index bind group for the given z-index value.
     /// This is used for dynamic depth control in Phase 2.
     pub fn create_z_bind_group(&self, z_index: f32, queue: &wgpu::Queue) -> wgpu::BindGroup {
-        queue.write_buffer(&self.z_index_buffer, 0, bytemuck::bytes_of(&z_index));
-        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("z-index-bg"),
-            layout: self.solid_direct.z_index_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        upload_buffer(queue, &self.z_index_buffer, 0, bytemuck::bytes_of(&z_index));
+        crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "z-index-bg",
+            self.solid_direct.z_index_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: self.z_index_buffer.as_entire_binding(),
             }],
-        })
+        )
     }
 
     /// Create a z-index bind group backed by a dedicated uniform buffer for this draw group.
@@ -335,23 +342,22 @@ impl PassManager {
     pub(crate) fn create_group_z_bind_group(
         &self,
         z_index: f32,
-        queue: &wgpu::Queue,
     ) -> (wgpu::BindGroup, wgpu::Buffer) {
-        let z_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("z-index-group-buffer"),
-            size: std::mem::size_of::<f32>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&z_buf, 0, bytemuck::bytes_of(&z_index));
-        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("z-index-bg-group"),
-            layout: self.solid_direct.z_index_bgl(),
-            entries: &[wgpu::BindGroupEntry {
+        let z_buf = initialize_buffer_resource(
+            &self.device,
+            "z-index-group-buffer",
+            bytemuck::bytes_of(&z_index),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let bg = crate::gpu_bindings::create_bind_group(
+            &self.device,
+            "z-index-bg-group",
+            self.solid_direct.z_index_bgl(),
+            &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: z_buf.as_entire_binding(),
             }],
-        });
+        );
         (bg, z_buf)
     }
 
@@ -369,7 +375,7 @@ impl PassManager {
         let (tex, w, h) = self
             .svg_cache
             .get_or_rasterize(path, scale, svg_style, queue)?;
-        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = crate::gpu_texture::create_default_texture_view(&tex);
         Some((view, w, h))
     }
 
@@ -381,7 +387,7 @@ impl PassManager {
         queue: &wgpu::Queue,
     ) -> Option<(wgpu::TextureView, u32, u32)> {
         let (tex, w, h) = self.image_cache.get_or_load(path, queue)?;
-        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = crate::gpu_texture::create_default_texture_view(&tex);
         Some((view, w, h))
     }
 
@@ -391,7 +397,7 @@ impl PassManager {
         path: &std::path::Path,
     ) -> Option<(wgpu::TextureView, u32, u32)> {
         let (tex, w, h) = self.image_cache.get(path)?;
-        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = crate::gpu_texture::create_default_texture_view(&tex);
         Some((view, w, h))
     }
 
