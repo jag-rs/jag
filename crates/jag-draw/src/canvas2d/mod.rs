@@ -3,6 +3,9 @@
 use crate::gpu_commands::CommandEncoderExt as _;
 use crate::{gpu_bindings as bindings, gpu_pipeline as pipeline, gpu_texture as texture};
 use std::sync::Arc;
+pub mod geometry;
+pub mod raster;
+mod upload;
 
 /// An immutable rectangle operation after browser state/transform resolution.
 #[derive(Clone, Debug)]
@@ -194,7 +197,8 @@ impl Renderer {
                     format,
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                         | wgpu::TextureUsages::TEXTURE_BINDING
-                        | wgpu::TextureUsages::COPY_SRC,
+                        | wgpu::TextureUsages::COPY_SRC
+                        | wgpu::TextureUsages::COPY_DST,
                 },
             )
         };
@@ -323,3 +327,6 @@ impl Renderer {
         true
     }
 }
+
+#[cfg(test)]
+mod tests;

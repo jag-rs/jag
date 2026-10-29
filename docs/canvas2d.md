@@ -37,3 +37,23 @@ Detir. Paths, arbitrary path clipping, extended stroke state, text/images,
 effects, pixel APIs, wider color formats and complete platform qualification
 remain later milestones. This backend does not by itself establish Chart.js,
 D3, full Canvas 2D, OffscreenCanvas or PDF export support.
+
+
+## P51-T2 native paths and paint frontend
+
+`canvas2d::geometry` builds SVG/current paths, stroke outlines and geometric hit
+tests. `canvas2d::raster` resolves cumulative arbitrary masks and sRGB paints
+through the existing tiny-skia raster dependency. `Renderer::upload` publishes
+premultiplied sRGB pixels into the same persistent GPU target and normalizes
+for native composition. The rectangle GPU path remains available independently.
+
+Paints support linear, two-circle radial and conic gradients with ordered color
+stops, plus immutable image snapshots and transformed repetition. Browser
+conversions/state and source snapshots remain Detir's responsibility. Raster
+commands validate their native descriptors before using geometry or paint data.
+This CPU raster frontend does not certify GPU path performance, exact Chrome
+antialiasing, wider color formats or full browser conformance. The local Detir
+reference profile explicitly retains up to 96/255 differences only near
+reference geometry edges; interiors retain 2/255. Physical/platform and upstream
+qualification remains open. See Detir's `docs/canvas2d-paths.md` for the precise
+profile, limits and evidence policy.
