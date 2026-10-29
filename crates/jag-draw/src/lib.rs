@@ -148,3 +148,6 @@ pub use upload::*;
 mod pdf_backend;
 #[cfg(feature = "pdf_export")]
 pub use pdf_backend::render_display_list_to_pdf;
+
+/// Ordered persistent rendering for browser Canvas 2D.
+pub mod canvas2d;
