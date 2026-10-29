@@ -5,6 +5,7 @@ use crate::{gpu_bindings as bindings, gpu_pipeline as pipeline, gpu_texture as t
 use std::sync::Arc;
 pub mod geometry;
 pub mod raster;
+pub mod text;
 mod upload;
 
 /// An immutable rectangle operation after browser state/transform resolution.
@@ -330,3 +331,6 @@ impl Renderer {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod content_tests;

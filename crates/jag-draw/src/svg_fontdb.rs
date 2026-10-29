@@ -134,3 +134,8 @@ pub(crate) fn render_svg_to_pixmap(
     resvg::render(&tree, ts, &mut pixmap.as_mut());
     Some(pixmap)
 }
+
+/// Shared host fallback bytes for other JAG native text consumers.
+pub(crate) fn registered_fallback_fonts() -> Vec<Arc<Vec<u8>>> {
+    REGISTERED_SVG_FONTS.lock().unwrap().clone()
+}

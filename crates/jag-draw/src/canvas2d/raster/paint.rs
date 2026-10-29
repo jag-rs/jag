@@ -30,6 +30,14 @@ pub enum Paint {
         matrix: [f64; 6],
         stops: Vec<(f64, [f64; 4])>,
     },
+    #[serde(rename = "image")]
+    Image {
+        image: u64,
+        matrix: [f64; 6],
+        source: [f64; 4],
+        dest: [f64; 4],
+        smooth: bool,
+    },
     #[serde(rename = "pattern")]
     Pattern {
         image: u64,
@@ -41,6 +49,23 @@ impl Paint {
     pub fn sample(&self, x: f64, y: f64, images: &HashMap<u64, PatternImage>) -> [f64; 4] {
         let (args, matrix, stops) = match self {
             Self::Solid { color } => return *color,
+            Self::Image {
+                image,
+                matrix,
+                source,
+                dest,
+                smooth,
+            } => {
+                let Some(p) = images.get(image) else {
+                    return [0.; 4];
+                };
+                let Some((x, y)) = inverse(*matrix, x, y) else {
+                    return [0.; 4];
+                };
+                let x = source[0] + (x - dest[0]) * source[2] / dest[2];
+                let y = source[1] + (y - dest[1]) * source[3] / dest[3];
+                return super::image::sample(p, x, y, *smooth);
+            }
             Self::Linear {
                 args,
                 matrix,
@@ -195,6 +220,22 @@ impl Paint {
         let color = |c: &[f64; 4]| c.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v));
         match self {
             Self::Solid { color: c } => color(c),
+            Self::Image {
+                matrix,
+                source,
+                dest,
+                ..
+            } => {
+                matrix
+                    .iter()
+                    .chain(source)
+                    .chain(dest)
+                    .all(|n| n.is_finite())
+                    && source[2] > 0.
+                    && source[3] > 0.
+                    && dest[2] > 0.
+                    && dest[3] > 0.
+            }
             Self::Pattern { matrix, repeat, .. } => {
                 matrix.iter().all(|n| n.is_finite())
                     && ["repeat", "repeat-x", "repeat-y", "no-repeat"].contains(&repeat.as_str())

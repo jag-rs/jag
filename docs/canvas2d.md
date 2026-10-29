@@ -33,9 +33,9 @@ its original strict comparison failure. Full browser pixel equivalence is not
 claimed.
 
 Browser wrappers, styles/state, sizing, scheduling and lifecycle policy live in
-Detir. Paths, arbitrary path clipping, extended stroke state, text/images,
+Detir. Paths and text/images are described in the later milestones below;
 effects, pixel APIs, wider color formats and complete platform qualification
-remain later milestones. This backend does not by itself establish Chart.js,
+remain open. This backend does not by itself establish Chart.js,
 D3, full Canvas 2D, OffscreenCanvas or PDF export support.
 
 
@@ -57,3 +57,19 @@ reference profile explicitly retains up to 96/255 differences only near
 reference geometry edges; interiors retain 2/255. Physical/platform and upstream
 qualification remains open. See Detir's `docs/canvas2d-paths.md` for the precise
 profile, limits and evidence policy.
+
+
+## P51-T3 text and image sources
+
+`canvas2d::text::Fonts` resolves real system/host/loaded font data and prepares
+HarfBuzz-shaped glyph paths plus ink/advance/baseline metrics. Bidi and grapheme
+fallback reuse Jag text infrastructure. Native image drawing supports clipped
+source rectangles, normalized negative geometry, immutable snapshots, nearest
+and premultiplied bilinear sampling. SVG image data reuses usvg/resvg and can be
+rasterized at destination density without external file/URL references.
+
+Browser state, source readiness and host asset/media scheduling stay in Detir.
+The local outline-font profile does not certify all CSS Fonts, variable/color
+fonts, exact Chrome text AA, full upstream conformance or platform performance.
+Text edge tolerances and original failures are explicit in Detir's
+`docs/canvas2d-content.md`; glyph metrics derive from real font geometry.

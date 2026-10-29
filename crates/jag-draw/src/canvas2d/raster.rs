@@ -4,6 +4,7 @@ use super::geometry::{self, Commands, StrokeStyle};
 use serde::Deserialize;
 use std::sync::Arc;
 use tiny_skia::{FillRule, Mask, Transform};
+pub mod image;
 mod paint;
 pub use paint::{Paint, PatternImage};
 #[derive(Clone, Debug, Deserialize)]

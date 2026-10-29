@@ -33,6 +33,7 @@ svgtypes = "0.15"
 serde = { version = "1", features = ["derive"] }
 jag-text = { path = "../jag-text", version = "0.1.1" }
 fontdb = { workspace = true }
+harfrust = { workspace = true }
 pdf-writer = { workspace = true, optional = true }
 
 [features]
