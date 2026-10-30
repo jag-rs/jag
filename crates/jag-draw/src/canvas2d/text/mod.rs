@@ -14,6 +14,12 @@ pub struct TextStyle {
     pub align: String,
     pub baseline: String,
     pub kerning: String,
+    #[serde(default)]
+    pub stretch: String,
+    #[serde(default)]
+    pub caps: String,
+    #[serde(default)]
+    pub rendering: String,
     pub letter: f64,
     pub word: f64,
     pub lang: String,

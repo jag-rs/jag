@@ -11,6 +11,7 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> Commands {
 }
 fn draw(path: Commands) -> Draw {
     Draw {
+        effects: Default::default(),
         path,
         rule: "nonzero".into(),
         stroke: None,

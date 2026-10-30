@@ -53,6 +53,7 @@ fn bounded_pixel_visits_match_full_canvas_for_edges_curves_strokes_and_clips() {
                 rule: "evenodd".into(),
             };
             let op = Draw {
+                effects: Default::default(),
                 path,
                 rule: "nonzero".into(),
                 stroke: stroke.then(|| StrokeStyle {
@@ -96,6 +97,7 @@ fn bounded_pixel_visits_match_full_canvas_for_edges_curves_strokes_and_clips() {
 #[test]
 fn cropped_clear_preserves_outside_and_opaque_alpha() {
     let op = Draw {
+        effects: Default::default(),
         path: vec![
             vec![0., 3., 4.],
             vec![1., 7., 4.],
@@ -135,6 +137,7 @@ fn cropped_clear_preserves_outside_and_opaque_alpha() {
 fn reused_coverage_does_not_repaint_previous_path_or_survive_reset() {
     let mut raster = Raster::new(32, 24, true).unwrap();
     let mut op = Draw {
+        effects: Default::default(),
         path: vec![
             vec![0., 2., 2.],
             vec![1., 6., 2.],

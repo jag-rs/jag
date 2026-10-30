@@ -10,6 +10,30 @@ pub fn draw(
     alpha: f64,
     smooth: bool,
 ) {
+    let _ = draw_effects(
+        raster,
+        image,
+        source,
+        dest,
+        transform,
+        clips,
+        alpha,
+        smooth,
+        Effects::default(),
+    );
+}
+
+pub fn draw_effects(
+    raster: &mut Raster,
+    image: PatternImage,
+    source: [f64; 4],
+    dest: [f64; 4],
+    transform: [f64; 6],
+    clips: Vec<Clip>,
+    alpha: f64,
+    smooth: bool,
+    effects: Effects,
+) -> Result<(), &'static str> {
     let positive = |mut r: [f64; 4]| {
         if r[2] < 0. {
             r[0] += r[2];
@@ -24,14 +48,14 @@ pub fn draw(
     let source = positive(source);
     let dest = positive(dest);
     if source[2] == 0. || source[3] == 0. || dest[2] == 0. || dest[3] == 0. {
-        return;
+        return Ok(());
     }
     let x0 = source[0].max(0.);
     let y0 = source[1].max(0.);
     let x1 = (source[0] + source[2]).min(image.width as f64);
     let y1 = (source[1] + source[3]).min(image.height as f64);
     if x1 <= x0 || y1 <= y0 {
-        return;
+        return Ok(());
     }
     let x = dest[0] + (x0 - source[0]) * dest[2] / source[2];
     let y = dest[1] + (y0 - source[1]) * dest[3] / source[3];
@@ -51,6 +75,7 @@ pub fn draw(
         .collect();
     path.push(vec![4.]);
     let op = Draw {
+        effects,
         path,
         rule: "nonzero".into(),
         stroke: None,
@@ -66,7 +91,7 @@ pub fn draw(
         alpha,
         clear: false,
     };
-    raster.draw(&op, &std::collections::HashMap::from([(0, image)]));
+    raster.draw_checked(&op, &std::collections::HashMap::from([(0, image)]))
 }
 pub(super) fn sample(p: &PatternImage, x: f64, y: f64, smooth: bool) -> [f64; 4] {
     if p.width == 0 || p.height == 0 || p.pixels.len() != p.width as usize * p.height as usize * 4 {

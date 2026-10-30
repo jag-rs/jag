@@ -4,7 +4,11 @@ use super::geometry::{self, Commands, StrokeStyle};
 use serde::Deserialize;
 use std::sync::Arc;
 use tiny_skia::{FillRule, Mask, Transform};
+mod blend;
+mod effects;
+mod filters;
 pub mod image;
+pub use effects::Effects;
 mod paint;
 #[path = "raster/pixels.rs"]
 mod pixels;
@@ -16,6 +20,8 @@ pub struct Clip {
 }
 #[derive(Clone, Debug, Deserialize)]
 pub struct Draw {
+    #[serde(default)]
+    pub effects: Effects,
     pub path: Commands,
     pub rule: String,
     pub stroke: Option<StrokeStyle>,
@@ -190,7 +196,8 @@ fn rule(s: &str) -> FillRule {
 }
 impl Draw {
     pub fn valid(&self) -> bool {
-        self.alpha.is_finite()
+        self.effects.valid()
+            && self.alpha.is_finite()
             && (0.0..=1.0).contains(&self.alpha)
             && self.transform.iter().all(|n| n.is_finite())
             && self.path.len() <= 65536

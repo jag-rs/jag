@@ -140,6 +140,7 @@ impl Fonts {
             .db
             .query(&Query {
                 families: &names,
+                stretch: stretch(&s.stretch),
                 weight: Weight(s.weight),
                 style: if s.italic {
                     Style::Italic
@@ -177,6 +178,7 @@ impl Fonts {
         for name in &s.families {
             if let Some(id) = self.db.query(&Query {
                 families: &[Family::Name(name)],
+                stretch: stretch(&s.stretch),
                 weight: Weight(s.weight),
                 ..Default::default()
             }) && let Some(face) = self.face(id)
@@ -205,5 +207,20 @@ impl Fonts {
             }
         }
         Some(primary)
+    }
+}
+
+fn stretch(value: &str) -> fontdb::Stretch {
+    use fontdb::Stretch::*;
+    match value {
+        "ultra-condensed" => UltraCondensed,
+        "extra-condensed" => ExtraCondensed,
+        "condensed" => Condensed,
+        "semi-condensed" => SemiCondensed,
+        "semi-expanded" => SemiExpanded,
+        "expanded" => Expanded,
+        "extra-expanded" => ExtraExpanded,
+        "ultra-expanded" => UltraExpanded,
+        _ => Normal,
     }
 }
