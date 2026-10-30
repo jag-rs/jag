@@ -6,6 +6,8 @@ use std::sync::Arc;
 use tiny_skia::{FillRule, Mask, Transform};
 pub mod image;
 mod paint;
+#[path = "raster/pixels.rs"]
+mod pixels;
 pub use paint::{Paint, PatternImage};
 #[derive(Clone, Debug, Deserialize)]
 pub struct Clip {
@@ -210,3 +212,6 @@ impl Draw {
 #[cfg(test)]
 #[path = "raster/crop_tests.rs"]
 mod crop_tests;
+#[cfg(test)]
+#[path = "raster/pixels_tests.rs"]
+mod pixels_tests;
