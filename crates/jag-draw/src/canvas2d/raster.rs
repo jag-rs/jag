@@ -28,6 +28,7 @@ pub struct Raster {
     pub height: u32,
     pub alpha: bool,
     pixels: Vec<u8>,
+    coverage: Mask,
 }
 impl Raster {
     pub fn new(width: u32, height: u32, alpha: bool) -> Option<Self> {
@@ -45,6 +46,7 @@ impl Raster {
             height,
             alpha,
             pixels: vec![0; size],
+            coverage: Mask::new(width, height)?,
         };
         r.clear();
         Some(r)
@@ -80,42 +82,99 @@ impl Raster {
             };
             path = p;
         }
-        let Some(mut mask) = Mask::new(self.width, self.height) else {
+        // Limit scratch coverage and pixel visits to conservative path bounds.
+        // Boundary-crossing paths retain the original canvas clip rectangle:
+        // changing it can alter tiny-skia's curve clipping near bitmap edges.
+        let bounds = path.bounds();
+        let x0 = (bounds.left().floor() - 1.).max(0.).min(self.width as f32) as u32;
+        let y0 = (bounds.top().floor() - 1.).max(0.).min(self.height as f32) as u32;
+        let x1 = (bounds.right().ceil() + 1.).max(0.).min(self.width as f32) as u32;
+        let y1 = (bounds.bottom().ceil() + 1.)
+            .max(0.)
+            .min(self.height as f32) as u32;
+        if x1 <= x0 || y1 <= y0 {
             return;
+        }
+        let boundary = x0 == 0 || y0 == 0 || x1 == self.width || y1 == self.height;
+        let (ox, oy, mw, mh) = if boundary {
+            (0, 0, self.width, self.height)
+        } else {
+            (x0, y0, x1 - x0, y1 - y0)
         };
-        mask.fill_path(&path, rule(&op.rule), true, Transform::identity());
+        if self.coverage.width() != mw || self.coverage.height() != mh {
+            let Some(mask) = Mask::new(mw, mh) else {
+                return;
+            };
+            self.coverage = mask;
+        } else {
+            self.coverage.data_mut().fill(0);
+        }
+        let mask = &mut self.coverage;
+        let shift = Transform::from_translate(-(ox as f32), -(oy as f32));
+        mask.fill_path(&path, rule(&op.rule), true, shift);
         for clip in &op.clips {
             if let Some(p) = geometry::path(&clip.path) {
-                mask.intersect_path(&p, rule(&clip.rule), true, Transform::identity());
+                mask.intersect_path(&p, rule(&clip.rule), true, shift);
             } else {
                 return;
             }
         }
-        for (i, coverage) in mask.data().iter().copied().enumerate() {
-            if coverage == 0 {
-                continue;
-            }
-            let dest = &mut self.pixels[i * 4..i * 4 + 4];
-            let k = f64::from(coverage) / 255.;
-            let c = if op.clear {
-                [0., 0., 0., k]
-            } else {
-                let c = op.paint.sample(
-                    (i % self.width as usize) as f64 + 0.5,
-                    (i / self.width as usize) as f64 + 0.5,
-                    images,
-                );
-                let a = c[3] * op.alpha * k;
-                [c[0] * a, c[1] * a, c[2] * a, a]
-            };
-            for j in 0..4 {
-                let source = if op.clear { 0. } else { c[j] };
-                dest[j] = ((source + f64::from(dest[j]) / 255. * (1. - c[3])) * 255.)
-                    .round()
-                    .clamp(0., 255.) as u8;
-            }
-            if !self.alpha {
-                dest[3] = 255;
+        let row_constant = matches!(&op.paint, Paint::Solid { .. })
+            || matches!(&op.paint,
+            Paint::Linear {args, matrix, ..} if args[0] == args[2] && matrix[1] == 0.);
+        for gy in y0 as usize..y1 as usize {
+            let row_start = (gy - oy as usize) * mw as usize;
+            let coverage_row =
+                &mask.data()[row_start + (x0 - ox) as usize..row_start + (x1 - ox) as usize];
+            let row_color = row_constant.then(|| {
+                op.paint
+                    .sample(f64::from(x0) + 0.5, gy as f64 + 0.5, images)
+            });
+            let opaque = row_color
+                .filter(|c| c[3] * op.alpha == 1.)
+                .map(|c| c.map(|v| (v * 255.).round().clamp(0., 255.) as u8));
+            let pixel_start = (gy * self.width as usize + x0 as usize) * 4;
+            let pixel_end = pixel_start + (x1 - x0) as usize * 4;
+            let pixels = &mut self.pixels[pixel_start..pixel_end];
+            for (col, (coverage, dest)) in coverage_row
+                .iter()
+                .copied()
+                .zip(pixels.chunks_exact_mut(4))
+                .enumerate()
+            {
+                let gx = x0 as usize + col;
+                if coverage == 0 {
+                    continue;
+                }
+                if coverage == 255 {
+                    if op.clear {
+                        dest.copy_from_slice(&[0, 0, 0, if self.alpha { 0 } else { 255 }]);
+                        continue;
+                    }
+                    if let Some(color) = opaque {
+                        dest.copy_from_slice(&color);
+                        continue;
+                    }
+                }
+                let k = f64::from(coverage) / 255.;
+                let c = if op.clear {
+                    [0., 0., 0., k]
+                } else {
+                    let c = row_color.unwrap_or_else(|| {
+                        op.paint.sample(gx as f64 + 0.5, gy as f64 + 0.5, images)
+                    });
+                    let a = c[3] * op.alpha * k;
+                    [c[0] * a, c[1] * a, c[2] * a, a]
+                };
+                for j in 0..4 {
+                    let source = if op.clear { 0. } else { c[j] };
+                    dest[j] = ((source + f64::from(dest[j]) / 255. * (1. - c[3])) * 255.)
+                        .round()
+                        .clamp(0., 255.) as u8;
+                }
+                if !self.alpha {
+                    dest[3] = 255;
+                }
             }
         }
     }
@@ -147,3 +206,7 @@ impl Draw {
             && self.paint.valid()
     }
 }
+
+#[cfg(test)]
+#[path = "raster/crop_tests.rs"]
+mod crop_tests;
