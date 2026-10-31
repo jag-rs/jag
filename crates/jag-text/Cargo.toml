@@ -1,6 +1,6 @@
 [package]
 name = "jag-text"
-version = "0.1.1"
+version = "0.1.2"
 description = "Text layout and editing utilities for jag"
 license = "MIT"
 repository.workspace = true
