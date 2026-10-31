@@ -4,6 +4,7 @@ version = "0.1.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "UI elements, widgets, and layout for jag-draw"
 keywords = ["ui", "widgets", "layout", "gpu", "gui"]
 categories = ["gui", "rendering"]

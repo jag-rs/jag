@@ -54,7 +54,7 @@ btn.render(&mut canvas, 10);
 ## Running the Demo
 
 ```bash
-git clone https://github.com/jag-rs/jag.git
+git clone https://github.com/splentainc/jag.git
 cd jag
 cargo run -p jag-demo
 ```
@@ -86,4 +86,4 @@ MIT License. See [LICENSE-MIT](LICENSE-MIT) for details.
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or pull request on [GitHub](https://github.com/jag-rs/jag).
+Contributions are welcome! Please open an issue or pull request on [GitHub](https://github.com/splentainc/jag).

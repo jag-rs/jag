@@ -11,7 +11,7 @@ jag-ui     (crates.io)  — UI elements, widgets, layout (Taffy), events
 detir-scene (internal)  — IR bridge, Arth VM, web-compat (consumes jag-draw + jag-ui)
 ```
 
-GitHub: https://github.com/jag-rs/jag
+GitHub: https://github.com/splentainc/jag
 
 ## Dependency Flow
 

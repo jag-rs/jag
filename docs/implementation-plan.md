@@ -44,7 +44,7 @@
 
 **Design Doc:** `docs/plans/2026-03-07-jag-extraction-design.md`
 
-**GitHub:** https://github.com/jag-rs/jag
+**GitHub:** https://github.com/splentainc/jag
 
 ---
 
@@ -76,7 +76,7 @@ members = [
 [workspace.package]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/jag-rs/jag"
+repository = "https://github.com/splentainc/jag"
 
 [workspace.dependencies]
 wgpu = "0.19"

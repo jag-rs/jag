@@ -4,6 +4,7 @@ version = "0.1.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "GPU-accelerated 2D rendering and UI toolkit"
 keywords = ["gpu", "rendering", "ui", "2d", "wgpu"]
 categories = ["graphics", "gui", "rendering"]
